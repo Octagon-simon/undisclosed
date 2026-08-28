@@ -36,7 +36,11 @@
     "@theia/workspace": "1.60.0"
   },
   "devDependencies": {
-    "@theia/cli": "1.60.0"
+    "@theia/cli": "1.60.0",
+    "terser-webpack-plugin": "^5.6.1"
+  },
+  "overrides": {
+    "@vscode/ripgrep": "1.15.9"
   },
   "scripts": {
     "clean": "theia clean",
