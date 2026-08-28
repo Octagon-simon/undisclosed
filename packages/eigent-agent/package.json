@@ -6,7 +6,8 @@
   "license": "Apache-2.0",
   "theiaExtensions": [
     {
-      "frontend": "lib/browser/eigent-agent-frontend-module"
+      "frontend": "lib/browser/eigent-agent-frontend-module",
+      "backend": "lib/node/eigent-agent-backend-module"
     }
   ],
   "dependencies": {
@@ -21,6 +22,7 @@
   },
   "files": [
     "lib",
-    "src"
+    "src",
+    "assets"
   ]
 }
