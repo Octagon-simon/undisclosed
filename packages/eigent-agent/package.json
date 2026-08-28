@@ -1,0 +1,26 @@
+{
+  "name": "eigent-agent",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Eigent's native agent panel as a Theia extension (ReactWidget in the right dock). Placeholder now; hosts the decoupled Eigent agent UI later.",
+  "license": "Apache-2.0",
+  "theiaExtensions": [
+    {
+      "frontend": "lib/browser/eigent-agent-frontend-module"
+    }
+  ],
+  "dependencies": {
+    "@theia/core": "1.60.0"
+  },
+  "devDependencies": {
+    "typescript": "~5.4.5"
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "watch": "tsc -w -p ."
+  },
+  "files": [
+    "lib",
+    "src"
+  ]
+}
