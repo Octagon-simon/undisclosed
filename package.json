@@ -1,0 +1,48 @@
+{
+  "private": true,
+  "name": "eigent-theia",
+  "version": "0.0.1",
+  "description": "Eigent's editor-first shell, built as a custom Eclipse Theia product. The code editor is the primary surface; Eigent's agent + features are added as native Theia contributions (Antigravity model).",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=18 <=20"
+  },
+  "theia": {
+    "target": "browser",
+    "frontend": {
+      "config": {
+        "applicationName": "Eigent Editor",
+        "preferences": {
+          "security.workspace.trust.enabled": false,
+          "workbench.startupEditor": "none",
+          "files.enableTrash": false
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "@theia/core": "1.60.0",
+    "@theia/editor": "1.60.0",
+    "@theia/file-search": "1.60.0",
+    "@theia/filesystem": "1.60.0",
+    "@theia/markers": "1.60.0",
+    "@theia/messages": "1.60.0",
+    "@theia/monaco": "1.60.0",
+    "@theia/navigator": "1.60.0",
+    "@theia/preferences": "1.60.0",
+    "@theia/process": "1.60.0",
+    "@theia/search-in-workspace": "1.60.0",
+    "@theia/terminal": "1.60.0",
+    "@theia/workspace": "1.60.0"
+  },
+  "devDependencies": {
+    "@theia/cli": "1.60.0"
+  },
+  "scripts": {
+    "clean": "theia clean",
+    "build": "theia build --mode development",
+    "build:prod": "theia build --mode production",
+    "start": "theia start --hostname 127.0.0.1 --port 3000",
+    "watch": "theia build --watch --mode development"
+  }
+}

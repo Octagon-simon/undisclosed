@@ -1,0 +1,14 @@
+# Dependencies
+node_modules/
+
+# Theia build output
+lib/
+src-gen/
+gen-webpack*.js
+.theia/
+plugins/
+*.log
+
+# Editor/OS cruft
+.DS_Store
+.vscode/
