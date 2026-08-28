@@ -1,0 +1,21 @@
+{
+  "name": "@eigent/agent-net",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Framework-agnostic transport for Eigent's agent: fetch HTTP client + SSE, with base URL, auth token, and host capabilities INJECTED (no Electron, no authStore, no IPC). The seam the Theia agent widget + the Electron app both drive.",
+  "license": "Apache-2.0",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "dependencies": {
+    "@microsoft/fetch-event-source": "^2.0.1"
+  },
+  "devDependencies": {
+    "typescript": "~5.4.5"
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "watch": "tsc -w -p .",
+    "probe": "node lib/probe.js"
+  },
+  "files": ["lib", "src"]
+}
