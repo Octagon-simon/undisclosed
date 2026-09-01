@@ -1,0 +1,41 @@
+# ---------------------------------------------------------------------------
+# Eigent-theia standalone Brain (Docker)
+#
+# Replaces the old `eigent/server` docker-compose stack. The new brain is the
+# single-user, on-device FastAPI backend that eigent-theia's agent panel and
+# the vite dev proxy (port 3000 -> /api) talk to. It is standalone: persistence
+# is local files + local vector stores under $HOME/.eigent, so it does NOT need
+# the old Postgres / Redis / Celery services.
+#
+# The browser proxies /api on http://127.0.0.1:3000 to this api container via
+# host port 3001, so keep the published port at 3001.
+#
+#   docker compose up -d --build api
+# ---------------------------------------------------------------------------
+services:
+  api:
+    build:
+      context: .
+      dockerfile: brain/Dockerfile
+    container_name: eigent_api
+    restart: unless-stopped
+    ports:
+      # host : container. The brain binds 0.0.0.0 and defaults to port 5001.
+      - '3001:5001'
+    environment:
+      - EIGENT_BRAIN_HOST=0.0.0.0
+      - EIGENT_BRAIN_PORT=5001
+    volumes:
+      # Persist the brain's data + camel logs on the host so a container
+      # restart does not wipe your chat/steps history.
+      - eigent_brain_home:/root/.eigent
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:5001/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  eigent_brain_home:
+    driver: local
