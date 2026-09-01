@@ -3,6 +3,8 @@ node_modules/
 
 # Theia build output
 lib/
+!agent-ui/src/lib/
+!agent-ui/src/lib/**
 src-gen/
 gen-webpack*.js
 .theia/
