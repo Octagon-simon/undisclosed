@@ -17,11 +17,13 @@ services:
     build:
       context: .
       dockerfile: brain/Dockerfile
-    container_name: eigent_api
+    container_name: eigent_theia_api
     restart: unless-stopped
     ports:
       # host : container. The brain binds 0.0.0.0 and defaults to port 5001.
-      - '3001:5001'
+      # Host 5001 matches BRAIN_BASE_URL (http://localhost:5001) that the agent
+      # panel hardcodes, so the Dockerized brain is what serves the panel.
+      - '5001:5001'
     environment:
       - EIGENT_BRAIN_HOST=0.0.0.0
       - EIGENT_BRAIN_PORT=5001

@@ -169,4 +169,23 @@ def register_routers(app: FastAPI, prefix: str = "") -> None:
             exc_info=True,
         )
 
+    # Register local chat-platform router under /api/v1 (user + history API) —
+    # this is the REST surface that makes eigent-theia standalone (no external
+    # eigent/server Docker backend): auto-login, chat/histories, chat/history.
+    try:
+        from app.controller import chat_platform_controller
+
+        app.include_router(
+            chat_platform_controller.router,
+            prefix=prefix + "/api/v1",
+            tags=["chat-platform"],
+            dependencies=[Depends(get_brain_auth_context)],
+        )
+        logger.info("Registered chat-platform router under /api/v1")
+    except Exception:
+        logger.warning(
+            "Failed to register chat-platform router; local user/history API unavailable",
+            exc_info=True,
+        )
+
     logger.info(f"Total routers registered: {len(routers_config)}")
