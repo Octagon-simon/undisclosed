@@ -12,3 +12,25 @@ plugins/
 # Editor/OS cruft
 .DS_Store
 .vscode/
+
+# local dev session (contains a token) — never commit
+session.local.json
+**/session.local.json
+
+# Local agent data (skills symlink → ~/.eigent/skills); not part of the repo
+.agents/
+
+# Agent todo scratch (now stored per-project under ~/.eigent/todos)
+.todo.json
+todo.md
+.brain.log
+.brain.pid
+.brain-setup.log
+.brain.run
+.brain.log.prev
+
+# Editor/agent scratch backups (dead duplicate code — token/context noise)
+*.bak
+
+# Local backups
+.tmp/

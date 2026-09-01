@@ -1,0 +1,291 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * Copyright (c) 2026 Simon Ugorji
+ *
+ * Match the embedded Eigent agent panel to Theia's ACTIVE theme by remapping
+ * the dominant --ds-* surface/text/border/icon tokens to Theia's --theia-*
+ * theme variables. Injected AFTER the bundle stylesheet so it wins over the
+ * bundle's own (Eigent) dark values. Theia's own UI never references --ds-*,
+ * so this can't affect the editor; it only re-skins the agent panel + its
+ * portaled overlays. Brand/status accents intentionally keep Eigent's colors.
+ */
+/* Targets `.dark` / `[data-theme]` too so PORTALED overlays (the model
+ * dropdown, tooltips, toasts) — which render to <body> outside the panel and
+ * carry the theme class — are re-skinned as well. Loaded after the bundle, so
+ * these win over its own `.dark` values. */
+:root,
+.dark,
+[data-theme='dark'],
+[data-theme='light'],
+.eigent-agent-root {
+  /* Surfaces. neutral-default backs elevated things (dropdowns, the ⋯ menu),
+     so map it to Theia's menu/dropdown color to match native menus. */
+  --ds-bg-neutral-default-default: var(--theia-dropdown-background, var(--theia-menu-background, var(--theia-editor-background)));
+  --ds-bg-neutral-default-hover: var(--theia-list-hoverBackground, var(--theia-editor-background));
+  --ds-bg-neutral-default-active: var(--theia-list-activeSelectionBackground, var(--theia-editor-background));
+  --ds-bg-neutral-default-selected: var(--theia-list-activeSelectionBackground, var(--theia-editor-background));
+  --ds-bg-neutral-subtle-default: var(--theia-sideBar-background, var(--theia-editor-background));
+  --ds-bg-neutral-subtle-hover: var(--theia-list-hoverBackground, var(--theia-sideBar-background));
+  --ds-bg-neutral-muted-default: var(--theia-editorWidget-background, var(--theia-editor-background));
+  --ds-bg-neutral-muted-hover: var(--theia-list-hoverBackground, var(--theia-editorWidget-background));
+  --ds-bg-neutral-strong-default: var(--theia-editorWidget-background, var(--theia-editor-background));
+
+  /* Brand accent. These were UNMAPPED, so brand-colored elements (welcome logo,
+     primary buttons, "on" toggles) resolved to nothing -> black / invisible in
+     dark mode. Pin explicit brand values that read on BOTH light and dark
+     (Eigent keeps its brand color across themes). */
+  --ds-bg-brand-default-default: #7c3aed;
+  --ds-bg-brand-default-hover: #6d28d9;
+  --ds-bg-brand-default-active: #5b21b6;
+  --ds-bg-brand-subtle-default: rgba(124, 58, 237, 0.16);
+  --ds-bg-brand-subtle-hover: rgba(124, 58, 237, 0.24);
+  --ds-icon-brand-default-default: #8b5cf6;
+  --ds-text-brand-default-default: #8b5cf6;
+  --ds-text-brand-inverse-default: #ffffff;
+  --ds-border-brand-default-default: #7c3aed;
+
+  /* Text */
+  --ds-text-neutral-default-default: var(--theia-foreground);
+  --ds-text-neutral-subtle-default: var(--theia-descriptionForeground, var(--theia-foreground));
+  --ds-text-neutral-muted-default: var(--theia-descriptionForeground, var(--theia-foreground));
+
+  /* Icons */
+  --ds-icon-neutral-default-default: var(--theia-icon-foreground, var(--theia-foreground));
+  --ds-icon-neutral-subtle-default: var(--theia-descriptionForeground, var(--theia-foreground));
+  --ds-icon-neutral-muted-default: var(--theia-descriptionForeground, var(--theia-foreground));
+
+  /* Borders */
+  --ds-border-neutral-default-default: var(--theia-panel-border, var(--theia-editorWidget-border));
+  --ds-border-neutral-subtle-default: var(--theia-panel-border, var(--theia-editorWidget-border));
+  --ds-border-neutral-strong-default: var(--theia-panel-border, var(--theia-editorWidget-border));
+
+  /* NOTE: primary buttons (the composer send button) intentionally keep
+     Eigent's saturated brand/success colors — mapping their bg to Theia's
+     button vars made the bg light in some themes and hid the white icon. */
+
+  /* Inputs (composer) */
+  --ds-bg-input: var(--theia-input-background, var(--theia-editor-background));
+
+  /* "Splitting/Planning" card accent → a subtle Theia surface so the plan card
+     fits the editor instead of showing its stock purple. The real card uses the
+     `status-splitting-*` tokens (not just `splitting-*`). */
+  --ds-bg-splitting-subtle-default: var(--theia-editorWidget-background, var(--theia-editor-background));
+  --ds-text-splitting-strong-default: var(--theia-foreground);
+  --ds-bg-status-splitting-default-default: var(--theia-editorWidget-background, var(--theia-editor-background));
+  --ds-bg-status-splitting-subtle-default: var(--theia-editorWidget-background, var(--theia-editor-background));
+  --ds-bg-status-splitting-subtle-hover: var(--theia-list-hoverBackground, var(--theia-editorWidget-background));
+  --ds-bg-status-splitting-subtle-active: var(--theia-list-activeSelectionBackground, var(--theia-editorWidget-background));
+  --ds-border-status-splitting-default-default: var(--theia-panel-border, var(--theia-editorWidget-border));
+  --ds-border-status-splitting-default-hover: var(--theia-panel-border, var(--theia-editorWidget-border));
+  --ds-text-status-splitting-strong-default: var(--theia-foreground);
+  --ds-text-status-splitting-muted-default: var(--theia-descriptionForeground, var(--theia-foreground));
+  --ds-icon-status-splitting-default-default: var(--theia-foreground);
+
+  /* Approval outcome / human-gated boxes (e.g. "terminal was approved") →
+     adapt to the theme. Keep the info/error ICON hue as an accent; make the
+     surfaces + text follow Theia so they aren't stuck in light mode. */
+  --ds-bg-information-subtle-default: var(--theia-editorWidget-background, var(--theia-editor-background));
+  --ds-border-information-default-default: var(--theia-panel-border, var(--theia-editorWidget-border));
+  --ds-text-information-default-default: var(--theia-foreground);
+  --ds-text-information-strong-default: var(--theia-foreground);
+  --ds-icon-information-default-default: var(--theia-notificationsInfoIcon-foreground, var(--theia-foreground));
+  /* Denied/timeout box: use the SAME adaptive neutral surface as the info box
+     (inputValidation-errorBackground reads light in several dark themes and
+     didn't adapt). Keep the red hue only on the icon/text/border accents so
+     "denied" still reads as danger. */
+  --ds-bg-error-subtle-default: var(--theia-editorWidget-background, var(--theia-editor-background));
+  --ds-border-error-default-default: var(--theia-errorForeground, var(--theia-inputValidation-errorBorder, var(--theia-panel-border)));
+  --ds-text-error-default-default: var(--theia-foreground);
+  --ds-text-error-strong-default: var(--theia-errorForeground, var(--theia-foreground));
+  /* Error icon → a guaranteed red. The Theia error-icon/foreground vars are
+     undefined in some themes and fell through to --theia-foreground (black),
+     so the deny/stop glyphs rendered black. Used by the Deny outcome icon and
+     the composer Stop square. */
+  --ds-icon-error-default-default: #dc2626 !important;
+
+  /* Approve (success) / Deny (error) FILLED buttons on the approval prompt.
+     The panel derives its --ds tokens from prefers-color-scheme (the OS) and
+     injects them INLINE on <html>, so a plain override loses. Pin them with
+     !important to readable green/red + white label — semantic action colors,
+     the same in both themes. (These are the *-default-default / *-inverse
+     fills; the denied OUTCOME box uses the separate error-subtle/strong tokens
+     above and is unaffected.) */
+  --ds-bg-success-default-default: #16a34a !important;
+  --ds-bg-success-default-hover: #15803d !important;
+  --ds-bg-success-default-active: #166534 !important;
+  --ds-text-success-inverse-default: #ffffff !important;
+  --ds-bg-error-default-default: #dc2626 !important;
+  --ds-bg-error-default-hover: #b91c1c !important;
+  --ds-bg-error-default-active: #991b1b !important;
+  --ds-text-error-inverse-default: #ffffff !important;
+
+  /* Success accents (e.g. a completed subtask's check in the plan indicator).
+     Green reads the same in both themes; only the icon/text hues are pinned. */
+  --ds-icon-success-default-default: #16a34a !important;
+  --ds-text-success-strong-default: #16a34a !important;
+  /* Subtle success chip (the Models "Default" badge, the browser "Live" pill)
+     → a neutral Theia surface so the chip fits the editor in either theme; the
+     green text/icon above carries the status. Without this it kept Eigent's
+     fixed light-green bg and didn't adapt to dark. Mirrors warning-subtle. */
+  --ds-bg-success-subtle-default: var(--theia-editorWidget-background, var(--theia-editor-background));
+
+  /* Warning chip (the governance "Ask" badge) → a subtle neutral so it fits
+     the editor chrome instead of clashing amber. */
+  --ds-bg-warning-subtle-default: var(--theia-editorWidget-background, var(--theia-editor-background));
+  --ds-text-warning-strong-default: var(--theia-foreground);
+  --ds-icon-warning-default-default: var(--theia-foreground);
+
+  /* Menu/list hover + selection inside dropdowns. */
+  --ds-bg-neutral-muted-hover: var(--theia-menu-selectionBackground, var(--theia-list-hoverBackground, var(--theia-list-activeSelectionBackground)));
+  --ds-bg-neutral-subtle-hover: var(--theia-menu-selectionBackground, var(--theia-list-hoverBackground));
+}
+
+/* Use modern, sleek UI font stack (Inter/system sans) for the panel and chatbox,
+ * while preserving monospace for code blocks. */
+.eigent-agent-root,
+.eigent-agent-root *,
+.eigent-agent-root textarea,
+.eigent-agent-root input,
+.eigent-agent-root [contenteditable] {
+  font-family: var(--theia-ui-font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji") !important;
+}
+
+.eigent-agent-root code,
+.eigent-agent-root pre,
+.eigent-agent-root code *,
+.eigent-agent-root pre * {
+  font-family: var(--theia-editor-font-family, ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace) !important;
+}
+
+/* Give the agent panel the EXPLORER's background (Theia sideBar) so it reads as
+ * a distinct surface from the editor — matching the Antigravity 3-tone layout
+ * (explorer + agent share sideBar bg; editor is its own color). */
+.eigent-agent-root {
+  background-color: var(--theia-sideBar-background, var(--theia-editor-background));
+  color: var(--theia-sideBar-foreground, var(--theia-foreground));
+}
+
+/* Dropdowns / menus (model selector, the ⋯ menu) use the SAME neutral tokens
+ * as the panel body, so mapping them globally made menus blend into the panel.
+ * Radix renders them in a popper wrapper (role=menu / listbox) — override the
+ * elevated tokens there ONLY, so menus take Theia's menu/dropdown color while
+ * the panel keeps the sidebar color. */
+[data-radix-popper-content-wrapper],
+[role='menu'],
+[role='listbox'] {
+  --ds-bg-neutral-subtle-default: var(--theia-dropdown-background, var(--theia-menu-background, var(--theia-editor-background)));
+  --ds-bg-neutral-default-default: var(--theia-dropdown-background, var(--theia-menu-background, var(--theia-editor-background)));
+  --ds-bg-neutral-muted-default: var(--theia-dropdown-background, var(--theia-menu-background, var(--theia-editor-background)));
+  --ds-border-neutral-subtle-default: var(--theia-menu-border, var(--theia-dropdown-border, var(--theia-panel-border)));
+  /* Label text inside the menu → the menu/dropdown foreground so it reads on
+     the new background. */
+  --ds-text-neutral-default-default: var(--theia-menu-foreground, var(--theia-dropdown-foreground, var(--theia-foreground)));
+  --ds-text-neutral-subtle-default: var(--theia-menu-foreground, var(--theia-foreground));
+  --ds-text-neutral-muted-default: var(--theia-descriptionForeground, var(--theia-menu-foreground, var(--theia-foreground)));
+  --ds-icon-neutral-default-default: var(--theia-menu-foreground, var(--theia-foreground));
+  /* Hovered item in a menu → Theia's SUBTLE list-hover (works in light + dark;
+     the strong menu-selection color looked wrong in light mode). */
+  --ds-bg-neutral-default-hover: var(--theia-list-hoverBackground, var(--theia-menu-selectionBackground));
+  --ds-bg-neutral-subtle-hover: var(--theia-list-hoverBackground, var(--theia-menu-selectionBackground));
+  --ds-bg-neutral-muted-hover: var(--theia-list-hoverBackground, var(--theia-menu-selectionBackground));
+}
+
+/* The panel is native inside Theia's DOM. The Approve/Deny FILLED buttons are
+ * driven by the tone utility classes (`bg-ds-bg-{success,error}-default-default`,
+ * specificity 0,1,0). Their `background-color: var(...)` declaration is NOT
+ * !important, so a leaking Theia/host rule overrode the fill at REST (the color
+ * only appeared on :hover, whose 0,2,0 rule won). Pinning the token variable
+ * didn't help — the losing declaration never reads the variable. Force the
+ * PROPERTY itself here, scoped to the panel, so rest + hover are solid. */
+.eigent-agent-root .bg-ds-bg-success-default-default {
+  background-color: #16a34a !important;
+  border-color: #16a34a !important;
+}
+.eigent-agent-root .bg-ds-bg-error-default-default {
+  background-color: #dc2626 !important;
+  border-color: #dc2626 !important;
+}
+
+/* Approval OUTCOME boxes ("terminal was approved/denied"). Their subtle
+ * surface tokens didn't reliably win over the OS-derived inline values, so the
+ * box stayed light in a dark theme. Force the surface (and the red danger
+ * accents for denied) on the PROPERTY, scoped to the panel, so they follow the
+ * active Theia theme. */
+.eigent-agent-root .bg-ds-bg-error-subtle-default,
+.eigent-agent-root .bg-ds-bg-information-subtle-default {
+  background-color: var(--theia-editorWidget-background, var(--theia-editor-background)) !important;
+}
+.eigent-agent-root .border-ds-border-error-default-default {
+  border-color: #dc2626 !important;
+}
+.eigent-agent-root .text-ds-text-error-strong-default {
+  color: #dc2626 !important;
+}
+
+/* Markdown in the panel is styled with hardcoded GitHub light/dark colors keyed
+ * to the OS `data-theme`, which mismatches Theia's actual theme (code blocks,
+ * tables, blockquotes stayed light in a dark editor). Re-map them to Theia vars
+ * so they follow the editor theme. Scoped to the panel + !important to beat the
+ * hardcoded [data-theme] rules. */
+.eigent-agent-root .markdown-body {
+  color: var(--theia-foreground) !important;
+}
+.eigent-agent-root .markdown-body pre {
+  background-color: var(--theia-textCodeBlock-background, var(--theia-editorWidget-background, var(--theia-editor-background))) !important;
+  color: var(--theia-editor-foreground, var(--theia-foreground)) !important;
+}
+.eigent-agent-root .markdown-body code {
+  background-color: var(--theia-textCodeBlock-background, rgba(127, 127, 127, 0.18)) !important;
+  color: var(--theia-editor-foreground, var(--theia-foreground)) !important;
+}
+.eigent-agent-root .markdown-body pre code {
+  background-color: transparent !important;
+  color: inherit !important;
+}
+.eigent-agent-root .markdown-body table th,
+.eigent-agent-root .markdown-body table td {
+  border-color: var(--theia-panel-border, var(--theia-editorWidget-border)) !important;
+}
+.eigent-agent-root .markdown-body table th {
+  background-color: var(--theia-editorWidget-background, var(--theia-editor-background)) !important;
+  color: var(--theia-foreground) !important;
+}
+.eigent-agent-root .markdown-body table tr {
+  background-color: transparent !important;
+  border-top-color: var(--theia-panel-border) !important;
+}
+.eigent-agent-root .markdown-body table tr:nth-child(2n) {
+  background-color: var(--theia-editorWidget-background, rgba(127, 127, 127, 0.06)) !important;
+}
+.eigent-agent-root .markdown-body blockquote {
+  color: var(--theia-descriptionForeground, var(--theia-foreground)) !important;
+  border-left-color: var(--theia-panel-border) !important;
+}
+.eigent-agent-root .markdown-body a {
+  color: var(--theia-textLink-foreground, #58a6ff) !important;
+}
+
+/* The composer shows an unwanted blue focus outline (browser/Theia default) —
+ * the input has its own border, so drop the outline. */
+.eigent-agent-root textarea:focus,
+.eigent-agent-root textarea:focus-visible,
+.eigent-agent-root [contenteditable]:focus,
+.eigent-agent-root [contenteditable]:focus-visible,
+.eigent-agent-root input:focus-visible {
+  outline: none !important;
+}
+
+/* A menuPath toolbar item (our ⋯) renders as [ellipsis] + a separate chevron
+ * wrapper — two clickable boxes that both open the menu. Hide the whole chevron
+ * WRAPPER (not just the icon, which left an empty clickable box); clicking the
+ * ellipsis already opens the menu. */
+.lm-TabBar-toolbar .item.menu > div:has(.chevron) {
+  display: none !important;
+}
+
+/* (Theia's side-panel title bar is intentionally VISIBLE now — the agent's
+ * actions live there as native toolbar items beside the "Eigent Agent" label,
+ * so the React header was removed. No duplicate anymore.) */
+
+/* (The RIGHT side-panel tab strip is removed via the Lumino widget API in
+ * eigent-agent-layout-contribution.ts — hiding it in CSS left a ~48px gap
+ * because Lumino positions absolutely and wouldn't re-flow.) */

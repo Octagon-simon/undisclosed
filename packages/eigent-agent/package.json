@@ -7,11 +7,16 @@
   "theiaExtensions": [
     {
       "frontend": "lib/browser/eigent-agent-frontend-module",
-      "backend": "lib/node/eigent-agent-backend-module"
+      "backend": "lib/node/eigent-agent-backend-module",
+      "style": "style/eigent-agent.css"
     }
   ],
   "dependencies": {
-    "@theia/core": "1.60.0"
+    "@theia/core": "1.60.0",
+    "@theia/filesystem": "1.60.0",
+    "@theia/git": "1.60.0",
+    "@theia/scm": "1.60.0",
+    "@theia/workspace": "1.60.0"
   },
   "devDependencies": {
     "typescript": "~5.4.5"
@@ -23,6 +28,7 @@
   "files": [
     "lib",
     "src",
-    "assets"
+    "assets",
+    "style"
   ]
 }

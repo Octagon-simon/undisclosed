@@ -1,0 +1,1271 @@
+# ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+
+import asyncio
+import inspect
+import json
+import logging
+import threading
+from collections.abc import Callable
+from threading import Event
+from typing import Any
+
+from camel.agents import ChatAgent
+from camel.agents._types import ToolCallRequest
+from camel.agents.chat_agent import (
+    AsyncStreamingChatAgentResponse,
+    StreamingChatAgentResponse,
+)
+from camel.memories import AgentMemory
+from camel.messages import BaseMessage
+from camel.models import BaseModelBackend, ModelManager, ModelProcessingError
+from camel.responses import ChatAgentResponse
+from camel.terminators import ResponseTerminator
+from camel.toolkits import FunctionTool, RegisteredAgentToolkit
+from camel.types import ModelPlatformType, ModelType
+from camel.types.agents import ToolCallingRecord
+from pydantic import BaseModel
+
+from app.component.environment import env
+from app.service.task import (
+    Action,
+    ActionActivateAgentData,
+    ActionActivateToolkitData,
+    ActionBudgetNotEnough,
+    ActionDeactivateAgentData,
+    ActionDeactivateToolkitData,
+    ActionRequestUsageData,
+    get_task_lock,
+    get_task_lock_if_exists,
+    set_process_task,
+)
+from app.utils.event_loop_utils import _schedule_async_task
+
+# Logger for agent tracking
+logger = logging.getLogger("agent")
+
+
+class _MalformedToolCallArgs(Exception):
+    """Internal signal: the model returned a tool call whose `arguments` were
+    not valid JSON. Raised by `_handle_batch_response` on the first pass so
+    `_aget_model_response` can re-request the completion once before falling
+    back to empty-arg sanitization. Never surfaces outside this module."""
+
+
+# Default 30 minutes; long agent turns (e.g. writing many chapters in one
+# run) can legitimately exceed it, so allow tuning without a rebuild.
+# A non-positive value disables the per-step timeout entirely.
+def default_step_timeout() -> float | None:
+    raw = env("AGENT_STEP_TIMEOUT_SECONDS", "1800")
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid AGENT_STEP_TIMEOUT_SECONDS value %r; using 1800", raw
+        )
+        return 1800.0
+    return value if value > 0 else None
+
+
+class ListenChatAgent(ChatAgent):
+    _cdp_clone_lock = (
+        threading.Lock()
+    )  # Protects CDP URL mutation during clone
+
+    _camel_has_request_usage: bool = (
+        "on_request_usage" in inspect.signature(ChatAgent.__init__).parameters
+    )
+
+    def __init__(
+        self,
+        api_task_id: str,
+        agent_name: str,
+        system_message: BaseMessage | str | None = None,
+        model: (
+            BaseModelBackend
+            | ModelManager
+            | tuple[str, str]
+            | str
+            | ModelType
+            | tuple[ModelPlatformType, ModelType]
+            | list[BaseModelBackend]
+            | list[str]
+            | list[ModelType]
+            | list[tuple[str, str]]
+            | list[tuple[ModelPlatformType, ModelType]]
+            | None
+        ) = None,
+        memory: AgentMemory | None = None,
+        message_window_size: int | None = None,
+        token_limit: int | None = None,
+        output_language: str | None = None,
+        tools: list[FunctionTool | Callable[..., Any]] | None = None,
+        toolkits_to_register_agent: list[RegisteredAgentToolkit] | None = None,
+        external_tools: (
+            list[FunctionTool | Callable[..., Any] | dict[str, Any]] | None
+        ) = None,
+        response_terminators: list[ResponseTerminator] | None = None,
+        scheduling_strategy: str = "round_robin",
+        max_iteration: int | None = None,
+        agent_id: str | None = None,
+        stop_event: Event | None = None,
+        tool_execution_timeout: float | None = None,
+        mask_tool_output: bool = False,
+        pause_event: asyncio.Event | None = None,
+        prune_tool_calls_from_memory: bool = False,
+        enable_snapshot_clean: bool = False,
+        step_timeout: float | None = None,
+        model_reload_callback: (
+            Callable[[], BaseModelBackend | ModelManager] | None
+        ) = None,
+        **kwargs: Any,
+    ) -> None:
+        self.api_task_id = api_task_id
+        self.agent_name = agent_name
+        self._user_on_request_usage = kwargs.pop("on_request_usage", None)
+        if self._camel_has_request_usage:
+            kwargs["on_request_usage"] = self._on_request_usage
+
+        if step_timeout is None:
+            step_timeout = default_step_timeout()
+        super().__init__(
+            system_message=system_message,
+            model=model,
+            memory=memory,
+            message_window_size=message_window_size,
+            token_limit=token_limit,
+            output_language=output_language,
+            tools=tools,
+            toolkits_to_register_agent=toolkits_to_register_agent,
+            external_tools=external_tools,
+            response_terminators=response_terminators,
+            scheduling_strategy=scheduling_strategy,
+            max_iteration=max_iteration,
+            agent_id=agent_id,
+            stop_event=stop_event,
+            tool_execution_timeout=tool_execution_timeout,
+            mask_tool_output=mask_tool_output,
+            pause_event=pause_event,
+            prune_tool_calls_from_memory=prune_tool_calls_from_memory,
+            enable_snapshot_clean=enable_snapshot_clean,
+            step_timeout=step_timeout,
+            **kwargs,
+        )
+        self._model_reload_callback = model_reload_callback
+        self._model_reload_lock = threading.Lock()
+
+    process_task_id: str = ""
+
+    def _build_request_usage_payload(
+        self,
+        usage_dict: dict[str, Any],
+        step_usage: dict[str, int],
+        request_index: int,
+        response_id: str,
+    ) -> dict[str, Any]:
+        """Override CAMEL's payload builder so cached-input metrics from the
+        provider's raw usage object survive into `request_usage`.
+
+        CAMEL's default `_build_request_usage_payload` flattens the usage dict
+        to only `prompt_tokens`/`completion_tokens`/`total_tokens`, silently
+        dropping the prompt-cache fields that OpenAI-compatible providers
+        (e.g. DeepSeek) return in `prompt_tokens_details.cached_tokens` or
+        `prompt_cache_hit_tokens`. That drop is what made the `cached=0(0%)`
+        log line a false zero even when the provider was caching server-side.
+        """
+        payload = super()._build_request_usage_payload(
+            usage_dict,
+            step_usage,
+            request_index,
+            response_id,
+        )
+        request_usage = payload.get("request_usage") or {}
+        usage = usage_dict or {}
+        # Preserve the raw cache-related fields (whichever shape the driver
+        # produced) so `_cached_tokens()` in `_on_request_usage` can see them.
+        for key in (
+            "prompt_tokens_details",
+            "prompt_cache_hit_tokens",
+            "cache_read_input_tokens",
+            "cached_content_token_count",
+            "cached_tokens",
+        ):
+            value = usage.get(key)
+            if value is not None:
+                request_usage[key] = value
+        return payload
+
+    @staticmethod
+    def _cached_tokens(usage: dict[str, Any]) -> int:
+        """Read cached-input tokens across provider formats (OpenAI/Anthropic/
+        Gemini). Returns 0 when the provider reports none."""
+        details = usage.get("prompt_tokens_details") or {}
+        for value in (
+            details.get("cached_tokens") if isinstance(details, dict) else None,
+            usage.get("cached_tokens"),
+            usage.get("prompt_cache_hit_tokens"),  # DeepSeek (automatic caching)
+            usage.get("cache_read_input_tokens"),  # Anthropic
+            usage.get("cached_content_token_count"),  # Gemini
+        ):
+            if value:
+                return int(value)
+        return 0
+
+    def _on_request_usage(self, payload: dict[str, Any]) -> Any:
+        request_usage = payload.get("request_usage") or {}
+        step_usage = payload.get("step_usage") or {}
+        request_tokens = int(request_usage.get("total_tokens") or 0)
+        # Per-request breakdown so we can see input/cached/output economics
+        # (input-heavy agentic loops + whether prompt caching is landing).
+        prompt = int(request_usage.get("prompt_tokens") or 0)
+        completion = int(request_usage.get("completion_tokens") or 0)
+        cached = self._cached_tokens(request_usage)
+        if request_tokens > 0:
+            cache_pct = f"{(cached / prompt * 100):.0f}%" if prompt else "0%"
+            logger.info(
+                "[USAGE] agent=%s req#%s input=%s cached=%s(%s) output=%s "
+                "total=%s | step_total=%s",
+                self.agent_name,
+                payload.get("request_index", 0),
+                prompt,
+                cached,
+                cache_pct,
+                completion,
+                request_tokens,
+                int(step_usage.get("total_tokens") or 0),
+            )
+        # Lock may be gone if the task was stopped mid-request.
+        task_lock = get_task_lock_if_exists(self.api_task_id)
+        if request_tokens > 0 and task_lock is not None:
+            _schedule_async_task(
+                task_lock.put_queue(
+                    ActionRequestUsageData(
+                        data={
+                            "agent_name": self.agent_name,
+                            "process_task_id": self.process_task_id,
+                            "agent_id": self.agent_id,
+                            "tokens": request_tokens,
+                            "request_index": payload.get("request_index", 0),
+                            "response_id": payload.get("response_id", ""),
+                            "step_total_tokens": int(
+                                step_usage.get("total_tokens") or 0
+                            ),
+                        }
+                    )
+                )
+            )
+        if self._user_on_request_usage is not None:
+            return self._user_on_request_usage(payload)
+        return None
+
+    @staticmethod
+    def _is_retryable_model_auth_error(error: BaseException) -> bool:
+        error_text = str(error).lower()
+        return any(
+            marker in error_text
+            for marker in (
+                "401",
+                "unauthorized",
+                "invalid_api_key",
+                "invalid api key",
+                "authentication error",
+                "authenticationerror",
+                "token_expired",
+            )
+        )
+
+    def _reload_model_after_auth_error(self, error: BaseException) -> bool:
+        if (
+            self._model_reload_callback is None
+            or not self._is_retryable_model_auth_error(error)
+        ):
+            return False
+
+        try:
+            with self._model_reload_lock:
+                logger.info(
+                    f"Agent {self.agent_name} refreshing model after "
+                    "subscription auth error"
+                )
+                model = self._model_reload_callback()
+                self.model_backend = (
+                    model
+                    if isinstance(model, ModelManager)
+                    else ModelManager(
+                        model,
+                        scheduling_strategy=self.model_backend.scheduling_strategy.__name__,
+                    )
+                )
+                self.model_type = self.model_backend.model_type
+            return True
+        except Exception as reload_error:
+            logger.warning(
+                f"Agent {self.agent_name} failed to refresh model after "
+                f"auth error: {reload_error}"
+            )
+            return False
+
+    async def _areload_model_after_auth_error(
+        self, error: BaseException
+    ) -> bool:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, self._reload_model_after_auth_error, error
+        )
+
+    def _send_agent_deactivate(self, message: str, tokens: int) -> None:
+        """Send agent deactivation event to the frontend.
+
+        Args:
+            message: The accumulated message content
+            tokens: The total token count used
+        """
+        if self._camel_has_request_usage:
+            tokens = 0
+        # A missing lock (task stopped mid-step) must not fail the step.
+        task_lock = get_task_lock_if_exists(self.api_task_id)
+        if task_lock is None:
+            logger.warning(
+                "Task lock %s missing; dropping deactivate event for %s",
+                self.api_task_id,
+                self.agent_name,
+            )
+            return
+        _schedule_async_task(
+            task_lock.put_queue(
+                ActionDeactivateAgentData(
+                    data={
+                        "agent_name": self.agent_name,
+                        "process_task_id": self.process_task_id,
+                        "agent_id": self.agent_id,
+                        "message": message,
+                        "tokens": tokens,
+                    },
+                )
+            )
+        )
+
+    @staticmethod
+    def _extract_tokens(response) -> int:
+        """Extract total token count from a response chunk.
+
+        Args:
+            response: The response chunk (ChatAgentResponse or similar)
+
+        Returns:
+            Total token count or 0 if not available
+        """
+        if response is None:
+            return 0
+        usage_info = (
+            response.info.get("usage")
+            or response.info.get("token_usage")
+            or {}
+        )
+        return usage_info.get("total_tokens", 0)
+
+    def _stream_chunks(
+        self,
+        response_gen,
+        input_message: BaseMessage | str | None = None,
+        response_format: type[BaseModel] | None = None,
+        auth_retry_available: bool = True,
+    ):
+        """Generator that wraps a streaming response.
+
+        Sends chunks to frontend.
+
+        Args:
+            response_gen: The original streaming response generator
+
+        Yields:
+            Each chunk from the original generator
+
+        Returns:
+            Tuple of (accumulated_content, total_tokens) via
+            StopIteration value
+        """
+        accumulated_content = ""
+        last_chunk = None
+
+        try:
+            try:
+                for chunk in response_gen:
+                    last_chunk = chunk
+                    if chunk.msg and chunk.msg.content:
+                        accumulated_content += chunk.msg.content
+                    yield chunk
+            except ModelProcessingError as error:
+                can_retry = (
+                    auth_retry_available
+                    and input_message is not None
+                    and not accumulated_content
+                    and self._reload_model_after_auth_error(error)
+                )
+                if not can_retry:
+                    raise
+
+                retry_response = ChatAgent.step(
+                    self, input_message, response_format
+                )
+                if isinstance(retry_response, StreamingChatAgentResponse):
+                    for chunk in retry_response:
+                        last_chunk = chunk
+                        if chunk.msg and chunk.msg.content:
+                            accumulated_content += chunk.msg.content
+                        yield chunk
+                else:
+                    last_chunk = retry_response
+                    if retry_response.msg and retry_response.msg.content:
+                        accumulated_content += retry_response.msg.content
+                    yield retry_response
+        finally:
+            total_tokens = self._extract_tokens(last_chunk)
+            self._send_agent_deactivate(accumulated_content, total_tokens)
+
+    async def _astream_chunks(
+        self,
+        response_gen,
+        input_message: BaseMessage | str | None = None,
+        response_format: type[BaseModel] | None = None,
+        auth_retry_available: bool = True,
+    ):
+        """Async generator that wraps a streaming response.
+
+        Sends chunks to frontend.
+
+        Args:
+            response_gen: The original async streaming response generator
+
+        Yields:
+            Each chunk from the original generator
+        """
+        accumulated_content = ""
+        last_chunk = None
+
+        try:
+            try:
+                async for chunk in response_gen:
+                    last_chunk = chunk
+                    if chunk.msg and chunk.msg.content:
+                        delta_content = chunk.msg.content
+                        accumulated_content += delta_content
+                    yield chunk
+            except ModelProcessingError as error:
+                can_retry = (
+                    auth_retry_available
+                    and input_message is not None
+                    and not accumulated_content
+                    and await self._areload_model_after_auth_error(error)
+                )
+                if not can_retry:
+                    raise
+
+                retry_response = await ChatAgent.astep(
+                    self, input_message, response_format
+                )
+                if isinstance(retry_response, AsyncStreamingChatAgentResponse):
+                    async for chunk in retry_response:
+                        last_chunk = chunk
+                        if chunk.msg and chunk.msg.content:
+                            delta_content = chunk.msg.content
+                            accumulated_content += delta_content
+                        yield chunk
+                else:
+                    last_chunk = retry_response
+                    if retry_response.msg and retry_response.msg.content:
+                        accumulated_content += retry_response.msg.content
+                    yield retry_response
+        finally:
+            total_tokens = self._extract_tokens(last_chunk)
+            self._send_agent_deactivate(accumulated_content, total_tokens)
+
+    def step(
+        self,
+        input_message: BaseMessage | str,
+        response_format: type[BaseModel] | None = None,
+    ) -> ChatAgentResponse | StreamingChatAgentResponse:
+        task_lock = get_task_lock(self.api_task_id)
+        _schedule_async_task(
+            task_lock.put_queue(
+                ActionActivateAgentData(
+                    data={
+                        "agent_name": self.agent_name,
+                        "process_task_id": self.process_task_id,
+                        "agent_id": self.agent_id,
+                        "message": (
+                            input_message.content
+                            if isinstance(input_message, BaseMessage)
+                            else input_message
+                        ),
+                    },
+                )
+            )
+        )
+        error_info = None
+        message = None
+        res = None
+        msg = (
+            input_message.content
+            if isinstance(input_message, BaseMessage)
+            else input_message
+        )
+        logger.info(
+            f"Agent {self.agent_name} starting step with message: {msg}"
+        )
+        auth_retried = False
+
+        try:
+            res = super().step(input_message, response_format)
+        except ModelProcessingError as e:
+            if self._reload_model_after_auth_error(e):
+                auth_retried = True
+                try:
+                    res = super().step(input_message, response_format)
+                except ModelProcessingError as retry_error:
+                    e = retry_error
+
+            if res is not None:
+                error_info = None
+            else:
+                error_info = e
+                if "Budget has been exceeded" in str(e):
+                    message = "Budget has been exceeded"
+                    logger.warning(f"Agent {self.agent_name} budget exceeded")
+                    _schedule_async_task(
+                        task_lock.put_queue(ActionBudgetNotEnough())
+                    )
+                else:
+                    message = str(e)
+                    logger.error(
+                        f"Agent {self.agent_name} model processing error: {e}"
+                    )
+                total_tokens = 0
+        except Exception as e:
+            res = None
+            error_info = e
+            logger.error(
+                f"Agent {self.agent_name} unexpected error in step: {e}",
+                exc_info=True,
+            )
+            message = f"Error processing message: {e!s}"
+            total_tokens = 0
+
+        if res is not None:
+            if isinstance(res, StreamingChatAgentResponse):
+                # Use reusable stream wrapper to send chunks to frontend
+                return StreamingChatAgentResponse(
+                    self._stream_chunks(
+                        res,
+                        input_message,
+                        response_format,
+                        auth_retry_available=not auth_retried,
+                    )
+                )
+
+            message = res.msg.content if res.msg else ""
+            usage_info = (
+                res.info.get("usage") or res.info.get("token_usage") or {}
+            )
+            total_tokens = (
+                usage_info.get("total_tokens", 0) if usage_info else 0
+            )
+            logger.info(
+                f"Agent {self.agent_name} completed step, "
+                f"tokens used: {total_tokens}"
+            )
+
+        assert message is not None
+
+        self._send_agent_deactivate(message, total_tokens)
+
+        if error_info is not None:
+            raise error_info
+        assert res is not None
+        return res
+
+    async def astep(
+        self,
+        input_message: BaseMessage | str,
+        response_format: type[BaseModel] | None = None,
+    ) -> ChatAgentResponse | AsyncStreamingChatAgentResponse:
+        task_lock = get_task_lock(self.api_task_id)
+        await task_lock.put_queue(
+            ActionActivateAgentData(
+                action=Action.activate_agent,
+                data={
+                    "agent_name": self.agent_name,
+                    "process_task_id": self.process_task_id,
+                    "agent_id": self.agent_id,
+                    "message": (
+                        input_message.content
+                        if isinstance(input_message, BaseMessage)
+                        else input_message
+                    ),
+                },
+            )
+        )
+
+        error_info = None
+        message = None
+        res = None
+        msg = (
+            input_message.content
+            if isinstance(input_message, BaseMessage)
+            else input_message
+        )
+        logger.debug(
+            f"Agent {self.agent_name} starting async step with message: {msg}"
+        )
+
+        try:
+            res = await super().astep(input_message, response_format)
+            if isinstance(res, AsyncStreamingChatAgentResponse):
+                # Use reusable async stream wrapper to send chunks to frontend
+                return AsyncStreamingChatAgentResponse(
+                    self._astream_chunks(
+                        res,
+                        input_message,
+                        response_format,
+                        auth_retry_available=True,
+                    )
+                )
+        except ModelProcessingError as e:
+            if await self._areload_model_after_auth_error(e):
+                try:
+                    res = await super().astep(input_message, response_format)
+                    if isinstance(res, AsyncStreamingChatAgentResponse):
+                        return AsyncStreamingChatAgentResponse(
+                            self._astream_chunks(
+                                res,
+                                input_message,
+                                response_format,
+                                auth_retry_available=False,
+                            )
+                        )
+                except ModelProcessingError as retry_error:
+                    e = retry_error
+
+            if res is not None:
+                error_info = None
+            else:
+                error_info = e
+                if "Budget has been exceeded" in str(e):
+                    message = "Budget has been exceeded"
+                    logger.warning(f"Agent {self.agent_name} budget exceeded")
+                    asyncio.create_task(
+                        task_lock.put_queue(ActionBudgetNotEnough())
+                    )
+                else:
+                    message = str(e)
+                    logger.error(
+                        f"Agent {self.agent_name} model processing error: {e}"
+                    )
+                total_tokens = 0
+        except Exception as e:
+            res = None
+            error_info = e
+            logger.error(
+                f"Agent {self.agent_name} unexpected error in async step: {e}",
+                exc_info=True,
+            )
+            message = f"Error processing message: {e!s}"
+            total_tokens = 0
+
+        # For non-streaming responses, extract message and tokens from response
+        if res is not None and not isinstance(
+            res, AsyncStreamingChatAgentResponse
+        ):
+            message = res.msg.content if res.msg else ""
+            usage_info = (
+                res.info.get("usage") or res.info.get("token_usage") or {}
+            )
+            total_tokens = (
+                usage_info.get("total_tokens", 0) if usage_info else 0
+            )
+            logger.info(
+                f"Agent {self.agent_name} completed step, "
+                f"tokens used: {total_tokens}"
+            )
+
+        # Send deactivation for all non-streaming cases (success or error)
+        # Streaming responses handle deactivation in _astream_chunks
+        assert message is not None
+
+        self._send_agent_deactivate(message, total_tokens)
+
+        if error_info is not None:
+            raise error_info
+        assert res is not None
+        return res
+
+    def _handle_batch_response(self, response):  # type: ignore[override]
+        """Guard against malformed model tool-call arguments.
+
+        CAMEL's `_handle_batch_response` does a bare
+        `json.loads(tool_call.function.arguments)`; when the model emits
+        invalid or truncated JSON for a tool call (e.g. finish_reason=length,
+        or a provider quirk) that raises `JSONDecodeError` and kills the entire
+        agent turn ("Expecting value: line 1 column N").
+
+        Two-layer recovery, coordinated with `_aget_model_response`:
+
+        - First pass (`_reject_malformed_tool_args` True): raise
+          `_MalformedToolCallArgs` so the caller re-requests the completion
+          once. Re-asking the model is the only *safe* way to recover a
+          truncated tool call -- repairing partial JSON would risk executing a
+          half-formed command.
+        - Retry pass (flag False): if the model is *still* malformed, log the
+          raw payload (for diagnosis) and fall back to empty args so the tool
+          fails cleanly at execution -- the model sees the tool error and can
+          retry -- instead of crashing the turn. Substituting (not dropping)
+          preserves the 1:1 tool_call -> tool_result contract the history
+          requires.
+        """
+        try:
+            choices = getattr(response, "choices", None) or []
+            message = choices[0].message if choices else None
+            tool_calls = (
+                getattr(message, "tool_calls", None) if message else None
+            )
+        except (AttributeError, IndexError):
+            tool_calls = None
+
+        malformed: list[tuple[Any, str, Exception]] = []
+        for tool_call in tool_calls or []:
+            func = getattr(tool_call, "function", None)
+            raw = getattr(func, "arguments", None) if func else None
+            if not isinstance(raw, str):
+                continue
+            try:
+                json.loads(raw)
+            except (json.JSONDecodeError, ValueError) as exc:
+                malformed.append((func, raw, exc))
+
+        if malformed:
+            if getattr(self, "_reject_malformed_tool_args", False):
+                first_func, _, first_exc = malformed[0]
+                raise _MalformedToolCallArgs(
+                    f"{getattr(first_func, 'name', '?')}: {first_exc}"
+                )
+            for func, raw, exc in malformed:
+                logger.warning(
+                    "Agent %s got unparseable tool-call arguments for '%s' "
+                    "(%s); raw=%r -- substituting empty args so the turn "
+                    "survives and the model can retry.",
+                    self.agent_name,
+                    getattr(func, "name", "?"),
+                    exc,
+                    raw,
+                )
+                try:
+                    func.arguments = "{}"
+                except Exception:  # pragma: no cover - defensive
+                    logger.error(
+                        "Could not overwrite malformed tool-call arguments; "
+                        "the turn may still fail to parse."
+                    )
+
+        return super()._handle_batch_response(response)
+
+    async def _aget_model_response(self, *args: Any, **kwargs: Any):  # type: ignore[override]
+        """Re-request the completion once if the model returns unparseable
+        tool-call arguments, before falling back to empty-arg sanitization.
+
+        The first attempt asks `_handle_batch_response` to reject malformed
+        arguments (raising `_MalformedToolCallArgs`); a truncated/garbled tool
+        call is usually transient, so a single fresh completion typically comes
+        back clean and the user never sees a bogus empty-arg tool run (or, under
+        governance, a spurious approval prompt for an empty command). If the
+        retry is still malformed, the flag is off and `_handle_batch_response`
+        degrades gracefully instead of looping.
+        """
+        self._reject_malformed_tool_args = True
+        try:
+            return await super()._aget_model_response(*args, **kwargs)
+        except _MalformedToolCallArgs as exc:
+            logger.warning(
+                "Agent %s: model returned unparseable tool-call arguments "
+                "(%s); re-requesting the completion once.",
+                self.agent_name,
+                exc,
+            )
+        finally:
+            self._reject_malformed_tool_args = False
+        return await super()._aget_model_response(*args, **kwargs)
+
+    def _execute_tool(
+        self, tool_call_request: ToolCallRequest
+    ) -> ToolCallingRecord:
+        func_name = tool_call_request.tool_name
+        tool: FunctionTool = self._internal_tools[func_name]
+        # Route async functions to async execution
+        # even if they have __wrapped__
+        if asyncio.iscoroutinefunction(tool.func):
+            # For async functions, we need to use the async execution path
+            return asyncio.run(self._aexecute_tool(tool_call_request))
+
+        # Handle all sync tools ourselves to maintain ContextVar context
+        args = tool_call_request.args
+        tool_call_id = tool_call_request.tool_call_id
+
+        # Check if tool is wrapped by @listen_toolkit decorator
+        # If so, the decorator will handle activate/deactivate events
+        # TODO: Refactor - current marker detection is a workaround.
+        # The proper fix is to unify event sending:
+        # remove activate/deactivate from @listen_toolkit, only send here
+        has_listen_decorator = getattr(tool.func, "__listen_toolkit__", False)
+
+        try:
+            task_lock = get_task_lock(self.api_task_id)
+
+            toolkit_name = (
+                tool._toolkit_name
+                if hasattr(tool, "_toolkit_name")
+                else "mcp_toolkit"
+            )
+            logger.debug(
+                f"Agent {self.agent_name} executing tool: "
+                f"{func_name} from toolkit: {toolkit_name} "
+                f"with args: {json.dumps(args, ensure_ascii=False)}"
+            )
+
+            # Only send activate event if tool is
+            # NOT wrapped by @listen_toolkit
+            if not has_listen_decorator:
+                _schedule_async_task(
+                    task_lock.put_queue(
+                        ActionActivateToolkitData(
+                            data={
+                                "agent_name": self.agent_name,
+                                "process_task_id": self.process_task_id,
+                                "toolkit_name": toolkit_name,
+                                "method_name": func_name,
+                                "message": json.dumps(
+                                    args, ensure_ascii=False
+                                ),
+                            },
+                        )
+                    )
+                )
+            # Set process_task context for all tool executions
+            with set_process_task(self.process_task_id):
+                raw_result = tool(**args)
+            logger.debug(f"Tool {func_name} executed successfully")
+            if self.mask_tool_output:
+                self._secure_result_store[tool_call_id] = raw_result
+                result = (
+                    "[The tool has been executed successfully, but the output"
+                    " from the tool is masked. You can move forward]"
+                )
+                mask_flag = True
+            else:
+                result = raw_result
+                mask_flag = False
+            # Prepare result message with truncation
+            if isinstance(result, str):
+                result_msg = result
+            else:
+                result_str = repr(result)
+                MAX_RESULT_LENGTH = 500
+                if len(result_str) > MAX_RESULT_LENGTH:
+                    result_msg = result_str[:MAX_RESULT_LENGTH] + (
+                        f"... (truncated, total length: "
+                        f"{len(result_str)} chars)"
+                    )
+                else:
+                    result_msg = result_str
+
+            # Only send deactivate event if tool is
+            # NOT wrapped by @listen_toolkit
+            if not has_listen_decorator:
+                _schedule_async_task(
+                    task_lock.put_queue(
+                        ActionDeactivateToolkitData(
+                            data={
+                                "agent_name": self.agent_name,
+                                "process_task_id": self.process_task_id,
+                                "toolkit_name": toolkit_name,
+                                "method_name": func_name,
+                                "message": result_msg,
+                            },
+                        )
+                    )
+                )
+        except Exception as e:
+            # Capture the error message to prevent framework crash
+            error_msg = f"Error executing tool '{func_name}': {e!s}"
+            result = f"Tool execution failed: {error_msg}"
+            mask_flag = False
+            logger.error(
+                f"Tool execution failed for {func_name}: {e}", exc_info=True
+            )
+
+        return self._record_tool_calling(
+            func_name,
+            args,
+            result,
+            tool_call_id,
+            mask_output=mask_flag,
+            extra_content=tool_call_request.extra_content,
+        )
+
+    def _tool_call_request_from_stream_data(
+        self, tool_call_data: dict[str, Any]
+    ) -> ToolCallRequest:
+        function_data = tool_call_data.get("function") or {}
+        raw_args = function_data.get("arguments") or "{}"
+        if isinstance(raw_args, str):
+            args = json.loads(raw_args)
+        elif isinstance(raw_args, dict):
+            args = raw_args
+        else:
+            args = {"arguments": raw_args}
+
+        if not isinstance(args, dict):
+            args = {"arguments": args}
+
+        return ToolCallRequest(
+            tool_name=function_data.get("name", ""),
+            args=args,
+            tool_call_id=tool_call_data.get("id")
+            or tool_call_data.get("call_id", ""),
+            extra_content=tool_call_data.get("extra_content"),
+        )
+
+    def _execute_tool_from_stream_data(
+        self, tool_call_data: dict[str, Any]
+    ) -> ToolCallingRecord | None:
+        try:
+            tool_call_request = self._tool_call_request_from_stream_data(
+                tool_call_data
+            )
+            if tool_call_request.tool_name not in self._internal_tools:
+                return super()._execute_tool_from_stream_data(tool_call_data)
+            return self._execute_tool(tool_call_request)
+        except Exception as e:
+            logger.error(f"Error processing streaming tool call: {e}")
+            return None
+
+    async def _aexecute_tool(
+        self, tool_call_request: ToolCallRequest
+    ) -> ToolCallingRecord:
+        func_name = tool_call_request.tool_name
+        tool: FunctionTool = self._internal_tools[func_name]
+
+        # Always handle tool execution ourselves to maintain ContextVar context
+        args = tool_call_request.args
+        tool_call_id = tool_call_request.tool_call_id
+        task_lock = get_task_lock(self.api_task_id)
+
+        # Try to get the real toolkit name
+        toolkit_name = None
+
+        # Method 1: Check _toolkit_name attribute
+        if hasattr(tool, "_toolkit_name"):
+            toolkit_name = tool._toolkit_name
+
+        # Method 2: For MCP tools, check if func has __self__
+        # (the toolkit instance)
+        if (
+            not toolkit_name
+            and hasattr(tool, "func")
+            and hasattr(tool.func, "__self__")
+        ):
+            toolkit_instance = tool.func.__self__
+            if hasattr(toolkit_instance, "toolkit_name") and callable(
+                toolkit_instance.toolkit_name
+            ):
+                toolkit_name = toolkit_instance.toolkit_name()
+
+        # Method 3: Check if tool.func is a bound method with toolkit
+        if not toolkit_name and hasattr(tool, "func"):
+            if hasattr(tool.func, "func") and hasattr(
+                tool.func.func, "__self__"
+            ):
+                toolkit_instance = tool.func.func.__self__
+                if hasattr(toolkit_instance, "toolkit_name") and callable(
+                    toolkit_instance.toolkit_name
+                ):
+                    toolkit_name = toolkit_instance.toolkit_name()
+
+        # Default fallback
+        if not toolkit_name:
+            toolkit_name = "mcp_toolkit"
+
+        logger.info(
+            f"Agent {self.agent_name} executing async tool: {func_name} "
+            f"from toolkit: {toolkit_name} "
+            f"with args: {json.dumps(args, ensure_ascii=False)}"
+        )
+
+        # Check if tool is wrapped by @listen_toolkit decorator
+        # If so, the decorator will handle activate/deactivate events
+        has_listen_decorator = getattr(tool.func, "__listen_toolkit__", False)
+
+        # Only send activate event if tool is NOT wrapped by @listen_toolkit
+        if not has_listen_decorator:
+            await task_lock.put_queue(
+                ActionActivateToolkitData(
+                    data={
+                        "agent_name": self.agent_name,
+                        "process_task_id": self.process_task_id,
+                        "toolkit_name": toolkit_name,
+                        "method_name": func_name,
+                        "message": json.dumps(args, ensure_ascii=False),
+                    },
+                )
+            )
+        try:
+            # Set process_task context for all tool executions
+            with set_process_task(self.process_task_id):
+                # Try different invocation paths in order of preference
+                if hasattr(tool, "func") and hasattr(tool.func, "async_call"):
+                    # MCP FunctionTool: always use async_call (sync wrapper can timeout)
+                    result = await tool.func.async_call(**args)
+
+                elif hasattr(tool, "async_call") and callable(tool.async_call):
+                    # Case: tool itself has async_call
+                    # Check if this is a sync tool to avoid run_in_executor
+                    # (which breaks ContextVar)
+                    if hasattr(tool, "is_async") and not tool.is_async:
+                        # Sync tool: call directly to preserve ContextVar
+                        # in same thread
+                        result = tool(**args)
+                        # Handle case where sync call returns a coroutine
+                        if asyncio.iscoroutine(result):
+                            result = await result
+                    else:
+                        # Async tool: use async_call
+                        result = await tool.async_call(**args)
+
+                elif hasattr(tool, "func") and asyncio.iscoroutinefunction(
+                    tool.func
+                ):
+                    # Case: tool wraps a direct async function
+                    result = await tool.func(**args)
+
+                elif asyncio.iscoroutinefunction(tool):
+                    # Case: tool is itself a coroutine function
+                    result = await tool(**args)
+
+                else:
+                    # Fallback: sync call - call directly in current context
+                    # DO NOT use run_in_executor to preserve ContextVar
+                    result = tool(**args)
+                    # Handle case where synchronous call returns a coroutine
+                    if asyncio.iscoroutine(result):
+                        result = await result
+
+        except Exception as e:
+            # Capture the error message to prevent framework crash
+            error_msg = f"Error executing async tool '{func_name}': {e!s}"
+            result = {"error": error_msg}
+            logger.error(
+                f"Async tool execution failed for {func_name}: {e}",
+                exc_info=True,
+            )
+
+        # Prepare result message with truncation
+        if isinstance(result, str):
+            result_msg = result
+        else:
+            result_str = repr(result)
+            MAX_RESULT_LENGTH = 500
+            if len(result_str) > MAX_RESULT_LENGTH:
+                result_msg = (
+                    result_str[:MAX_RESULT_LENGTH]
+                    + f"... (truncated, total length: {len(result_str)} chars)"
+                )
+            else:
+                result_msg = result_str
+
+        # Only send deactivate event if tool is NOT wrapped by @listen_toolkit
+        if not has_listen_decorator:
+            await task_lock.put_queue(
+                ActionDeactivateToolkitData(
+                    data={
+                        "agent_name": self.agent_name,
+                        "process_task_id": self.process_task_id,
+                        "toolkit_name": toolkit_name,
+                        "method_name": func_name,
+                        "message": result_msg,
+                    },
+                )
+            )
+        return self._record_tool_calling(
+            func_name,
+            args,
+            result,
+            tool_call_id,
+            extra_content=tool_call_request.extra_content,
+        )
+
+    async def _aexecute_tool_from_stream_data(
+        self, tool_call_data: dict[str, Any]
+    ) -> ToolCallingRecord | None:
+        try:
+            tool_call_request = self._tool_call_request_from_stream_data(
+                tool_call_data
+            )
+            if tool_call_request.tool_name not in self._internal_tools:
+                return await super()._aexecute_tool_from_stream_data(
+                    tool_call_data
+                )
+            return await self._aexecute_tool(tool_call_request)
+        except Exception as e:
+            logger.error(f"Error processing async streaming tool call: {e}")
+            return None
+
+    def clone(self, with_memory: bool = False) -> ChatAgent:
+        """Please see super.clone()"""
+        system_message = None if with_memory else self._original_system_message
+
+        # If this agent has CDP acquire callback, acquire CDP BEFORE cloning
+        # tools so that HybridBrowserToolkit clones with the correct CDP port
+        new_cdp_port = None
+        new_cdp_url = None
+        new_cdp_session = None
+        has_cdp = hasattr(self, "_cdp_acquire_callback") and callable(
+            getattr(self, "_cdp_acquire_callback", None)
+        )
+
+        need_cdp_clone = False
+        if has_cdp and hasattr(self, "_cdp_options"):
+            options = self._cdp_options
+            cdp_browsers = getattr(options, "cdp_browsers", [])
+            if cdp_browsers and getattr(self, "_browser_toolkit", None):
+                need_cdp_clone = True
+                import uuid as _uuid
+
+                from app.agent.factory.browser import _cdp_pool_manager
+
+                new_cdp_session = str(_uuid.uuid4())[:8]
+                selected = _cdp_pool_manager.acquire_browser(
+                    cdp_browsers,
+                    new_cdp_session,
+                    getattr(self, "_cdp_task_id", None),
+                )
+                from app.agent.factory.browser import (
+                    _get_browser_endpoint,
+                    _get_browser_port,
+                )
+
+                if selected:
+                    new_cdp_port = _get_browser_port(selected)
+                    new_cdp_url = _get_browser_endpoint(selected)
+                else:
+                    fallback_browser = cdp_browsers[0]
+                    new_cdp_port = _get_browser_port(fallback_browser)
+                    new_cdp_url = _get_browser_endpoint(fallback_browser)
+
+        if need_cdp_clone:
+            # Temporarily override the browser toolkit's CDP URL.
+            # Lock prevents concurrent clones from clobbering each
+            # other's cdp_url on the shared parent toolkit.
+            toolkit = self._browser_toolkit
+            with ListenChatAgent._cdp_clone_lock:
+                original_cdp_url = (
+                    toolkit.config_loader.get_browser_config().cdp_url
+                )
+                toolkit.config_loader.get_browser_config().cdp_url = (
+                    new_cdp_url
+                )
+                try:
+                    cloned_tools, toolkits_to_register = self._clone_tools()
+                except Exception:
+                    _cdp_pool_manager.release_browser(
+                        new_cdp_port, new_cdp_session
+                    )
+                    raise
+                finally:
+                    toolkit.config_loader.get_browser_config().cdp_url = (
+                        original_cdp_url
+                    )
+        else:
+            cloned_tools, toolkits_to_register = self._clone_tools()
+
+        clone_kwargs: dict[str, Any] = {}
+        if self._user_on_request_usage is not None:
+            clone_kwargs["on_request_usage"] = self._user_on_request_usage
+
+        new_agent = ListenChatAgent(
+            api_task_id=self.api_task_id,
+            agent_name=self.agent_name,
+            system_message=system_message,
+            model=self.model_backend.models,  # Pass the existing model_backend
+            memory=None,  # clone memory later
+            message_window_size=getattr(self.memory, "window_size", None),
+            token_limit=getattr(
+                self.memory.get_context_creator(), "token_limit", None
+            ),
+            output_language=self._output_language,
+            tools=cloned_tools,
+            toolkits_to_register_agent=toolkits_to_register,
+            external_tools=[
+                schema for schema in self._external_tool_schemas.values()
+            ],
+            response_terminators=self.response_terminators,
+            scheduling_strategy=self.model_backend.scheduling_strategy.__name__,
+            max_iteration=self.max_iteration,
+            stop_event=self.stop_event,
+            tool_execution_timeout=self.tool_execution_timeout,
+            mask_tool_output=self.mask_tool_output,
+            pause_event=self.pause_event,
+            prune_tool_calls_from_memory=self.prune_tool_calls_from_memory,
+            enable_snapshot_clean=self._enable_snapshot_clean,
+            step_timeout=self.step_timeout,
+            stream_accumulate=self.stream_accumulate,
+            **clone_kwargs,
+        )
+
+        new_agent.process_task_id = self.process_task_id
+
+        # Copy CDP management data to cloned agent
+        if has_cdp:
+            new_agent._cdp_acquire_callback = self._cdp_acquire_callback
+            new_agent._cdp_release_callback = self._cdp_release_callback
+            if hasattr(self, "_cdp_options"):
+                new_agent._cdp_options = self._cdp_options
+            if hasattr(self, "_cdp_task_id"):
+                new_agent._cdp_task_id = self._cdp_task_id
+
+            # Find and store the cloned browser toolkit on the new agent
+            for tk in toolkits_to_register:
+                if tk.__class__.__name__ == "HybridBrowserToolkit":
+                    new_agent._browser_toolkit = tk
+                    break
+
+            # Set CDP info on cloned agent
+            if new_cdp_port is not None and new_cdp_session is not None:
+                new_agent._cdp_port = new_cdp_port
+                new_agent._cdp_url = new_cdp_url
+                new_agent._cdp_session_id = new_cdp_session
+            else:
+                if hasattr(self, "_cdp_port"):
+                    new_agent._cdp_port = self._cdp_port
+                if hasattr(self, "_cdp_url"):
+                    new_agent._cdp_url = self._cdp_url
+                if hasattr(self, "_cdp_session_id"):
+                    new_agent._cdp_session_id = self._cdp_session_id
+
+        # Copy memory if requested
+        if with_memory:
+            # Get all records from the current memory
+            context_records = self.memory.retrieve()
+            # Write them to the new agent's memory
+            for context_record in context_records:
+                new_agent.memory.write_record(context_record.memory_record)
+
+        return new_agent

@@ -25,16 +25,24 @@
     "@theia/editor": "1.60.0",
     "@theia/file-search": "1.60.0",
     "@theia/filesystem": "1.60.0",
+    "@theia/git": "1.60.0",
     "@theia/markers": "1.60.0",
+    "@theia/scm": "1.60.0",
+    "@theia/scm-extra": "1.60.0",
     "@theia/messages": "1.60.0",
     "@theia/monaco": "1.60.0",
     "@theia/navigator": "1.60.0",
+    "@theia/plugin-ext": "1.60.0",
+    "@theia/plugin-ext-vscode": "1.60.0",
     "@theia/preferences": "1.60.0",
     "@theia/process": "1.60.0",
     "@theia/search-in-workspace": "1.60.0",
     "@theia/terminal": "1.60.0",
+    "@theia/vsx-registry": "1.60.0",
     "@theia/workspace": "1.60.0",
-    "eigent-agent": "file:packages/eigent-agent"
+    "eigent-agent": "file:packages/eigent-agent",
+    "eigent-languages": "file:packages/eigent-languages",
+    "lodash": "^4.18.1"
   },
   "devDependencies": {
     "@theia/cli": "1.60.0",
@@ -47,7 +55,9 @@
     "clean": "theia clean",
     "build": "theia build --mode development",
     "build:prod": "theia build --mode production",
-    "start": "theia start --hostname 127.0.0.1 --port 3000",
-    "watch": "theia build --watch --mode development"
+    "start": "THEIA_WEBVIEW_EXTERNAL_ENDPOINT='{{hostname}}' theia start --hostname 0.0.0.0 --port 3000",
+    "watch": "theia build --watch --mode development",
+    "build:agent-ui": "npm --prefix agent-ui run build:agent-embed && npm run sync:agent-bundle",
+    "sync:agent-bundle": "cp agent-ui/dist-agent-embed/agent-embed.umd.js agent-ui/dist-agent-embed/style.css packages/eigent-agent/assets/agent-embed/ && echo synced"
   }
 }
