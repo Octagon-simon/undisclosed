@@ -393,7 +393,7 @@ def ensure_cdp_browser_available(port: int = DEFAULT_CDP_PORT) -> bool:
         return False
 
     user_data_dir = os.path.expanduser(
-        f"~/.eigent/browser_profiles/cdp_brain_{port}"
+        f"~/.undisclosed/browser_profiles/cdp_brain_{port}"
     )
     proc = _launch_browser(executable, port, user_data_dir)
     if not proc:

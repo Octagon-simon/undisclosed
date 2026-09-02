@@ -64,7 +64,7 @@ from app.utils.event_loop_utils import set_main_event_loop
 
 os.environ["PYTHONIOENCODING"] = "utf-8"
 _fallback_camel_log_dir = (
-    pathlib.Path.home() / ".eigent" / "fallback" / "camel_logs"
+    pathlib.Path.home() / ".undisclosed" / "fallback" / "camel_logs"
 )
 _fallback_camel_log_dir.mkdir(parents=True, exist_ok=True)
 os.environ.setdefault("CAMEL_LOG_DIR", str(_fallback_camel_log_dir))

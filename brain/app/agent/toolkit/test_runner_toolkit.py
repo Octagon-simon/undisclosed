@@ -89,16 +89,16 @@ class TestRunnerToolkit(BaseToolkit, AbstractToolkit):
         override = env("EIGENT_SKILLS_DIR", "")
         if override:
             candidates.append(Path(override) / _SKILL_NAME / "SKILL.md")
-        home_skills = Path.home() / ".eigent"
+        home_skills = Path.home() / ".undisclosed"
         candidates.append(home_skills / "skills" / _SKILL_NAME / "SKILL.md")
-        # user-scoped (~/.eigent/user_*/skills/lacuna-cli/SKILL.md)
+        # user-scoped (~/.undisclosed/user_*/skills/lacuna-cli/SKILL.md)
         candidates.extend(
             sorted(home_skills.glob(f"user_*/skills/{_SKILL_NAME}/SKILL.md"))
         )
-        # project-local (<workdir>/.eigent/skills/lacuna-cli/SKILL.md)
+        # project-local (<workdir>/.undisclosed/skills/lacuna-cli/SKILL.md)
         candidates.append(
             Path(self.working_directory)
-            / ".eigent"
+            / ".undisclosed"
             / "skills"
             / _SKILL_NAME
             / "SKILL.md"
@@ -167,7 +167,7 @@ class TestRunnerToolkit(BaseToolkit, AbstractToolkit):
         if not path:
             return (
                 "[skill not found]: could not locate the lacuna-cli SKILL.md. "
-                "Expected under ~/.eigent/skills/lacuna-cli/SKILL.md."
+                "Expected under ~/.undisclosed/skills/lacuna-cli/SKILL.md."
             )
         try:
             text = path.read_text(encoding="utf-8")

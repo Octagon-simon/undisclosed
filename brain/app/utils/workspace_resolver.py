@@ -44,7 +44,7 @@ except ImportError:  # pragma: no cover - Windows fallback
 
 logger = logging.getLogger("workspace_resolver")
 BindingSource = Literal["space_local_brain", "default"]
-WORKDIR_MARKER = ".eigent-workdir.json"
+WORKDIR_MARKER = ".undisclosed-workdir.json"
 COPY_IGNORE_DIRS = {
     ".git",
     ".hg",

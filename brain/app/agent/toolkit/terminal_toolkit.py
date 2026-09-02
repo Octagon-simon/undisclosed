@@ -48,7 +48,7 @@ def get_terminal_base_venv_path() -> str:
     """Get the path to the terminal base venv created during app installation."""
     return os.path.join(
         os.path.expanduser("~"),
-        ".eigent",
+        ".undisclosed",
         "venvs",
         f"terminal_base-{APP_VERSION}",
     )
@@ -79,7 +79,7 @@ class TerminalToolkit(BaseTerminalToolkit, AbstractToolkit):
 
         # Get base directory from environment
         base_dir = env(
-            "file_save_path", os.path.expanduser("~/.eigent/terminal/")
+            "file_save_path", os.path.expanduser("~/.undisclosed/terminal/")
         )
 
         if working_directory is None:

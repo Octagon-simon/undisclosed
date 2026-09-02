@@ -18,10 +18,10 @@ Local chat-history / user platform API.
 This controller makes eigent-theia self-contained: it serves the REST
 surface that the agent panel and History sidebar expect (`/api/v1/user/*`,
 `/api/v1/chat/histories*`, `/api/v1/chat/history/*`) using LOCAL persistence
-under `~/.eigent/`. No external eigent/server Docker stack is required.
+under `~/.undisclosed/`. No external eigent/server Docker stack is required.
 
 History records are projected from the already-persisted turn store that the
-agent brain writes (`~/.eigent/turns/<chatId>/turn_*.json`), so the data shown
+agent brain writes (`~/.undisclosed/turns/<chatId>/turn_*.json`), so the data shown
 here is real conversation data, not fabricated.
 """
 
@@ -34,22 +34,24 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Body, Query
+from enum import IntEnum
+from fastapi import APIRouter, Body, Query, HTTPException, Response
+from pydantic import BaseModel, Field, AliasChoices, field_validator
 
 logger = logging.getLogger("chat_platform_controller")
 router = APIRouter()
 
 
 # --------------------------------------------------------------------------
-# Persistence helpers (local, under ~/.eigent)
+# Persistence helpers (local, under ~/.undisclosed)
 # --------------------------------------------------------------------------
 
 def _home() -> Path:
-    return Path.home() / ".eigent"
+    return Path.home() / ".undisclosed"
 
 
 def _turns_root() -> Path:
-    root = Path.home() / ".eigent" / "turns"
+    root = Path.home() / ".undisclosed" / "turns"
     root.mkdir(parents=True, exist_ok=True)
     return root
 
@@ -81,7 +83,7 @@ def _build_history_items() -> list[dict]:
     """
     Project HistoryTask records from the persisted turn store.
 
-    Each chat directory under ~/.eigent/turns/ is treated as one task entry;
+    Each chat directory under ~/.undisclosed/turns/ is treated as one task entry;
     its question comes from the first userMessage, timestamps from file mtime,
     status = 2 (done). Schema matches agent-ui/src/types/history.d.ts.
     """
@@ -342,3 +344,534 @@ async def rename_project(project_id: str, new_name: str = Query(...)):
         json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     return {"project_id": project_id, "project_name": new_name}
+
+
+@router.post("/chat/history")
+async def create_history(data: dict = Body(...)):
+    from datetime import datetime
+    project_id = data.get("project_id") or data.get("task_id")
+    project_name = data.get("project_name") or data.get("question")
+    if project_id and project_name:
+        await rename_project(project_id, project_name)
+
+    now_iso = datetime.now().isoformat()
+    return {
+        "id": 1,
+        "task_id": data.get("task_id") or project_id,
+        "project_id": project_id,
+        "run_id": data.get("run_id") or data.get("task_id") or project_id,
+        "space_id": data.get("space_id") or "default",
+        "question": data.get("question") or "",
+        "project_name": project_name,
+        "status": data.get("status", 2),
+        "tokens": data.get("tokens", 0),
+        "summary": data.get("summary"),
+        "created_at": now_iso,
+        "updated_at": now_iso,
+    }
+
+
+@router.put("/chat/history/{history_id}")
+async def update_history(history_id: str, data: dict = Body(...)):
+    project_name = data.get("project_name")
+    if project_name:
+        await rename_project(history_id, project_name)
+
+    return {
+        "id": history_id,
+        "task_id": history_id,
+        "project_id": history_id,
+        "project_name": project_name,
+        **data
+    }
+
+
+@router.get("/server/capabilities")
+async def get_server_capabilities():
+    return {
+        "features": {
+            "connector_gateway": {
+                "enabled": False,
+                "provider": None,
+                "reason": "standalone"
+            }
+        }
+    }
+
+
+# --------------------------------------------------------------------------
+# Providers Endpoint Group
+# --------------------------------------------------------------------------
+
+class VaildStatus(IntEnum):
+    not_valid = 1
+    is_valid = 2
+
+
+class ProviderIn(BaseModel):
+    provider_name: str
+    model_type: str
+    api_key: str
+    endpoint_url: str = ""
+    encrypted_config: dict | None = None
+    is_valid: VaildStatus = Field(
+        default=VaildStatus.not_valid,
+        validation_alias=AliasChoices("is_valid", "is_vaild"),
+    )
+    prefer: bool = False
+
+    @field_validator("is_valid", mode="before")
+    @classmethod
+    def normalize_is_valid(cls, value):
+        if isinstance(value, bool):
+            return VaildStatus.is_valid if value else VaildStatus.not_valid
+        return value
+
+
+class ProviderPreferIn(BaseModel):
+    provider_id: int
+
+
+def _providers_file() -> Path:
+    return _home() / "providers.json"
+
+
+def _load_providers() -> list[dict]:
+    p_file = _providers_file()
+    if not p_file.exists():
+        return []
+    try:
+        return json.loads(p_file.read_text(encoding="utf-8"))
+    except Exception:
+        logger.warning("Unreadable providers JSON: %s", p_file, exc_info=True)
+        return []
+
+
+def _save_providers(providers: list[dict]) -> None:
+    p_file = _providers_file()
+    try:
+        p_file.write_text(json.dumps(providers, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        logger.error("Failed to save providers JSON: %s", p_file, exc_info=True)
+
+
+@router.get("/providers")
+async def get_providers(
+    keyword: str | None = None,
+    prefer: bool | None = None,
+):
+    providers = _load_providers()
+    filtered = []
+    for p in providers:
+        if keyword and keyword.lower() not in p.get("provider_name", "").lower():
+            continue
+        if prefer is not None and p.get("prefer") != prefer:
+            continue
+        filtered.append(p)
+    return filtered
+
+
+@router.get("/provider")
+async def get_provider(id: int):
+    providers = _load_providers()
+    for p in providers:
+        if p.get("id") == id:
+            return p
+    raise HTTPException(status_code=404, detail="Provider not found")
+
+
+@router.post("/provider")
+async def create_provider(data: ProviderIn):
+    providers = _load_providers()
+    new_id = max([p.get("id", 0) for p in providers] or [0]) + 1
+    new_provider = {
+        "id": new_id,
+        "user_id": "local",
+        "provider_name": data.provider_name,
+        "model_type": data.model_type,
+        "api_key": data.api_key,
+        "endpoint_url": data.endpoint_url,
+        "encrypted_config": data.encrypted_config,
+        "prefer": data.prefer,
+        "is_valid": int(data.is_valid),
+    }
+    providers.append(new_provider)
+    _save_providers(providers)
+    return new_provider
+
+
+@router.put("/provider/{id}")
+async def update_provider(id: int, data: ProviderIn):
+    providers = _load_providers()
+    for p in providers:
+        if p.get("id") == id:
+            p["provider_name"] = data.provider_name
+            p["model_type"] = data.model_type
+            p["api_key"] = data.api_key
+            p["endpoint_url"] = data.endpoint_url
+            p["encrypted_config"] = data.encrypted_config
+            p["prefer"] = data.prefer
+            p["is_valid"] = int(data.is_valid)
+            _save_providers(providers)
+            return p
+    raise HTTPException(status_code=404, detail="Provider not found")
+
+
+@router.delete("/provider/{id}")
+async def delete_provider(id: int):
+    providers = _load_providers()
+    initial_len = len(providers)
+    providers = [p for p in providers if p.get("id") != id]
+    if len(providers) == initial_len:
+        raise HTTPException(status_code=404, detail="Provider not found")
+    _save_providers(providers)
+    return Response(status_code=204)
+
+
+@router.post("/provider/prefer")
+async def set_provider_prefer(data: ProviderPreferIn):
+    providers = _load_providers()
+    success = False
+    for p in providers:
+        if p.get("id") == data.provider_id:
+            p["prefer"] = True
+            success = True
+        else:
+            p["prefer"] = False
+    if not success:
+        raise HTTPException(status_code=404, detail="Provider not found")
+    _save_providers(providers)
+    return {"success": True}
+
+
+# --------------------------------------------------------------------------
+# Configs Endpoint Group
+# --------------------------------------------------------------------------
+
+class ConfigIn(BaseModel):
+    config_name: str
+    config_value: str
+    config_group: str
+
+
+def _configs_file() -> Path:
+    return _home() / "configs.json"
+
+
+def _load_configs() -> list[dict]:
+    c_file = _configs_file()
+    if not c_file.exists():
+        return []
+    try:
+        return json.loads(c_file.read_text(encoding="utf-8"))
+    except Exception:
+        logger.warning("Unreadable configs JSON: %s", c_file, exc_info=True)
+        return []
+
+
+def _save_configs(configs: list[dict]) -> None:
+    c_file = _configs_file()
+    try:
+        c_file.write_text(json.dumps(configs, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        logger.error("Failed to save configs JSON: %s", c_file, exc_info=True)
+
+
+@router.get("/configs")
+async def list_configs(
+    config_group: str | None = None,
+):
+    configs = _load_configs()
+    if config_group:
+        return [c for c in configs if c.get("config_group") == config_group]
+    return configs
+
+
+@router.get("/configs/{config_id}")
+async def get_config(config_id: int):
+    configs = _load_configs()
+    for c in configs:
+        if c.get("id") == config_id:
+            return c
+    raise HTTPException(status_code=404, detail="Configuration not found")
+
+
+@router.post("/configs")
+async def create_config(data: ConfigIn):
+    configs = _load_configs()
+    new_id = max([c.get("id", 0) for c in configs] or [0]) + 1
+    new_config = {
+        "id": new_id,
+        "user_id": "local",
+        "config_name": data.config_name,
+        "config_value": data.config_value,
+        "config_group": data.config_group,
+    }
+    configs.append(new_config)
+    _save_configs(configs)
+    return new_config
+
+
+@router.put("/configs/{config_id}")
+async def update_config(config_id: int, data: ConfigIn):
+    configs = _load_configs()
+    for c in configs:
+        if c.get("id") == config_id:
+            c["config_name"] = data.config_name
+            c["config_value"] = data.config_value
+            c["config_group"] = data.config_group
+            _save_configs(configs)
+            return c
+    raise HTTPException(status_code=404, detail="Configuration not found")
+
+
+@router.delete("/configs/{config_id}")
+async def delete_config(config_id: int):
+    configs = _load_configs()
+    initial_len = len(configs)
+    configs = [c for c in configs if c.get("id") != config_id]
+    if len(configs) == initial_len:
+        raise HTTPException(status_code=404, detail="Configuration not found")
+    _save_configs(configs)
+    return Response(status_code=204)
+
+
+@router.get("/config/info")
+async def get_config_info(show_all: bool = False):
+    return {
+        "Slack": {
+            "env_vars": ["SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET", "SLACK_APP_TOKEN"],
+            "toolkit": "slack_toolkit",
+            "trigger": "slack_trigger",
+        },
+        "Lark": {
+            "env_vars": ["LARK_APP_ID", "LARK_APP_SECRET"],
+            "toolkit": "lark_toolkit",
+        },
+        "Notion": {
+            "env_vars": ["MCP_REMOTE_CONFIG_DIR"],
+            "toolkit": "notion_mcp_toolkit",
+        },
+        "X(Twitter)": {
+            "env_vars": [
+                "TWITTER_CONSUMER_KEY",
+                "TWITTER_CONSUMER_SECRET",
+                "TWITTER_ACCESS_TOKEN",
+                "TWITTER_ACCESS_TOKEN_SECRET",
+            ],
+            "toolkit": "twitter_toolkit",
+        },
+        "WhatsApp": {
+            "env_vars": ["WHATSAPP_ACCESS_TOKEN", "WHATSAPP_PHONE_NUMBER_ID"],
+            "toolkit": "whatsapp_toolkit",
+        },
+        "LinkedIn": {
+            "env_vars": [
+                "LINKEDIN_CLIENT_ID",
+                "LINKEDIN_CLIENT_SECRET",
+                "LINKEDIN_ACCESS_TOKEN",
+                "LINKEDIN_REFRESH_TOKEN",
+            ],
+            "toolkit": "linkedin_toolkit",
+        },
+        "Reddit": {
+            "env_vars": [
+                "REDDIT_CLIENT_ID",
+                "REDDIT_CLIENT_SECRET",
+                "REDDIT_USER_AGENT",
+            ],
+            "toolkit": "reddit_toolkit",
+        },
+        "Search": {
+            "env_vars": ["GOOGLE_API_KEY", "SEARCH_ENGINE_ID", "EXA_API_KEY"],
+            "toolkit": "search_toolkit",
+        },
+        "Audio Analysis": {
+            "env_vars": [],
+            "toolkit": "audio_analysis_toolkit",
+        },
+        "Code Execution": {
+            "env_vars": [],
+            "toolkit": "code_execution_toolkit",
+        },
+        "Craw4ai": {
+            "env_vars": [],
+            "toolkit": "craw4ai_toolkit",
+        },
+        "Dalle": {
+            "env_vars": [],
+            "toolkit": "dalle_toolkit",
+        },
+        "Edgeone Pages MCP": {
+            "env_vars": [],
+            "toolkit": "edgeone_pages_mcp_toolkit",
+        },
+        "Excel": {
+            "env_vars": [],
+            "toolkit": "excel_toolkit",
+        },
+        "File Write": {
+            "env_vars": [],
+            "toolkit": "file_write_toolkit",
+        },
+        "Github": {
+            "env_vars": ["GITHUB_TOKEN"],
+            "toolkit": "github_toolkit",
+        },
+        "Google Calendar": {
+            "env_vars": [
+                "GOOGLE_CLIENT_ID",
+                "GOOGLE_CLIENT_SECRET",
+                "GOOGLE_REFRESH_TOKEN",
+            ],
+            "toolkit": "google_calendar_toolkit",
+        },
+        "Google Drive MCP": {
+            "env_vars": [],
+            "toolkit": "google_drive_mcp_toolkit",
+        },
+        "Google Gmail": {
+            "env_vars": [
+                "GOOGLE_CLIENT_ID",
+                "GOOGLE_CLIENT_SECRET",
+                "GOOGLE_REFRESH_TOKEN",
+                "GMAIL_GOOGLE_CLIENT_ID",
+                "GMAIL_GOOGLE_CLIENT_SECRET",
+                "GMAIL_GOOGLE_REFRESH_TOKEN",
+            ],
+            "toolkit": "google_gmail_native_toolkit",
+        },
+        "Image Analysis": {
+            "env_vars": [],
+            "toolkit": "image_analysis_toolkit",
+        },
+        "MCP Search": {
+            "env_vars": [],
+            "toolkit": "mcp_search_toolkit",
+        },
+        "PPTX": {
+            "env_vars": [],
+            "toolkit": "pptx_toolkit",
+        },
+        "RAG": {
+            "env_vars": ["OPENAI_API_KEY"],
+            "toolkit": "rag_toolkit",
+        },
+    }
+
+
+# --------------------------------------------------------------------------
+# Sharing and Key Endpoints
+# --------------------------------------------------------------------------
+
+@router.get("/user/key")
+async def get_user_key():
+    return {
+        "key": "local-key",
+    }
+
+
+@router.get("/chat/share/info/{token}")
+async def get_share_info(token: str):
+    return {
+        "chat_id": "local",
+        "share_token": token,
+    }
+
+
+@router.post("/chat/share")
+async def create_share():
+    return {
+        "share_token": "local-token",
+    }
+
+
+# --------------------------------------------------------------------------
+# Remote Sub-Agents Endpoints
+# --------------------------------------------------------------------------
+
+class RemoteSubAgentProviderIn(BaseModel):
+    provider_name: str
+    model_type: str
+    api_key: str
+    endpoint_url: str = ""
+    encrypted_config: dict | None = None
+    enabled: bool = True
+
+
+def _remote_sub_agents_file() -> Path:
+    return _home() / "remote_sub_agents.json"
+
+
+def _load_remote_sub_agents() -> list[dict]:
+    f = _remote_sub_agents_file()
+    if not f.exists():
+        return []
+    try:
+        return json.loads(f.read_text(encoding="utf-8"))
+    except Exception:
+        logger.warning("Unreadable remote sub agents JSON: %s", f, exc_info=True)
+        return []
+
+
+def _save_remote_sub_agents(items: list[dict]) -> None:
+    f = _remote_sub_agents_file()
+    try:
+        f.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        logger.error("Failed to save remote sub agents JSON: %s", f, exc_info=True)
+
+
+@router.get("/remote-sub-agent-providers")
+async def list_remote_sub_agent_providers(
+    provider_name: str | None = None,
+):
+    providers = _load_remote_sub_agents()
+    if provider_name:
+        return [p for p in providers if p.get("provider_name") == provider_name]
+    return providers
+
+
+@router.post("/remote-sub-agent-providers")
+async def create_remote_sub_agent_provider(data: RemoteSubAgentProviderIn):
+    providers = _load_remote_sub_agents()
+    new_id = max([p.get("id", 0) for p in providers] or [0]) + 1
+    new_provider = {
+        "id": new_id,
+        "provider_name": data.provider_name,
+        "model_type": data.model_type,
+        "api_key": data.api_key,
+        "endpoint_url": data.endpoint_url,
+        "encrypted_config": data.encrypted_config,
+        "enabled": data.enabled,
+    }
+    providers.append(new_provider)
+    _save_remote_sub_agents(providers)
+    return new_provider
+
+
+@router.put("/remote-sub-agent-providers/{provider_id}")
+async def update_remote_sub_agent_provider(provider_id: int, data: RemoteSubAgentProviderIn):
+    providers = _load_remote_sub_agents()
+    for p in providers:
+        if p.get("id") == provider_id:
+            p["provider_name"] = data.provider_name
+            p["model_type"] = data.model_type
+            p["api_key"] = data.api_key
+            p["endpoint_url"] = data.endpoint_url
+            p["encrypted_config"] = data.encrypted_config
+            p["enabled"] = data.enabled
+            _save_remote_sub_agents(providers)
+            return p
+    raise HTTPException(status_code=404, detail="Remote sub-agent provider not found")
+
+
+@router.delete("/remote-sub-agent-providers/{provider_id}")
+async def delete_remote_sub_agent_provider(provider_id: int):
+    providers = _load_remote_sub_agents()
+    initial_len = len(providers)
+    providers = [p for p in providers if p.get("id") != provider_id]
+    if len(providers) == initial_len:
+        raise HTTPException(status_code=404, detail="Remote sub-agent provider not found")
+    _save_remote_sub_agents(providers)
+    return Response(status_code=204)

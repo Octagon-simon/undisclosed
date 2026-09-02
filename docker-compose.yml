@@ -30,7 +30,7 @@ services:
     volumes:
       # Persist the brain's data + camel logs on the host so a container
       # restart does not wipe your chat/steps history.
-      - eigent_brain_home:/root/.eigent
+      - undisclosed_brain_home:/root/.undisclosed
     healthcheck:
       test: ['CMD', 'curl', '-f', 'http://localhost:5001/health']
       interval: 30s
@@ -39,5 +39,5 @@ services:
       start_period: 40s
 
 volumes:
-  eigent_brain_home:
+  undisclosed_brain_home:
     driver: local

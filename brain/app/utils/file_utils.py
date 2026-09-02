@@ -305,7 +305,7 @@ def resolve_upload_ref(ref: str) -> str:
         return ref
     try:
         workspace_root = Path(
-            env("EIGENT_WORKSPACE", "~/.eigent/workspace")
+            env("EIGENT_WORKSPACE", "~/.undisclosed/workspace")
         ).expanduser()
         matches = sorted(workspace_root.glob(f"*/uploads/{name}"))
         for candidate in matches:
@@ -354,11 +354,11 @@ def get_working_directory(options: Chat, task_lock=None) -> str:
 
 def sync_eigent_skills_to_project(working_directory: str) -> None:
     """
-    Copy skills from ~/.eigent/skills into the project's .eigent/skills
+    Copy skills from ~/.undisclosed/skills into the project's .undisclosed/skills
     so the agent can load and execute them from the project working directory.
     """
-    src = Path.home() / ".eigent" / "skills"
-    dst = Path(working_directory) / ".eigent" / "skills"
+    src = Path.home() / ".undisclosed" / "skills"
+    dst = Path(working_directory) / ".undisclosed" / "skills"
     if not src.is_dir():
         return
     try:
@@ -378,7 +378,7 @@ def sync_eigent_skills_to_project(working_directory: str) -> None:
         )
     except OSError as e:
         logger.warning(
-            "Failed to sync ~/.eigent/skills to project %s: %s",
+            "Failed to sync ~/.undisclosed/skills to project %s: %s",
             working_directory,
             e,
             exc_info=True,

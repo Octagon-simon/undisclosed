@@ -316,7 +316,7 @@ def _trim_in_process_history(task_lock: TaskLock, keep_recent: int = 4) -> int:
     """Compact in-process conversation + agent snapshot history.
 
     Memory feature already persists the full transcript to
-    ``~/.eigent/memory/<...>/conversation.jsonl`` at every Run end; the
+    ``~/.undisclosed/memory/<...>/conversation.jsonl`` at every Run end; the
     in-process ``conversation_history`` and ``agent_memory_history`` lists
     exist only to feed the next workforce turn's prompt. When they grow past
     the 200K-char guard we drop the older entries here and append a marker
@@ -341,7 +341,7 @@ def _trim_in_process_history(task_lock: TaskLock, keep_recent: int = 4) -> int:
         return 0
     marker = (
         f"\n[memory] Compacted {dropped} older in-process turn(s); the full "
-        f"transcript is preserved in ~/.eigent/memory under this Project."
+        f"transcript is preserved in ~/.undisclosed/memory under this Project."
     )
     summary = getattr(task_lock, "memory_summary", "") or ""
     if marker.strip() not in summary:
@@ -948,7 +948,7 @@ async def step_solve(options: Chat, request: Request, task_lock: TaskLock):
                         nonlocal summary_task_content
                         try:
                             sub_tasks = await asyncio.to_thread(
-                                workforce.eigent_make_sub_tasks,
+                                workforce.undisclosed_make_sub_tasks,
                                 camel_task,
                                 context_for_coordinator,
                                 on_stream_batch,
@@ -1048,7 +1048,7 @@ async def step_solve(options: Chat, request: Request, task_lock: TaskLock):
                 # to both camel_task and sub_tasks
                 new_tasks = add_sub_tasks(camel_task, item.data.task)
                 # Also add new tasks to sub_tasks so
-                # workforce.eigent_start uses correct list
+                # workforce.undisclosed_start uses correct list
                 sub_tasks.extend(new_tasks)
                 # Save updated sub_tasks back to
                 # task_lock so Action.start uses
@@ -1313,7 +1313,7 @@ async def step_solve(options: Chat, request: Request, task_lock: TaskLock):
                 task_lock.status = Status.processing
                 if not sub_tasks:
                     sub_tasks = getattr(task_lock, "decompose_sub_tasks", [])
-                task = asyncio.create_task(workforce.eigent_start(sub_tasks))
+                task = asyncio.create_task(workforce.undisclosed_start(sub_tasks))
                 task_lock.add_background_task(task)
             elif item.action == Action.task_state:
                 # Track completed task results for the end event
@@ -2019,7 +2019,7 @@ async def step_solve(options: Chat, request: Request, task_lock: TaskLock):
                     )
                     if workforce is not None:
                         task = asyncio.create_task(
-                            workforce.eigent_start(camel_task.subtasks)
+                            workforce.undisclosed_start(camel_task.subtasks)
                         )
                         task_lock.add_background_task(task)
             elif item.action == Action.budget_not_enough:

@@ -100,70 +100,6 @@ function injectStylesheet(id: string, href: string): void {
 // Brain (agent runtime) — CORS-open, so the browser can call it directly.
 const BRAIN_BASE_URL = 'http://localhost:5001';
 
-/** OPTIONAL local override (gitignored). If present with a `token` it wins over
- *  auto-login — lets a dev pin a specific account/token. Normally absent. */
-const SESSION_URL = '/eigent-agent/session.local.json';
-
-/** Same-origin proxy path — the Theia backend forwards /api -> the Eigent cloud
- *  proxy (:3001). Local mode issues a fresh token here with no credentials, so
- *  the editor needs no committed session file. */
-const AUTO_LOGIN_URL = '/api/v1/user/auto-login';
-
-interface AgentSession {
-  token?: string | null;
-  userId?: number | null;
-  email?: string | null;
-  baseUrl?: string;
-}
-
-async function loadSession(): Promise<AgentSession> {
-  try {
-    const res = await fetch(SESSION_URL, { cache: 'no-store' });
-    if (!res.ok) return {};
-    return (await res.json()) as AgentSession;
-  } catch {
-    return {};
-  }
-}
-
-/** Fetch a fresh local-mode session from the proxy. Returns {} on any failure
- *  so the caller can fall back gracefully. */
-async function autoLogin(): Promise<AgentSession> {
-  try {
-    const res = await fetch(AUTO_LOGIN_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: '{}',
-      cache: 'no-store',
-    });
-    if (!res.ok) return {};
-    const data = (await res.json()) as {
-      token?: string | null;
-      email?: string | null;
-      user_id?: number | null;
-    };
-    if (!data?.token) return {};
-    return {
-      token: data.token,
-      email: data.email ?? null,
-      userId: data.user_id ?? null,
-    };
-  } catch {
-    return {};
-  }
-}
-
-/** Resolve the agent session: an explicit session.local.json (with a token)
- *  wins for dev overrides; otherwise auto-login against the local proxy for a
- *  fresh token. No credentials are committed to the repo. */
-async function resolveSession(): Promise<AgentSession> {
-  const fileSession = await loadSession();
-  if (fileSession.token) return fileSession;
-  const auto = await autoLogin();
-  // Keep any non-token overrides (e.g. baseUrl) from the file if it existed.
-  return { ...fileSession, ...auto };
-}
-
 /** Load the self-contained agent bundle once (CSS + UMD script), resolve to its
  *  `mountAgentPanel`. Shared across widget instances. */
 let bundlePromise: Promise<MountFn> | undefined;
@@ -363,20 +299,19 @@ export class EigentAgentWidget extends BaseWidget {
   private async mount(): Promise<void> {
     if (this.handle) return;
     try {
-      const [mountAgentPanel, session, workspaceRoot] = await Promise.all([
+      const [mountAgentPanel, workspaceRoot] = await Promise.all([
         loadAgentBundle(),
-        resolveSession(),
         this.workspaceRoot(),
       ]);
       this.handle = mountAgentPanel(this.host, {
-        baseUrl: session.baseUrl ?? BRAIN_BASE_URL,
+        baseUrl: BRAIN_BASE_URL,
         // Cloud-proxy calls go same-origin (this app); the backend forwards
         // /api -> the Eigent proxy, avoiding CORS.
         proxyBaseUrl: window.location.origin,
         workspaceRoot,
-        token: session.token ?? null,
-        userId: session.userId ?? null,
-        email: session.email ?? null,
+        token: 'local-session-token',
+        userId: 0,
+        email: 'local@undisclosed.local',
         // Host bridge: the agent trace's clickable filenames open in Theia's
         // editor. electronAPI/ipcRenderer are null (web host); only openFile
         // is wired.

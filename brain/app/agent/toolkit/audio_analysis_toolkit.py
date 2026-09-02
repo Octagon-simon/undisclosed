@@ -37,7 +37,7 @@ class AudioAnalysisToolkit(BaseAudioAnalysisToolkit, AbstractToolkit):
     ):
         if cache_dir is None:
             cache_dir = env(
-                "file_save_path", os.path.expanduser("~/.eigent/tmp/")
+                "file_save_path", os.path.expanduser("~/.undisclosed/tmp/")
             )
         super().__init__(
             cache_dir, transcribe_model, audio_reasoning_model, timeout

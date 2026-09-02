@@ -22,7 +22,7 @@ class SandboxHands(IHands):
 
     def __init__(
         self,
-        workspace_root: str = "~/.eigent/workspace",
+        workspace_root: str = "~/.undisclosed/workspace",
         allowed_mcps: frozenset[str] | None = None,
     ) -> None:
         self.workspace_root = Path(workspace_root).expanduser()

@@ -61,11 +61,11 @@ def _probe_cdp_browser() -> bool:
     """Check if CDP browser is configured/available."""
     if env("EIGENT_CDP_URL"):
         return True
-    cdp_json = Path.home() / ".eigent" / "cdp.json"
+    cdp_json = Path.home() / ".undisclosed" / "cdp.json"
     if cdp_json.exists():
         return True
     # Electron persists CDP pool here; if present, browser capability is likely available.
-    cdp_pool = Path.home() / ".eigent" / "cdp-browsers.json"
+    cdp_pool = Path.home() / ".undisclosed" / "cdp-browsers.json"
     return cdp_pool.exists()
 
 
@@ -133,7 +133,7 @@ class BrainCapabilities:
     """used when mcp_mode=allowlist"""
 
     workspace_root: Path = field(
-        default_factory=lambda: Path("~/.eigent/workspace").expanduser()
+        default_factory=lambda: Path("~/.undisclosed/workspace").expanduser()
     )
     """workspace root path"""
 
@@ -174,7 +174,7 @@ def detect_capabilities(config: dict | None = None) -> BrainCapabilities:
                 filesystem_scope="workspace_only",
                 mcp_mode="all",  # MCP available in all deployment modes
                 workspace_root=Path(
-                    env("EIGENT_WORKSPACE", "~/.eigent/workspace")
+                    env("EIGENT_WORKSPACE", "~/.undisclosed/workspace")
                 ).expanduser(),
                 deployment_type="docker",
             )
@@ -197,7 +197,7 @@ def detect_capabilities(config: dict | None = None) -> BrainCapabilities:
                 filesystem_scope="full",
                 mcp_mode="all",
                 workspace_root=Path(
-                    env("EIGENT_WORKSPACE", "~/.eigent/workspace")
+                    env("EIGENT_WORKSPACE", "~/.undisclosed/workspace")
                 ).expanduser(),
                 deployment_type="cloud_vm"
                 if deployment == "cloud_vm"
@@ -211,7 +211,7 @@ def detect_capabilities(config: dict | None = None) -> BrainCapabilities:
             filesystem_scope="workspace_only",
             mcp_mode="all",  # MCP available in all deployment modes
             workspace_root=Path(
-                env("EIGENT_WORKSPACE", "~/.eigent/workspace")
+                env("EIGENT_WORKSPACE", "~/.undisclosed/workspace")
             ).expanduser(),
             deployment_type=deployment or "sandbox",
         )

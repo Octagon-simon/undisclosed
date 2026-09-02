@@ -16,7 +16,7 @@
 missing (`LocalMemoryStore.upsert_fact` was never wired). Distilled facts are
 embedded and recalled by meaning, then spliced into the agent's durable context.
 
-Backed by chromadb (a PersistentClient under ``~/.eigent/memory/semantic``) with
+Backed by chromadb (a PersistentClient under ``~/.undisclosed/memory/semantic``) with
 its default on-device MiniLM embeddings (onnxruntime) — **fully local, nothing
 leaves the machine**, matching this project's local-first stance. chromadb is
 agentmemory's own backend; we call it directly because agentmemory 0.4.8's query
@@ -47,7 +47,7 @@ _disabled = False
 
 
 def _semantic_root() -> Path:
-    return Path.home() / ".eigent" / "memory" / "semantic"
+    return Path.home() / ".undisclosed" / "memory" / "semantic"
 
 
 def _get_collection() -> Any | None:

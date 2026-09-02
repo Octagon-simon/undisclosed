@@ -14,7 +14,7 @@
 
 """Local filesystem-backed memory store (§22.1 of design doc).
 
-Owns ~/.eigent/memory/users/<owner>/... layout. All small JSON files are
+Owns ~/.undisclosed/memory/users/<owner>/... layout. All small JSON files are
 written atomically (tmp + os.replace). Append-only *.jsonl files are protected
 by a per-path threading.Lock so concurrent writers in the same Brain process
 do not interleave lines (cross-process writes are out of scope -- single Brain
@@ -213,7 +213,7 @@ class LocalMemoryStore:
 
     Construction is cheap and does NOT touch the filesystem -- writes lazily
     create the directory tree on demand. Pass a custom `root` to redirect the
-    whole tree for tests; default is `~/.eigent/memory`.
+    whole tree for tests; default is `~/.undisclosed/memory`.
     """
 
     def __init__(self, root: Path | None = None) -> None:

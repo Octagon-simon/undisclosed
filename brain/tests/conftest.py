@@ -244,8 +244,8 @@ def mock_workforce():
     """Mock Workforce for testing."""
     workforce = MagicMock()
     workforce._running = False
-    workforce.eigent_make_sub_tasks = MagicMock(return_value=[])
-    workforce.eigent_start = AsyncMock()
+    workforce.undisclosed_make_sub_tasks = MagicMock(return_value=[])
+    workforce.undisclosed_start = AsyncMock()
     workforce.add_single_agent_worker = MagicMock()
     workforce.pause = MagicMock()
     workforce.resume = MagicMock()

@@ -14,7 +14,7 @@
 
 """LocalMemoryStore acceptance tests (§25 of design doc).
 
-Exercises the M1 surface on a tmpdir root so no real ~/.eigent is touched.
+Exercises the M1 surface on a tmpdir root so no real ~/.undisclosed is touched.
 """
 
 from __future__ import annotations
@@ -95,7 +95,7 @@ class TestLazyInit:
 
         s = LocalMemoryStore()
         assert s.root == memory_root()
-        assert s.root == Path.home() / ".eigent" / "memory"
+        assert s.root == Path.home() / ".undisclosed" / "memory"
 
 
 # ----- Space-level -----

@@ -49,7 +49,7 @@ def write_skill(
 
 def test_skills_scan_seeds_and_marks_example_skills(tmp_path, monkeypatch):
     example_root = tmp_path / "bundled" / "example-skills"
-    skills_root = tmp_path / "home" / ".eigent" / "skills"
+    skills_root = tmp_path / "home" / ".undisclosed" / "skills"
     write_skill(example_root, "pdf", "pdf")
     write_skill(skills_root, "custom", "Custom")
 
@@ -66,7 +66,7 @@ def test_skills_scan_seeds_and_marks_example_skills(tmp_path, monkeypatch):
 
 def test_skills_scan_updates_existing_example_skills(tmp_path, monkeypatch):
     example_root = tmp_path / "bundled" / "example-skills"
-    skills_root = tmp_path / "home" / ".eigent" / "skills"
+    skills_root = tmp_path / "home" / ".undisclosed" / "skills"
     write_skill(example_root, "pdf", "pdf", body="New bundled content")
     existing_dir = write_skill(
         skills_root, "pdf", "pdf", body="Old bundled content"
@@ -97,7 +97,7 @@ def test_skill_config_init_registers_bundled_example_skills(
     )
     write_skill(example_root, "docx", "docx")
 
-    eigent_root = tmp_path / "home" / ".eigent"
+    eigent_root = tmp_path / "home" / ".undisclosed"
     monkeypatch.setenv(skill_service.EXAMPLE_SKILLS_ENV, str(example_root))
     monkeypatch.setattr(skill_config_service, "EIGENT_ROOT", eigent_root)
 
@@ -119,7 +119,7 @@ def test_skill_config_init_registers_bundled_example_skills(
 
 
 def test_skill_config_load_migrates_legacy_email_config(tmp_path, monkeypatch):
-    eigent_root = tmp_path / "home" / ".eigent"
+    eigent_root = tmp_path / "home" / ".undisclosed"
     legacy_dir = eigent_root / "alice"
     legacy_dir.mkdir(parents=True)
     (legacy_dir / "skills-config.json").write_text(
@@ -150,7 +150,7 @@ def test_skill_config_load_migrates_legacy_email_config(tmp_path, monkeypatch):
 def test_skill_config_migration_merges_without_overwriting_new_config(
     tmp_path, monkeypatch
 ):
-    eigent_root = tmp_path / "home" / ".eigent"
+    eigent_root = tmp_path / "home" / ".undisclosed"
     legacy_dir = eigent_root / "alice"
     user_dir = eigent_root / "user_42"
     legacy_dir.mkdir(parents=True)
@@ -193,10 +193,10 @@ def test_agent_skill_toolkit_reads_canonical_user_config_path(
     monkeypatch.setattr(agent_skill_toolkit.Path, "home", lambda: tmp_path)
 
     assert agent_skill_toolkit._get_user_config_path("42") == (
-        tmp_path / ".eigent" / "user_42" / "skills-config.json"
+        tmp_path / ".undisclosed" / "user_42" / "skills-config.json"
     )
     assert agent_skill_toolkit._get_user_config_path("user_42") == (
-        tmp_path / ".eigent" / "user_42" / "skills-config.json"
+        tmp_path / ".undisclosed" / "user_42" / "skills-config.json"
     )
 
 

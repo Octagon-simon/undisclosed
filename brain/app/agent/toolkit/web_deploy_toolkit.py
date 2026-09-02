@@ -33,8 +33,8 @@ class WebDeployToolkit(BaseWebDeployToolkit, AbstractToolkit):
         add_branding_tag: bool = True,
         logo_path: str = "../../../../public/favicon.png",
         tag_text: str = "Created by Eigent",
-        tag_url: str = "https://main.eigent.ai/",
-        remote_server_ip: str | None = "space.eigent.ai",
+        tag_url: str = "https://main.undisclosed.ai/",
+        remote_server_ip: str | None = "space.undisclosed.ai",
         remote_server_port: int = 8080,
     ):
         self.api_task_id = api_task_id

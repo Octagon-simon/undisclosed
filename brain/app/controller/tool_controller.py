@@ -702,7 +702,7 @@ async def uninstall_tool(tool: str):
             token_dirs.add(
                 os.path.join(
                     os.path.expanduser("~"),
-                    ".eigent",
+                    ".undisclosed",
                     "tokens",
                     "google_calendar",
                 )
@@ -914,7 +914,7 @@ async def open_browser_login():
         # On Eigent startup, this data will be copied
         # to WebView partition (one-way sync)
         browser_profiles_base = os.path.expanduser(
-            "~/.eigent/browser_profiles"
+            "~/.undisclosed/browser_profiles"
         )
         user_data_dir = os.path.join(
             browser_profiles_base, "profile_user_login"
@@ -956,7 +956,7 @@ async def open_browser_login():
         # invoke via cmd.exe.
         npx_cmd = None
         if os.name == "nt":
-            eigent_npx = os.path.expanduser("~/.eigent/bin/npx.cmd")
+            eigent_npx = os.path.expanduser("~/.undisclosed/bin/npx.cmd")
             if os.path.exists(eigent_npx):
                 npx_cmd = eigent_npx
         if not npx_cmd:
@@ -997,9 +997,9 @@ async def open_browser_login():
         logger.info(f"[PROFILE USER LOGIN] userData path: {user_data_dir}")
         logger.info(f"[PROFILE USER LOGIN] Electron args: {electron_args}")
 
-        # Ensure ~/.eigent/bin is on PATH for the spawned process
+        # Ensure ~/.undisclosed/bin is on PATH for the spawned process
         env = os.environ.copy()
-        eigent_bin = os.path.expanduser("~/.eigent/bin")
+        eigent_bin = os.path.expanduser("~/.undisclosed/bin")
         if os.path.isdir(eigent_bin):
             env["PATH"] = eigent_bin + os.pathsep + env.get("PATH", "")
 
@@ -1079,7 +1079,7 @@ async def list_cookie_domains(search: str = None):
     """
     try:
         # Use tool_controller browser's user data directory (source of truth)
-        user_data_base = os.path.expanduser("~/.eigent/browser_profiles")
+        user_data_base = os.path.expanduser("~/.undisclosed/browser_profiles")
         user_data_dir = os.path.join(user_data_base, "profile_user_login")
 
         logger.info(
@@ -1174,7 +1174,7 @@ async def get_domain_cookies(domain: str):
         cookies
     """
     try:
-        user_data_base = os.path.expanduser("~/.eigent/browser_profiles")
+        user_data_base = os.path.expanduser("~/.undisclosed/browser_profiles")
         user_data_dir = os.path.join(user_data_base, "profile_user_login")
 
         if not os.path.exists(user_data_dir):
@@ -1221,7 +1221,7 @@ async def delete_domain_cookies(domain: str):
         deleted cookies
     """
     try:
-        user_data_base = os.path.expanduser("~/.eigent/browser_profiles")
+        user_data_base = os.path.expanduser("~/.undisclosed/browser_profiles")
         user_data_dir = os.path.join(user_data_base, "profile_user_login")
 
         if not os.path.exists(user_data_dir):
@@ -1269,7 +1269,7 @@ async def delete_all_cookies():
         deleted cookies
     """
     try:
-        user_data_base = os.path.expanduser("~/.eigent/browser_profiles")
+        user_data_base = os.path.expanduser("~/.undisclosed/browser_profiles")
         user_data_dir = os.path.join(user_data_base, "profile_user_login")
 
         if not os.path.exists(user_data_dir):

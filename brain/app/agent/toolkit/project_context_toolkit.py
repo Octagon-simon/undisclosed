@@ -17,7 +17,7 @@
 Gives the agent a compact, AI-friendly digest of the current project's codebase
 (structure + key code, tree-sitter compressed) so it can understand the repo in
 one call instead of many grep/file searches. The digest is cached per project
-(keyed by git HEAD) under ~/.eigent/project-context, so repeat calls are instant
+(keyed by git HEAD) under ~/.undisclosed/project-context, so repeat calls are instant
 and it only regenerates when the code changes (or refresh=True).
 
 Uses `npx repomix` (no install/setup); FAIL-SOFT — if repomix/npx isn't available
@@ -41,7 +41,7 @@ logger = logging.getLogger("project_context_toolkit")
 # --compress already trims heavily; this is a final safety bound.
 _MAX_DIGEST_CHARS = 60_000
 def _context_root() -> Path:
-    return Path.home() / ".eigent" / "project-context"
+    return Path.home() / ".undisclosed" / "project-context"
 
 
 def _git_head(workdir: str) -> str:

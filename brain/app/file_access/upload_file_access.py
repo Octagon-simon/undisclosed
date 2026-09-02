@@ -20,7 +20,7 @@ from app.file_access.interface import IFileAccess
 class UploadFileAccess(IFileAccess):
     """Only handle uploaded files, path restricted to workspace/{session_id}/ (Web/Channel)"""
 
-    def __init__(self, workspace_root: str = "~/.eigent/workspace") -> None:
+    def __init__(self, workspace_root: str = "~/.undisclosed/workspace") -> None:
         self.workspace_root = Path(workspace_root).expanduser()
 
     def read_file(self, path: str) -> str:

@@ -34,7 +34,7 @@ _thread_local = threading.local()
 _process_env_keys = set(os.environ.keys())
 
 # Safe base directory for user environment files
-env_base_dir = os.path.join(os.path.expanduser("~"), ".eigent")
+env_base_dir = os.path.join(os.path.expanduser("~"), ".undisclosed")
 
 # Default global environment path
 default_env_path = os.path.join(env_base_dir, ".env")
@@ -117,7 +117,7 @@ def sanitize_env_path(env_path: str | None) -> str | None:
     """
     Validate and sanitize user-provided environment file path.
 
-    Security: Ensures the path stays within ~/.eigent directory
+    Security: Ensures the path stays within ~/.undisclosed directory
     and ends with .env
     to prevent path traversal attacks and unauthorized file access.
 

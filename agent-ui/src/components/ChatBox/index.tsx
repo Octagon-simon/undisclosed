@@ -267,25 +267,9 @@ export default function ChatBox(): JSX.Element {
     useState<string | null>(null);
 
   const refreshUsageLimits = useCallback(async () => {
-    if (modelType !== 'cloud' || !token) {
-      setSubscriptionUsage(null);
-      setCurrentCredits(null);
-      return;
-    }
-
-    const [subscriptionResult, creditsResult] = await Promise.allSettled([
-      proxyFetchGet('/api/v1/subscription'),
-      proxyFetchGet('/api/v1/user/current_credits'),
-    ]);
-
-    if (subscriptionResult.status === 'fulfilled') {
-      setSubscriptionUsage(subscriptionResult.value || null);
-    }
-
-    if (creditsResult.status === 'fulfilled') {
-      setCurrentCredits(toFiniteNumber(creditsResult.value?.credits));
-    }
-  }, [modelType, token]);
+    setSubscriptionUsage(null);
+    setCurrentCredits(null);
+  }, []);
 
   const scheduleUsageRefresh = useCallback(() => {
     window.setTimeout(refreshUsageLimits, 2000);

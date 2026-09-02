@@ -31,7 +31,7 @@ from app.service.task import Agents
 logger = logging.getLogger("rag_toolkit")
 
 # Default paths and constants
-DEFAULT_RAG_STORAGE_PATH = "~/.eigent/rag_storage"
+DEFAULT_RAG_STORAGE_PATH = "~/.undisclosed/rag_storage"
 DEFAULT_COLLECTION_NAME = "default"
 RAW_TEXT_SUBDIR = "raw_text"
 DEFAULT_STORAGE_TYPE = StorageType.QDRANT

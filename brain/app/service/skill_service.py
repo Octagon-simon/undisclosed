@@ -20,10 +20,10 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-SKILLS_ROOT = Path.home() / ".eigent" / "skills"
+SKILLS_ROOT = Path.home() / ".undisclosed" / "skills"
 SKILL_FILE = "SKILL.md"
 EXAMPLE_SKILLS_ENV = "EIGENT_EXAMPLE_SKILLS_DIR"
-EXAMPLE_SKILL_MARKER = ".eigent-example-skill"
+EXAMPLE_SKILL_MARKER = ".undisclosed-example-skill"
 logger = logging.getLogger("skill_service")
 
 

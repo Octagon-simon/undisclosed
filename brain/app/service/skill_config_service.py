@@ -12,7 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
 
-"""Skills config: ~/.eigent/user_<id>/skills-config.json."""
+"""Skills config: ~/.undisclosed/user_<id>/skills-config.json."""
 
 import json
 import logging
@@ -28,7 +28,7 @@ from app.service.skill_service import (
 
 logger = logging.getLogger("skill_config")
 
-EIGENT_ROOT = Path.home() / ".eigent"
+EIGENT_ROOT = Path.home() / ".undisclosed"
 SKILL_CONFIG_FILENAME = "skills-config.json"
 
 

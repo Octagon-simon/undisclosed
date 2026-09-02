@@ -157,7 +157,7 @@ def agent_model(
         effective_api_url = effective_config.get("api_url")
         is_effective_cloud = isinstance(effective_api_url, str) and any(
             marker in effective_api_url
-            for marker in ("eigent-proxy", "proxy.eigent.ai")
+            for marker in ("eigent-proxy", "proxy.undisclosed.ai")
         )
 
         # Cloud mode: inject default Bedrock region and adjust URL for proxy.

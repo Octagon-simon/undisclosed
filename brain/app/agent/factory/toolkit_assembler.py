@@ -245,7 +245,7 @@ def _browser_enabled_tools() -> list[str]:
 
 def _mcp_config(options: Chat, hands: IHands | None) -> dict[str, Any] | None:
     servers = dict((options.installed_mcp or {}).get("mcpServers", {}))
-    # Also include MCP servers the user installed locally (~/.eigent/mcp.json,
+    # Also include MCP servers the user installed locally (~/.undisclosed/mcp.json,
     # written by /mcp/install — e.g. the embed's "Manage connectors" screen).
     # The request's installed_mcp only carries the cloud Connector Gateway, so
     # without this a locally-added MCP never reaches the agent. Request-provided
@@ -388,7 +388,7 @@ async def assemble_single_agent_toolkits(
         # out of the user's repo.
         todo_scope = str(options.project_id or task_id)
         todo_dir = os.path.join(
-            os.path.expanduser("~"), ".eigent", "todos", todo_scope
+            os.path.expanduser("~"), ".undisclosed", "todos", todo_scope
         )
         todo_options = {
             **_options(config, "todo"),

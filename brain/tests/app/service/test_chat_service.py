@@ -711,7 +711,7 @@ class TestInProcessHistoryCompaction:
             "[memory] Compacted 12 older in-process turn"
             in lock.memory_summary
         )
-        assert "~/.eigent/memory" in lock.memory_summary
+        assert "~/.undisclosed/memory" in lock.memory_summary
 
     def test_marker_not_duplicated_across_compactions(self):
         lock = self._make_task_lock(convo_entries=10, snapshot_entries=10)
@@ -1356,7 +1356,7 @@ class TestChatServiceIntegration:
         ):
             mock_question_agent.return_value = MagicMock()
             mock_summary_agent.return_value = MagicMock()
-            mock_workforce.eigent_make_sub_tasks.return_value = []
+            mock_workforce.undisclosed_make_sub_tasks.return_value = []
 
             # Convert async generator to list
             responses = []

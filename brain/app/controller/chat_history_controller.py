@@ -36,7 +36,7 @@ class Turn:
 
 
 def _turns_root() -> Path:
-    root = Path.home() / ".eigent" / "turns"
+    root = Path.home() / ".undisclosed" / "turns"
     # Allow override for tests
     override = env("EIGENT_TURNS_ROOT", "").strip()
     if override:

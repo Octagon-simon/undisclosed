@@ -32,18 +32,18 @@ def init_global_config(
 
     Args:
         user_id: User identifier for user-specific config. If None, uses legacy path.
-        scan_skills: If True, scan ~/.eigent/skills/ and add found skills to config
+        scan_skills: If True, scan ~/.undisclosed/skills/ and add found skills to config
     """
     if user_id:
-        # User-specific config: ~/.eigent/<user_id>/skills-config.json
+        # User-specific config: ~/.undisclosed/<user_id>/skills-config.json
         config_path = (
-            Path.home() / ".eigent" / str(user_id) / "skills-config.json"
+            Path.home() / ".undisclosed" / str(user_id) / "skills-config.json"
         )
     else:
-        # Legacy global config: ~/.eigent/skills-config.json
-        config_path = Path.home() / ".eigent" / "skills-config.json"
+        # Legacy global config: ~/.undisclosed/skills-config.json
+        config_path = Path.home() / ".undisclosed" / "skills-config.json"
 
-    skills_dir = Path.home() / ".eigent" / "skills"
+    skills_dir = Path.home() / ".undisclosed" / "skills"
 
     # Check if config already exists
     if config_path.exists():
@@ -110,7 +110,7 @@ def init_project_config(project_path: str) -> None:
         print(f"❌ Project directory does not exist: {project_path}")
         sys.exit(1)
 
-    config_path = project_dir / ".eigent" / "skills-config.json"
+    config_path = project_dir / ".undisclosed" / "skills-config.json"
 
     # Check if config already exists
     if config_path.exists():

@@ -59,7 +59,7 @@ ENV UV_LINK_MODE=copy
 RUN apt-get update -o Acquire::Retries=3 && apt-get install -y --no-install-recommends \
     curl netcat-openbsd && rm -rf /var/lib/apt/lists/*
 
-# The brain writes persistence + camel logs under $HOME/.eigent — keep home
+# The brain writes persistence + camel logs under $HOME/.undisclosed — keep home
 # writable (already /root by default) and surface it for logging/volumes.
 ENV HOME=/root
 

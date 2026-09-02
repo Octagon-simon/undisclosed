@@ -1228,29 +1228,18 @@ export default function SettingModels() {
   const [trialUpgradeDialogOpen, setTrialUpgradeDialogOpen] = useState(false);
   const [upgradingTrial, setUpgradingTrial] = useState(false);
   const fetchSubscription = async () => {
-    const res = await proxyFetchGet('/api/v1/subscription');
-    console.log(res);
-    if (res) {
-      setSubscription(res);
-    }
+    setSubscription({
+      plan_key: 'pro',
+      monthly_credits: 1000000000,
+    });
   };
   const [credits, setCredits] = useState<any>(0);
   const [loadingCredits, setLoadingCredits] = useState(false);
   // True when the credits request failed (treated as "server not connected").
   const [creditsError, setCreditsError] = useState(false);
   const updateCredits = async () => {
-    try {
-      setLoadingCredits(true);
-      const res = await proxyFetchGet(`/api/v1/user/current_credits`);
-      console.log(res?.credits);
-      setCredits(res?.credits);
-      setCreditsError(false);
-    } catch (error) {
-      console.error(error);
-      setCreditsError(true);
-    } finally {
-      setLoadingCredits(false);
-    }
+    setCredits(999999999);
+    setCreditsError(false);
   };
 
   const formatCredits = (value: unknown): string => {

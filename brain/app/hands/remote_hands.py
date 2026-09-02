@@ -33,7 +33,7 @@ class RemoteHands(IHands):
     def __init__(
         self,
         cluster: IHandsCluster | None = None,
-        workspace_root: str = "~/.eigent/workspace",
+        workspace_root: str = "~/.undisclosed/workspace",
     ) -> None:
         self._cluster = cluster
         self.workspace_root = Path(workspace_root).expanduser()

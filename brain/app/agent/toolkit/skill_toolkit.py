@@ -16,7 +16,7 @@
 Skill Toolkit with multi-tier hierarchy:
 
 Agent access control is managed via skills-config.json.
-User isolation is managed via ~/.eigent/user_<id>/skills-config.json.
+User isolation is managed via ~/.undisclosed/user_<id>/skills-config.json.
 """
 
 import json
@@ -54,12 +54,12 @@ def _get_user_config_path(user_id: str | None = None) -> Path:
         Path to user's config file
     """
     if user_id:
-        # User-specific config: ~/.eigent/user_<id>/skills-config.json
+        # User-specific config: ~/.undisclosed/user_<id>/skills-config.json
         user_key = canonical_skill_config_user_id(user_id)
-        return Path.home() / ".eigent" / user_key / SKILL_CONFIG_FILENAME
+        return Path.home() / ".undisclosed" / user_key / SKILL_CONFIG_FILENAME
     else:
-        # Legacy global config: ~/.eigent/skills-config.json
-        return Path.home() / ".eigent" / SKILL_CONFIG_FILENAME
+        # Legacy global config: ~/.undisclosed/skills-config.json
+        return Path.home() / ".undisclosed" / SKILL_CONFIG_FILENAME
 
 
 def _load_skill_config(config_path: Path) -> dict[str, SkillEntryConfig]:
@@ -106,7 +106,7 @@ def _get_merged_skill_config(
     )
 
     # Load project-level config (overrides user config)
-    project_config_path = wd / ".eigent" / SKILL_CONFIG_FILENAME
+    project_config_path = wd / ".undisclosed" / SKILL_CONFIG_FILENAME
     project_config = _load_skill_config(project_config_path)
     if project_config:
         logger.debug(
@@ -247,15 +247,15 @@ class SkillToolkit(BaseSkillToolkit):
     Extends CAMEL's SkillToolkit with:
     - User-specific skill configuration
     - Agent-based access control
-    - Eigent-specific skill paths (.eigent/skills)
+    - Eigent-specific skill paths (.undisclosed/skills)
 
     Skill Discovery Priority (highest to lowest):
-    1. Repo scope: <wd>/skills, <wd>/.eigent/skills, <wd>/.camel/skills
-    2. User scope: ~/.eigent/skills, ~/.camel/skills, ~/.config/camel/skills
+    1. Repo scope: <wd>/skills, <wd>/.undisclosed/skills, <wd>/.camel/skills
+    2. User scope: ~/.undisclosed/skills, ~/.camel/skills, ~/.config/camel/skills
     3. System scope: /etc/camel/skills
 
     Agent access control is managed via skills-config.json (agents field).
-    User isolation is managed via ~/.eigent/user_<id>/skills-config.json.
+    User isolation is managed via ~/.undisclosed/user_<id>/skills-config.json.
     """
 
     @classmethod
@@ -315,12 +315,12 @@ class SkillToolkit(BaseSkillToolkit):
 
         # 1. Repo scope - project-specific skills (highest priority)
         roots.append(("repo", self.working_directory / "skills"))
-        roots.append(("repo", self.working_directory / ".eigent" / "skills"))
+        roots.append(("repo", self.working_directory / ".undisclosed" / "skills"))
         roots.append(("repo", self.working_directory / ".camel" / "skills"))
         roots.append(("repo", self.working_directory / ".agents" / "skills"))
 
         # 2. User scope - user-level skills
-        roots.append(("user", Path.home() / ".eigent" / "skills"))
+        roots.append(("user", Path.home() / ".undisclosed" / "skills"))
         roots.append(("user", Path.home() / ".camel" / "skills"))
         roots.append(("user", Path.home() / ".config" / "camel" / "skills"))
 

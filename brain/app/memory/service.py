@@ -113,7 +113,7 @@ def build_durable_context_for_task_lock(
     chat never breaks on a memory glitch.
 
     Shared by Single Agent and Workforce paths so both modes recover from
-    `~/.eigent/memory` after restart with the same code path. The mode arg
+    `~/.undisclosed/memory` after restart with the same code path. The mode arg
     drives how the bundle is rendered (single_agent narrative vs
     workforce_coordinator planning view).
     """

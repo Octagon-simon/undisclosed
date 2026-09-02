@@ -20,7 +20,7 @@ from app.hands.interface import IHands
 class FullHands(IHands):
     """Full capabilities: terminal, filesystem, browser, MCP all available"""
 
-    def __init__(self, workspace_root: str = "~/.eigent/workspace") -> None:
+    def __init__(self, workspace_root: str = "~/.undisclosed/workspace") -> None:
         self.workspace_root = Path(workspace_root).expanduser()
 
     @property

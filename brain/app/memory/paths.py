@@ -16,7 +16,7 @@
 
 Layout:
 
-    ~/.eigent/memory/
+    ~/.undisclosed/memory/
       users/{canonical_user_id}/
         spaces/{space_id}/
           projects/{project_id}/
@@ -38,7 +38,7 @@ from pathlib import Path
 def memory_root() -> Path:
     """Top-level memory directory. Not created on import (lazy)."""
 
-    return Path.home() / ".eigent" / "memory"
+    return Path.home() / ".undisclosed" / "memory"
 
 
 def canonical_user_id(

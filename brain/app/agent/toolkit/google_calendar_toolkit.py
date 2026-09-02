@@ -39,7 +39,7 @@ class GoogleCalendarToolkit(BaseGoogleCalendarToolkit, AbstractToolkit):
         # Can be overridden by env.
         self._token_path = env("GOOGLE_CALENDAR_TOKEN_PATH") or os.path.join(
             os.path.expanduser("~"),
-            ".eigent",
+            ".undisclosed",
             "tokens",
             "google_calendar",
             "google_calendar_token.json",
@@ -50,7 +50,7 @@ class GoogleCalendarToolkit(BaseGoogleCalendarToolkit, AbstractToolkit):
     def _build_canonical_token_path(cls) -> str:
         return env("GOOGLE_CALENDAR_TOKEN_PATH") or os.path.join(
             os.path.expanduser("~"),
-            ".eigent",
+            ".undisclosed",
             "tokens",
             "google_calendar",
             "google_calendar_token.json",
@@ -297,7 +297,7 @@ class GoogleCalendarToolkit(BaseGoogleCalendarToolkit, AbstractToolkit):
                 # Save credentials to token file
                 token_path = env("GOOGLE_CALENDAR_TOKEN_PATH") or os.path.join(
                     os.path.expanduser("~"),
-                    ".eigent",
+                    ".undisclosed",
                     "tokens",
                     "google_calendar",
                     "google_calendar_token.json",

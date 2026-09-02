@@ -233,7 +233,7 @@ async def mcp_authenticate(body: dict) -> dict:
     return result
 
 
-_AUTHED_MARKER = os.path.expanduser("~/.eigent/mcp_authed.json")
+_AUTHED_MARKER = os.path.expanduser("~/.undisclosed/mcp_authed.json")
 
 
 def _read_authed() -> dict:

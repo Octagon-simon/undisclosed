@@ -61,11 +61,11 @@ class Chat(BaseModel):
         Literal["worktree", "copy", "direct-write", "artifact-only"] | None
     ) = None
     question: str
-    email: str
+    email: str = "undisclosed"
     attaches: list[str] = []
-    model_platform: NormalizedModelPlatform
-    model_type: str
-    api_key: str
+    model_platform: NormalizedModelPlatform = "undisclosed"
+    model_type: str = "undisclosed"
+    api_key: str = ""
     # for cloud version, user don't need to set api_url
     api_url: str | None = None
     # Marker for subscription-auth providers (e.g. Codex). When set, the token
@@ -163,7 +163,7 @@ class Chat(BaseModel):
             return False
         return any(
             marker in self.api_url
-            for marker in ("eigent-proxy", "proxy.eigent.ai")
+            for marker in ("eigent-proxy", "proxy.undisclosed.ai")
         )
 
     def file_save_path(self, path: str | None = None):

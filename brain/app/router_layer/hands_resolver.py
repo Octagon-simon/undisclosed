@@ -151,7 +151,7 @@ def init_environment_hands(config: dict | None = None) -> IHands:
     remote_enabled = _is_truthy(env("EIGENT_HANDS_REMOTE", "false"))
 
     if mode == "remote" or remote_enabled:
-        workspace_root = env("EIGENT_WORKSPACE", "~/.eigent/workspace")
+        workspace_root = env("EIGENT_WORKSPACE", "~/.undisclosed/workspace")
         logger.info(
             "Initializing RemoteHands from env switch",
             extra={"mode": mode, "remote_enabled": remote_enabled},
@@ -190,7 +190,7 @@ def get_hands_for_channel(
     - hands_override: For debugging; force full/sandbox/remote
     - workspace_root: Override workspace root (optional)
     """
-    root = workspace_root or env("EIGENT_WORKSPACE", "~/.eigent/workspace")
+    root = workspace_root or env("EIGENT_WORKSPACE", "~/.undisclosed/workspace")
 
     if hands_override:
         if hands_override in ("full", "sandbox", "remote"):

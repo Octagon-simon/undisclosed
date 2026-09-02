@@ -59,7 +59,7 @@ class LinkedInToolkit(BaseLinkedInToolkit, AbstractToolkit):
         r"""Build the canonical path for storing LinkedIn tokens."""
         return env("LINKEDIN_TOKEN_PATH") or os.path.join(
             os.path.expanduser("~"),
-            ".eigent",
+            ".undisclosed",
             "tokens",
             "linkedin",
             "linkedin_token.json",

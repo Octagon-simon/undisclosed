@@ -84,7 +84,7 @@ def test_eigent_make_sub_tasks_success():
         ),
         patch("app.utils.workforce.validate_task_content", return_value=True),
     ):
-        result = workforce.eigent_make_sub_tasks(task)
+        result = workforce.undisclosed_make_sub_tasks(task)
 
         assert result == mock_subtasks
         assert workforce._task is task
@@ -116,7 +116,7 @@ def test_eigent_make_sub_tasks_with_streaming_decomposition():
         ),
         patch("app.utils.workforce.validate_task_content", return_value=True),
     ):
-        result = workforce.eigent_make_sub_tasks(task)
+        result = workforce.undisclosed_make_sub_tasks(task)
 
         assert len(result) == 3
         assert all(isinstance(subtask, Task) for subtask in result)
@@ -139,7 +139,7 @@ def test_eigent_make_sub_tasks_invalid_content():
         "app.utils.workforce.validate_task_content", return_value=False
     ):
         with pytest.raises(UserException):
-            workforce.eigent_make_sub_tasks(task)
+            workforce.undisclosed_make_sub_tasks(task)
 
         assert task.state == TaskState.FAILED
         assert "Invalid or empty content" in task.result
@@ -163,7 +163,7 @@ async def test_eigent_start_success():
         patch.object(workforce, "start", new_callable=AsyncMock) as mock_start,
         patch.object(workforce, "save_snapshot") as mock_save_snapshot,
     ):
-        await workforce.eigent_start(subtasks)
+        await workforce.undisclosed_start(subtasks)
 
         assert len(workforce._pending_tasks) >= len(subtasks)
 
@@ -194,7 +194,7 @@ async def test_eigent_start_with_exception():
         patch.object(workforce, "save_snapshot"),
     ):
         with pytest.raises(Exception, match="Workforce start failed"):
-            await workforce.eigent_start(subtasks)
+            await workforce.undisclosed_start(subtasks)
 
         assert workforce._state == WorkforceState.STOPPED
 
@@ -491,7 +491,7 @@ def test_eigent_make_sub_tasks_with_none_task():
     )
 
     with pytest.raises((AttributeError, TypeError)):
-        workforce.eigent_make_sub_tasks(None)
+        workforce.undisclosed_make_sub_tasks(None)
 
 
 @pytest.mark.unit
@@ -510,7 +510,7 @@ def test_eigent_make_sub_tasks_with_malformed_task():
         "app.utils.workforce.validate_task_content", return_value=False
     ):
         with pytest.raises(UserException):
-            workforce.eigent_make_sub_tasks(fake_task)
+            workforce.undisclosed_make_sub_tasks(fake_task)
 
 
 @pytest.mark.unit
@@ -526,7 +526,7 @@ async def test_eigent_start_with_empty_subtasks():
         patch.object(workforce, "start", new_callable=AsyncMock),
         patch.object(workforce, "save_snapshot"),
     ):
-        await workforce.eigent_start([])
+        await workforce.undisclosed_start([])
 
         workforce.start.assert_called_once()
 
@@ -640,10 +640,10 @@ async def test_full_workforce_lifecycle():
         patch("app.utils.workforce.asyncio.run", return_value=subtasks),
         patch.object(workforce, "start", new_callable=AsyncMock),
     ):
-        result_subtasks = workforce.eigent_make_sub_tasks(main_task)
+        result_subtasks = workforce.undisclosed_make_sub_tasks(main_task)
         assert len(result_subtasks) == 3
 
-        await workforce.eigent_start(result_subtasks)
+        await workforce.undisclosed_start(result_subtasks)
 
         mock_worker = MagicMock(spec=ListenChatAgent)
         mock_worker.agent_id = "integration_worker_123"

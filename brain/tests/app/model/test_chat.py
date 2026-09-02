@@ -209,7 +209,7 @@ class TestChatSkillConfigUserId:
     def test_skill_config_user_id_prefers_canonical_user_dir(
         self, tmp_path, monkeypatch
     ):
-        eigent_root = tmp_path / ".eigent"
+        eigent_root = tmp_path / ".undisclosed"
         legacy_dir = eigent_root / "alice"
         legacy_dir.mkdir(parents=True)
         (legacy_dir / "skills-config.json").write_text(
@@ -268,9 +268,9 @@ class TestIsCloud:
         ).is_cloud()
 
     def test_is_cloud_matches_current_proxy_host(self):
-        # `proxy.eigent.ai` is the actual prod/dev hostname (no hyphen).
-        assert self._chat_with_url("https://proxy.eigent.ai").is_cloud()
-        assert self._chat_with_url("https://proxy.eigent.ai/").is_cloud()
+        # `proxy.undisclosed.ai` is the actual prod/dev hostname (no hyphen).
+        assert self._chat_with_url("https://proxy.undisclosed.ai").is_cloud()
+        assert self._chat_with_url("https://proxy.undisclosed.ai/").is_cloud()
 
     def test_is_cloud_false_for_user_configured_endpoints(self):
         assert not self._chat_with_url("https://api.openai.com/v1").is_cloud()

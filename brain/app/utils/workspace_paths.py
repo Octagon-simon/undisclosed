@@ -19,14 +19,14 @@ from app.component.environment import env
 
 
 def get_workspace_root() -> Path:
-    return Path(env("EIGENT_WORKSPACE", "~/.eigent/workspace")).expanduser()
+    return Path(env("EIGENT_WORKSPACE", "~/.undisclosed/workspace")).expanduser()
 
 
 def get_eigent_root() -> Path:
     eigent = Path.home() / "eigent"
     if eigent.exists():
         return eigent
-    dot_eigent = Path.home() / ".eigent"
+    dot_eigent = Path.home() / ".undisclosed"
     if dot_eigent.exists():
         return dot_eigent
     return eigent
@@ -90,7 +90,7 @@ def camel_log_root(
 ) -> Path:
     return (
         Path.home()
-        / ".eigent"
+        / ".undisclosed"
         / runtime_owner_key(email, user_id)
         / f"project_{project_id}"
         / task_dir_name(task_id)
@@ -103,7 +103,7 @@ def legacy_camel_log_root(
 ) -> Path:
     return (
         Path.home()
-        / ".eigent"
+        / ".undisclosed"
         / runtime_owner_key(email, user_id)
         / task_dir_name(task_id)
         / "camel_logs"
@@ -118,7 +118,7 @@ def runtime_task_root(
 ) -> Path:
     return (
         Path.home()
-        / ".eigent"
+        / ".undisclosed"
         / runtime_owner_key(email, user_id)
         / "runtime"
         / f"project_{project_id}"
@@ -135,7 +135,7 @@ def run_output_root(
 ) -> Path:
     return (
         Path.home()
-        / ".eigent"
+        / ".undisclosed"
         / runtime_owner_key(email, user_id)
         / "spaces"
         / space_id
@@ -154,7 +154,7 @@ def project_workdir_root(
 ) -> Path:
     return (
         Path.home()
-        / ".eigent"
+        / ".undisclosed"
         / runtime_owner_key(email, user_id)
         / "spaces"
         / space_id
@@ -167,7 +167,7 @@ def project_workdir_root(
 def workspace_state_root(email: str, user_id: str | int | None = None) -> Path:
     return (
         Path.home()
-        / ".eigent"
+        / ".undisclosed"
         / "workspaces"
         / runtime_owner_key(email, user_id)
     )
