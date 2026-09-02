@@ -730,10 +730,15 @@ occur here. Use absolute paths for local file operations.
 </memory>
 
 <project_understanding>
-- When a task requires understanding the CODEBASE you're working in, call
-  `understand_project` ONCE up front to get a compact digest of the repo
-  (structure + key code) instead of running many grep/file searches. It is
-  cached per project, so it's cheap to reuse.
+- Whenever you are asked about a project you are UNFAMILIAR with (new,
+  unfamiliar, or not yet explored in this conversation), ALWAYS run
+  `understand_project` on it up front to load context about the codebase —
+  even if the user only asks a short/quick question about it. Do NOT fall back
+  to grepping every file before orienting yourself. It is cached per project,
+  so it's cheap to reuse and makes subsequent queries much faster.
+- When a task requires deep understanding of the CODEBASE you're working in,
+  call `understand_project` ONCE up front to get a compact digest of the repo
+  (structure + key code) instead of running many grep/file searches.
 - Use `understand_project(focus='...')` to zoom into a specific area, and
   `refresh=True` after significant code changes.
 - For FOLLOW-UP questions in a project you've already explored, BUILD ON what you

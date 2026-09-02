@@ -76,6 +76,42 @@ def _load_json(path: Path) -> Any:
 
 
 # --------------------------------------------------------------------------
+# Local space scoping
+# --------------------------------------------------------------------------
+# eigent-theia is a single-tenant, on-device brain: every persisted turn
+# belongs to one local/personal scope. The agent UI derives its *active space
+# id* from the local user's "legacy space" (`legacy_<userId>`; userId defaults
+# to `local` => `legacy_local`) and then queries the grouped-history endpoint
+# with that id. Persisted turns are not tagged with a space id, so we must
+# expose them under whichever local/personal scope the UI is viewing rather
+# than hard-matching a made-up id (previously `"default"`) and returning
+# nothing (the "No conversations yet" symptom).
+
+_DEFAULT_LOCAL_USER_ID = "local"
+
+
+def _local_space_id() -> str:
+    """Canonical personal-space id that history records are served under."""
+    user = os.environ.get("EIGENT_LOCAL_USER_ID", "") or _DEFAULT_LOCAL_USER_ID
+    return f"legacy_{user}"
+
+
+def _is_personal_space_id(req: str | None) -> bool:
+    """True when `req` refers to this brain's single local/personal scope."""
+    if not req:
+        return True
+    norm = (req or "").strip().lower()
+    if norm in {"default", "local"}:
+        return True
+    if norm == _local_space_id().lower():
+        return True
+    # Any legacy/personal derivation still maps to this one-tenant brain.
+    if norm.startswith("legacy_") or norm.startswith("personal_"):
+        return True
+    return False
+
+
+# --------------------------------------------------------------------------
 # History projection
 # --------------------------------------------------------------------------
 
@@ -121,7 +157,7 @@ def _build_history_items() -> list[dict]:
                 "id": len(items) + 1,
                 "task_id": chat_id,
                 "project_id": chat_id,
-                "space_id": "default",
+                "space_id": _local_space_id(),
                 "question": question or chat_id,
                 "language": "",
                 "model_platform": "",
@@ -242,7 +278,10 @@ async def grouped_histories(
     space_id: str | None = Query(None),
 ):
     items = _build_history_items()
-    if space_id:
+    if space_id and not _is_personal_space_id(space_id):
+        # The UI is viewing a specific remote space. This on-device brain only
+        # owns the personal space, so only records tagged exactly for that
+        # requested space are relevant (there normally are none locally).
         items = [t for t in items if t.get("space_id") == space_id]
     projects = _group_items(items)
     if not include_tasks:
@@ -266,8 +305,7 @@ async def grouped_history_project(project_id: str, include_tasks: bool = Query(T
         # empty project -> valid empty shape
         g = {
             "project_id": project_id,
-            "space_id": "default",
-            "project_name": project_id,
+            "space_id": _local_space_id(),
             "total_tokens": 0,
             "task_count": 0,
             "total_triggers": 0,
@@ -360,7 +398,7 @@ async def create_history(data: dict = Body(...)):
         "task_id": data.get("task_id") or project_id,
         "project_id": project_id,
         "run_id": data.get("run_id") or data.get("task_id") or project_id,
-        "space_id": data.get("space_id") or "default",
+        "space_id": data.get("space_id") or _local_space_id(),
         "question": data.get("question") or "",
         "project_name": project_name,
         "status": data.get("status", 2),
