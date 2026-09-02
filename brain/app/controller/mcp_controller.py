@@ -151,14 +151,17 @@ async def _run_oauth_login(
         "token. Otherwise register an OAuth app in the provider's developer "
         "console."
     )
+    detected_oauth_url = None
     tail: list[str] = []
     try:
         while True:
             if time.time() - start > timeout:
+                msg = "Timed out waiting for sign-in. Complete the browser authorization, then try again."
+                if detected_oauth_url:
+                    msg = f"Timed out waiting for sign-in. If your browser did not open automatically, copy and visit this URL: {detected_oauth_url}"
                 return {
                     "success": False,
-                    "message": "Timed out waiting for sign-in. Complete the "
-                    "browser authorization, then try again.",
+                    "message": msg,
                 }
             if _fresh_token():
                 return {
@@ -177,6 +180,42 @@ async def _run_oauth_login(
             tail.append(line)
             del tail[:-40]
             low = line.lower()
+
+            # Detect OAuth authorize URL in the output stream
+            import re
+            url_match = re.search(r"https?://[^\s\(\)\[\]\"]+", line)
+            if url_match:
+                u = url_match.group(0)
+
+                if "127.0.0.1" not in u and "localhost" not in u:
+                    u_low = u.lower()
+
+                    if any(
+                        k in u_low
+                        for k in [
+                            "oauth",
+                            "authorize",
+                            "client_id",
+                            "login",
+                            "state=",
+                            "/auth",
+                            "/login",
+                        ]
+                    ):
+                        detected_oauth_url = u
+
+                        mcp_logger.info(
+                            "Detected OAuth authorization URL: %s",
+                            detected_oauth_url,
+                        )
+
+                        return {
+                            "success": True,
+                            "requires_auth": True,
+                            "oauth_url": detected_oauth_url,
+                            "message": "OAuth authorization required.",
+                        }
+
             if any(m in low for m in success_markers):
                 return {"success": True, "message": "Authenticated — connected."}
             if "fatal error" in low or "connection error" in low:
@@ -228,7 +267,7 @@ async def mcp_authenticate(body: dict) -> dict:
     args = [str(a) for a in (server.get("args") or [])]
     mcp_logger.info("Starting OAuth sign-in for MCP: %s", name)
     result = await _run_oauth_login(command, args)
-    if result.get("success"):
+    if result.get("success") and not result.get("requires_auth"):
         _mark_authenticated(str(name))
     return result
 

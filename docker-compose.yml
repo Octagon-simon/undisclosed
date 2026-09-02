@@ -20,24 +20,16 @@ services:
     container_name: eigent_theia_api
     restart: unless-stopped
     ports:
-      # host : container. The brain binds 0.0.0.0 and defaults to port 5001.
-      # Host 5001 matches BRAIN_BASE_URL (http://localhost:5001) that the agent
-      # panel hardcodes, so the Dockerized brain is what serves the panel.
       - '5001:5001'
     environment:
       - EIGENT_BRAIN_HOST=0.0.0.0
       - EIGENT_BRAIN_PORT=5001
     volumes:
-      # Persist the brain's data + camel logs on the host so a container
-      # restart does not wipe your chat/steps history.
-      - undisclosed_brain_home:/root/.undisclosed
+      # Use the host's ~/.undisclosed directory directly.
+      - ~/.undisclosed:/root/.undisclosed
     healthcheck:
       test: ['CMD', 'curl', '-f', 'http://localhost:5001/health']
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
-
-volumes:
-  undisclosed_brain_home:
-    driver: local

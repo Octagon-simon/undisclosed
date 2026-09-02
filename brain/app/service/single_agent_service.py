@@ -262,13 +262,18 @@ def _build_single_agent_prompt(
     project_context: str | None = None,
     vision_capable: bool = True,
     memory_enabled: bool = True,
+    is_fresh_agent: bool = True,
 ) -> str:
-    context = _build_single_agent_context(
-        task_lock,
-        project_context,
-        current_user_prompt=question,
-        memory_enabled=memory_enabled,
-    )
+    if is_fresh_agent:
+        context = _build_single_agent_context(
+            task_lock,
+            project_context,
+            current_user_prompt=question,
+            memory_enabled=memory_enabled,
+        )
+    else:
+        context = ""
+
     attachment_context = ""
     if attaches:
         # Resolve upload:// refs to absolute paths so the agent's file/shell
@@ -288,6 +293,18 @@ def _build_single_agent_prompt(
                 "(e.g. an OCR/vision tool or reading the file), then proceed."
             )
         attachment_context += "\n\n"
+
+    if not is_fresh_agent:
+        return (
+            f"{context}{attachment_context}"
+            "=== CURRENT MESSAGE — respond to THIS ===\n"
+            f"{question}\n"
+            "=== END CURRENT MESSAGE ===\n\n"
+            "Respond ONLY to the current message above. Keep your response brief, "
+            "directly addressing the current request, and do NOT repeat or re-state "
+            "any of your earlier completed work."
+        )
+
     return (
         f"{context}{attachment_context}"
         "=== CURRENT MESSAGE — respond to THIS ===\n"
@@ -644,6 +661,7 @@ async def single_agent_solve(
         task_id: str,
         project_context: str | None = None,
     ) -> tuple[str, int]:
+        is_fresh_agent = (agent is None)
         turn_agent = await ensure_agent(task_id)
         turn_agent.process_task_id = task_id
         # Tool RAG: re-select the tools exposed to the model for THIS turn's
@@ -685,6 +703,7 @@ async def single_agent_solve(
             project_context,
             vision_capable=vision_capable,
             memory_enabled=_memory_enabled(options),
+            is_fresh_agent=is_fresh_agent,
         )
         # Attach image files as vision content ONLY for models that can see them.
         # For text-only models (e.g. deepseek-chat) image_list is useless (or

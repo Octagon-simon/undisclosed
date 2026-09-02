@@ -46,6 +46,70 @@ import { TaskCard } from './TaskBox/TaskCard';
  * inside a collapsible group (just like the activity trace) instead of an
  * always-expanded wall of text.
  */
+interface PromptBlock {
+  title: string;
+  content: string;
+}
+
+function extractPromptBlocks(content: string): { promptBlocks: PromptBlock[]; cleanedContent: string } {
+  if (typeof content !== 'string') {
+    return { promptBlocks: [], cleanedContent: content };
+  }
+
+  const promptBlocks: PromptBlock[] = [];
+  let cleaned = content;
+
+  // 1. Extract <remembered_facts> block
+  const rememberedStart = cleaned.indexOf('<remembered_facts>');
+  const rememberedEnd = cleaned.indexOf('</remembered_facts>');
+  if (rememberedStart !== -1 && rememberedEnd !== -1 && rememberedEnd > rememberedStart) {
+    const rawBlock = cleaned.slice(rememberedStart, rememberedEnd + '</remembered_facts>'.length);
+    const innerContent = cleaned.slice(rememberedStart + '<remembered_facts>'.length, rememberedEnd).trim();
+    promptBlocks.push({
+      title: 'Remembered Facts',
+      content: innerContent,
+    });
+    cleaned = cleaned.replace(rawBlock, '');
+  }
+
+  // 2. Extract === Persisted Project Context === block
+  const contextStart = cleaned.indexOf('=== Persisted Project Context ===');
+  const contextEnd = cleaned.indexOf('=== End Persisted Project Context ===');
+  if (contextStart !== -1 && contextEnd !== -1 && contextEnd > contextStart) {
+    const rawBlock = cleaned.slice(contextStart, contextEnd + '=== End Persisted Project Context ==='.length);
+    const innerContent = cleaned.slice(contextStart + '=== Persisted Project Context ==='.length, contextEnd).trim();
+    promptBlocks.push({
+      title: 'Persisted Project Context',
+      content: innerContent,
+    });
+    cleaned = cleaned.replace(rawBlock, '');
+  }
+
+  // 3. Extract === CURRENT MESSAGE === block
+  const currentMsgStart = cleaned.indexOf('=== CURRENT MESSAGE — respond to THIS ===');
+  const currentMsgEnd = cleaned.indexOf('=== END CURRENT MESSAGE ===');
+  if (currentMsgStart !== -1 && currentMsgEnd !== -1 && currentMsgEnd > currentMsgStart) {
+    const rawBlock = cleaned.slice(currentMsgStart, currentMsgEnd + '=== END CURRENT MESSAGE ==='.length);
+    cleaned = cleaned.replace(rawBlock, '');
+  }
+
+  // 4. Strip any residual respond instructions paragraphs if the model leaked them
+  const instructionsIdx = cleaned.indexOf('Respond ONLY to the current message above.');
+  if (instructionsIdx !== -1) {
+    const instructionEnd = cleaned.indexOf('earlier claims.', instructionsIdx);
+    if (instructionEnd !== -1) {
+      cleaned = cleaned.slice(0, instructionsIdx) + cleaned.slice(instructionEnd + 'earlier claims.'.length);
+    } else {
+      cleaned = cleaned.replace('Respond ONLY to the current message above.', '');
+    }
+  }
+
+  return {
+    promptBlocks,
+    cleanedContent: cleaned.trim(),
+  };
+}
+
 const PERSISTED_CONTEXT_HEADER = 'Persisted Project Context';
 
 /** Collapsible card that shows the durable project context block or remembered facts, 
@@ -582,62 +646,86 @@ export const UserQueryGroup: React.FC<UserQueryGroupProps> = ({
               </motion.div>
             );
           } else if (message.step === AgentStep.AGENT_END) {
+            const { promptBlocks, cleanedContent } = extractPromptBlocks(message.content);
             return (
-              <motion.div
-                key={`agent-end-${message.id}`}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.2 }}
-                className="px-6"
-              >
-                <AgentResultCard
-                  id={message.id}
-                  agentName={message.agent_name}
-                  content={message.content}
-                  attaches={message.attaches}
-                  defaultOpen
-                />
-              </motion.div>
+              <div className="flex flex-col gap-4">
+                {promptBlocks.map((block, idx) => (
+                  <motion.div
+                    key={`extracted-block-${message.id}-${idx}`}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.2 }}
+                    className="px-6"
+                  >
+                    <PersistedContextCard
+                      id={`${message.id}-block-${idx}`}
+                      content={block.content}
+                      title={block.title}
+                    />
+                  </motion.div>
+                ))}
+                {cleanedContent && (
+                  <motion.div
+                    key={`agent-end-${message.id}`}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.2 }}
+                    className="px-6"
+                  >
+                    <AgentResultCard
+                      id={message.id}
+                      agentName={message.agent_name}
+                      content={cleanedContent}
+                      attaches={message.attaches}
+                      defaultOpen
+                    />
+                  </motion.div>
+                )}
+              </div>
             );
           } else {
-            // The durable project-context block is injected into the system
-            // prompt every request and echoed back into the chat as a generic
-            // agent message. Collapse it (like the activity trace) rather than
-            // forcing the user to scroll past the whole block on every turn.
-            //
-            // Match defensively: the echoed block may arrive with a leading
-            // newline / indentation, so trim before checking the header (and
-            // pass the trimmed text on so the card renders cleanly).
-            const persistedContent =
-              typeof message.content === 'string' ? message.content.trimStart() : '';
+            const { promptBlocks, cleanedContent } = extractPromptBlocks(message.content);
 
-            const isPersistedContext = persistedContent.includes(PERSISTED_CONTEXT_HEADER);
-            const isRememberedFacts = persistedContent.includes('<remembered_facts>');
-
-            if (isPersistedContext || isRememberedFacts) {
-              // eslint-disable-next-line no-console
-              console.debug('[PERSISTED CONTEXT DETECTED]', {
-                id: message.id,
-                isPersistedContext,
-                isRememberedFacts,
-                preview: persistedContent.slice(0, 80),
-              });
+            if (promptBlocks.length > 0) {
               return (
-                <motion.div
-                  key={`persisted-context-${message.id}`}
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.2 }}
-                  className="px-6"
-                >
-                  <PersistedContextCard
-                    id={message.id}
-                    content={persistedContent}
-                    title={isRememberedFacts && !isPersistedContext ? 'Remembered Facts' : 'Persisted Project Context'}
-                  />
-                </motion.div>
+                <div className="flex flex-col gap-4">
+                  {promptBlocks.map((block, idx) => (
+                    <motion.div
+                      key={`extracted-block-${message.id}-${idx}`}
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.2 }}
+                      className="px-6"
+                    >
+                      <PersistedContextCard
+                        id={`${message.id}-block-${idx}`}
+                        content={block.content}
+                        title={block.title}
+                      />
+                    </motion.div>
+                  ))}
+                  {cleanedContent && (
+                    <motion.div
+                      key={`message-${message.id}`}
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.2 }}
+                      className="flex flex-col gap-4"
+                    >
+                      <AgentMessageCard
+                        key={message.id}
+                        typewriter={shouldUseLiveAgentTypewriter(task, message.id)}
+                        id={message.id}
+                        content={cleanedContent}
+                        onTyping={() => {}}
+                        attaches={message.attaches}
+                      />
+                    </motion.div>
+                  )}
+                </div>
               );
             }
+
             return (
               <motion.div
                 key={`message-${message.id}`}
@@ -650,7 +738,7 @@ export const UserQueryGroup: React.FC<UserQueryGroupProps> = ({
                   key={message.id}
                   typewriter={shouldUseLiveAgentTypewriter(task, message.id)}
                   id={message.id}
-                  content={message.content}
+                  content={cleanedContent}
                   onTyping={() => {}}
                   attaches={message.attaches}
                 />
