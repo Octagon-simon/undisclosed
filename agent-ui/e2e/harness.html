@@ -28,7 +28,9 @@
       const mount = mod.mountAgentPanel || (mod.default && mod.default.mountAgentPanel);
       mount(document.getElementById('agent-root'), {
         baseUrl: 'http://localhost:5001',
-        proxyBaseUrl: window.location.origin,
+        // No Theia /api proxy in the harness — point proxy calls straight at
+        // the brain (which serves /api/v1/* directly).
+        proxyBaseUrl: 'http://localhost:5001',
         workspaceRoot: '/Users/octagon/Documents/github/eigent-theia',
         token: 'local-session-token',
         userId: 0,
