@@ -600,8 +600,15 @@ const projectStore = create<ProjectStore>()((set, get) => ({
     const createdAt = options?.createdAt ?? now;
     const updatedAt = options?.updatedAt ?? now;
 
-    // Create initial chat store for the project
-    const initialChatId = generateUniqueId();
+    // Create initial chat store for the project. The initial chat's id is the
+    // SAME as the project id on purpose: the standalone brain keys persisted
+    // turns (`~/.undisclosed/turns/<chatId>/`) — and therefore its whole
+    // History projection, folder binding and friendly-name map — off the chat
+    // id, while the task/history/rename requests carry the project id. Minting a
+    // separate chat id split those two so nothing lined up (turns under one id,
+    // name/binding under another) → conversations couldn't be scoped to their
+    // folder and vanished on reload. Aligning them makes one id flow end to end.
+    const initialChatId = targetProjectId;
     const initialChatStore = createChatStoreInstance();
 
     // Initialize the chat store with a task using the create() function

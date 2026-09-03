@@ -92,10 +92,18 @@ async def post_message(
     if role == "user":
         turn.userMessage = message
     else:
-        # Prevent duplicates by id
+        # Upsert by id: a streamed assistant message is persisted once when it
+        # is first added and again when it is later updated (e.g. the END step
+        # gets its fileList merged in). Replace-in-place so the latest version
+        # wins instead of silently dropping the update.
         msg_id = message.get("id")
-        if msg_id and any(m.get("id") == msg_id for m in turn.otherMessages):
-            logger.debug("Duplicate assistant message ignored", extra={"chat_id": chat_id, "query_id": query_id, "id": msg_id})
+        if msg_id:
+            for i, existing in enumerate(turn.otherMessages):
+                if existing.get("id") == msg_id:
+                    turn.otherMessages[i] = message
+                    break
+            else:
+                turn.otherMessages.append(message)
         else:
             turn.otherMessages.append(message)
     _save_turn(turn)
@@ -109,13 +117,33 @@ async def list_turns(chat_id: str):
     if not root.exists():
         return []
     items: list[dict] = []
-    for p in sorted(root.glob("turn_*.json")):
+
+    def get_turn_time(p: Path) -> float:
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+            um = data.get("userMessage") or {}
+            ca = um.get("createdAt")
+            if ca:
+                from datetime import datetime
+                try:
+                    return datetime.fromisoformat(ca.replace("Z", "+00:00")).timestamp()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        try:
+            return p.stat().st_mtime
+        except Exception:
+            return 0.0
+
+    files = list(root.glob("turn_*.json"))
+    files.sort(key=get_turn_time)
+    for p in files:
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
             items.append(data)
         except Exception:
             logger.warning("Failed to read turn file", extra={"path": str(p)}, exc_info=True)
-    # Preserve filename order (acts as insertion order). Could sort by userMessage.createdAt if available.
     return items
 
 

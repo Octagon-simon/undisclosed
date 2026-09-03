@@ -64,7 +64,28 @@ def _task_key(chat_id: str) -> str:
 def _iter_turn_files(chat_dir: Path) -> list[Path]:
     if not chat_dir.is_dir():
         return []
-    return sorted(chat_dir.glob("turn_*.json"))
+
+    def get_turn_time(p: Path) -> float:
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+            um = data.get("userMessage") or {}
+            ca = um.get("createdAt")
+            if ca:
+                from datetime import datetime
+                try:
+                    return datetime.fromisoformat(ca.replace("Z", "+00:00")).timestamp()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        try:
+            return os.path.getmtime(p)
+        except Exception:
+            return 0.0
+
+    files = list(chat_dir.glob("turn_*.json"))
+    files.sort(key=get_turn_time)
+    return files
 
 
 def _load_json(path: Path) -> Any:
@@ -114,6 +135,89 @@ def _is_personal_space_id(req: str | None) -> bool:
 # --------------------------------------------------------------------------
 # History projection
 # --------------------------------------------------------------------------
+
+def _folder_space_id_for_root(root_path: str) -> str | None:
+    """Return the folder Space id for a filesystem root, registering the folder
+    in folder_spaces.json if it isn't known yet. Mirrors the Spaces API scheme
+    (`folder_<sha256(normalized root)>`) so ids are stable and match."""
+    import hashlib
+    if not root_path or not root_path.strip():
+        return None
+    root = os.path.normpath(os.path.expanduser(root_path.strip()))
+    if not os.path.isdir(root):
+        return None
+    reg_path = _home() / "folder_spaces.json"
+    reg: dict = {}
+    if reg_path.exists():
+        try:
+            reg = json.loads(reg_path.read_text(encoding="utf-8"))
+        except Exception:
+            reg = {}
+    by_root = reg.setdefault("by_root", {})
+    entry = by_root.get(root)
+    if entry and entry.get("id"):
+        return entry["id"]
+    from datetime import datetime, timezone
+    fsid = "folder_" + hashlib.sha256(root.encode("utf-8")).hexdigest()[:16]
+    by_root[root] = {
+        "id": fsid,
+        "name": os.path.basename(root.rstrip("/\\")) or root,
+        "root_path": root,
+        "conversations": (entry or {}).get("conversations", {}),
+        "created_at": (entry or {}).get("created_at") or datetime.now(timezone.utc).isoformat(),
+    }
+    tmp = reg_path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(reg, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(reg_path)
+    return fsid
+
+
+def _bind_conversation_to_folder(space_id: str, project_id: str, name: str | None = None) -> None:
+    """Record project_id as a conversation of the folder Space identified by
+    space_id (matching the Spaces API's folder_spaces.json schema). No-op if the
+    folder is unknown."""
+    import time as _time
+    reg_path = _home() / "folder_spaces.json"
+    reg: dict = {}
+    if reg_path.exists():
+        try:
+            reg = json.loads(reg_path.read_text(encoding="utf-8"))
+        except Exception:
+            reg = {}
+    by_root = reg.setdefault("by_root", {})
+    for _root, entry in by_root.items():
+        if entry.get("id") == space_id:
+            convs = entry.setdefault("conversations", {})
+            if project_id not in convs:
+                from datetime import datetime, timezone
+                convs[project_id] = {
+                    "name": name or project_id,
+                    "added_at": datetime.now(timezone.utc).isoformat(),
+                }
+            elif name:
+                convs[project_id]["name"] = name
+            tmp = reg_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(reg, ensure_ascii=False, indent=2), encoding="utf-8")
+            tmp.replace(reg_path)
+            return
+
+
+def _folder_conversation_ids_for_space(space_id: str) -> set[str]:
+    """Conversation ids bound to a folder Space, read from the folder registry
+    (folder_spaces.json). Keeps grouped-history scoping consistent with the
+    Spaces API without importing it (avoids a circular import)."""
+    try:
+        reg_path = _home() / "folder_spaces.json"
+        if not reg_path.exists():
+            return set()
+        reg = json.loads(reg_path.read_text(encoding="utf-8"))
+        for _root, entry in (reg.get("by_root", {}) or {}).items():
+            if entry.get("id") == space_id:
+                return set((entry.get("conversations", {}) or {}).keys())
+    except Exception:
+        logger.warning("Failed to read folder registry for %s", space_id, exc_info=True)
+    return set()
+
 
 def _build_history_items() -> list[dict]:
     """
@@ -279,10 +383,22 @@ async def grouped_histories(
 ):
     items = _build_history_items()
     if space_id and not _is_personal_space_id(space_id):
-        # The UI is viewing a specific remote space. This on-device brain only
-        # owns the personal space, so only records tagged exactly for that
-        # requested space are relevant (there normally are none locally).
-        items = [t for t in items if t.get("space_id") == space_id]
+        if space_id.startswith("folder_"):
+            # Folder Space: scope to the conversations bound to that folder (the
+            # Spaces API records them in folder_spaces.json). Without this the
+            # naive `t.space_id == space_id` match found nothing — every item is
+            # tagged with the personal space id — so the History panel, which
+            # polls this endpoint filtered by the active folder space, showed
+            # everything until reload and then wiped to empty.
+            owned = _folder_conversation_ids_for_space(space_id)
+            items = [
+                {**t, "space_id": space_id}
+                for t in items
+                if (t.get("task_id") or t.get("project_id")) in owned
+            ]
+        else:
+            # Unknown remote space id → nothing on this single-tenant brain.
+            items = [t for t in items if t.get("space_id") == space_id]
     projects = _group_items(items)
     if not include_tasks:
         for g in projects:
@@ -391,6 +507,29 @@ async def create_history(data: dict = Body(...)):
     project_name = data.get("project_name") or data.get("question")
     if project_id and project_name:
         await rename_project(project_id, project_name)
+
+    # Bind the conversation to its folder Space so it shows under that folder's
+    # History (and survives reload). The client sends space_id here but does not
+    # otherwise POST the folder binding, so do it on the brain. project_id now
+    # equals the chat/turn id (the UI aligns them), so this binds the same id the
+    # History projection reads.
+    space_id = data.get("space_id")
+    space_root_path = data.get("space_root_path")
+    try:
+        if project_id and space_id and str(space_id).startswith("folder_"):
+            _bind_conversation_to_folder(str(space_id), str(project_id), project_name)
+        elif project_id and space_root_path:
+            # space_id wasn't a folder id (rootless scratch space), but we know
+            # the open folder — bind by its path so the conversation still shows
+            # under that folder's History.
+            fsid = _folder_space_id_for_root(str(space_root_path))
+            if fsid:
+                _bind_conversation_to_folder(fsid, str(project_id), project_name)
+    except Exception:
+        logger.warning(
+            "Failed to bind %s to folder (space_id=%s root=%s)",
+            project_id, space_id, space_root_path, exc_info=True
+        )
 
     now_iso = datetime.now().isoformat()
     return {
@@ -913,3 +1052,94 @@ async def delete_remote_sub_agent_provider(provider_id: int):
         raise HTTPException(status_code=404, detail="Remote sub-agent provider not found")
     _save_remote_sub_agents(providers)
     return Response(status_code=204)
+
+
+@router.get("/chat/steps/playback/{task_id}")
+async def chat_steps_playback(task_id: str, delay_time: float = Query(0.0)):
+    from fastapi.responses import StreamingResponse
+    import asyncio
+
+    def sse_json(event: str, data: Any) -> str:
+        return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+    async def event_generator():
+        safe_chat = str(task_id).replace("/", "_")
+        chat_dir = _turns_root() / safe_chat
+        
+        if not chat_dir.is_dir():
+            yield sse_json("error", {"error": "not_found", "message": "No playback data found for this task."})
+            return
+
+        turn_files = _iter_turn_files(chat_dir)
+        for p in turn_files:
+            try:
+                turn = json.loads(p.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+
+            user_msg = turn.get("userMessage") or {}
+            other_msgs = list(turn.get("otherMessages") or [])
+
+            # 1. Stream 'confirmed' event
+            question = user_msg.get("content") or ""
+            raw_attaches = user_msg.get("attaches") or []
+            
+            def derive_name(path: str) -> str:
+                return path.replace("\\", "/").split("/")[-1]
+
+            attaches = []
+            for a in raw_attaches:
+                fp = a.get("filePath")
+                if fp:
+                    attaches.append({
+                        "filePath": fp,
+                        "fileName": a.get("fileName") or derive_name(fp),
+                        "fileId": fp,
+                        "source": "upload"
+                    })
+
+            confirmed_payload = {
+                "step": "confirmed",
+                "data": {
+                    "question": question,
+                    "attaches": [a["filePath"] for a in attaches]
+                }
+            }
+            yield sse_json("confirmed", confirmed_payload)
+            if delay_time > 0:
+                await asyncio.sleep(delay_time)
+
+            # 2. Stream all other assistant messages
+            for msg in other_msgs:
+                step_name = msg.get("step") or "single_agent"
+                payload = {
+                    "step": step_name,
+                    "data": {
+                        "message": msg.get("content") or "",
+                        "content": msg.get("content") or "",
+                        "id": msg.get("id"),
+                        "agent_name": msg.get("agent_name"),
+                        "createdAt": msg.get("createdAt"),
+                        "attaches": msg.get("attaches") or [],
+                        "fileList": msg.get("fileList") or [],
+                        "reasoning": msg.get("reasoning")
+                    }
+                }
+                
+                event_name = msg.get("agent_name") or step_name
+                if not event_name or event_name == "null":
+                    event_name = "single_agent"
+
+                yield sse_json(event_name, payload)
+                if delay_time > 0:
+                    await asyncio.sleep(delay_time)
+
+        # No explicit terminator: the frontend's fetchEventSource `onclose`
+        # finalizes the task when the stream ends. Emitting a synthetic `end`
+        # step here would collide with a turn's real END answer and render a
+        # spurious "Playback finished." message.
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream"
+    )

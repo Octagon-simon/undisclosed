@@ -346,6 +346,8 @@ def get_working_directory(options: Chat, task_lock=None) -> str:
         context := get_current_run_context()
     ) is not None and context.project_id == options.project_id:
         raw = context.working_directory
+    elif getattr(options, "space_root_path", None):
+        raw = Path(options.space_root_path)
     else:
         raw = Path(env("file_save_path", options.file_save_path()))
 

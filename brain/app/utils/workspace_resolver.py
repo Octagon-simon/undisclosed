@@ -115,6 +115,27 @@ def _same_workspace_path(left: str, right: str) -> bool:
         return False
 
 
+def _folder_root_for_space_id(space_id: str | None) -> str | None:
+    """Resolve a folder Space id (`folder_<sha256(root)>`) to its real root path
+    using the folder registry (`~/.undisclosed/folder_spaces.json`), which the
+    Spaces API maintains. Returns None for non-folder spaces or when the folder
+    is unknown / no longer a readable directory."""
+    if not space_id or not space_id.startswith("folder_"):
+        return None
+    try:
+        reg_path = Path.home() / ".undisclosed" / "folder_spaces.json"
+        if not reg_path.exists():
+            return None
+        reg = json.loads(reg_path.read_text(encoding="utf-8"))
+        for root, entry in (reg.get("by_root", {}) or {}).items():
+            if entry.get("id") == space_id:
+                p = Path(root).expanduser()
+                return str(p) if p.is_dir() else None
+    except Exception:
+        logger.warning("Failed to resolve folder root for %s", space_id, exc_info=True)
+    return None
+
+
 def _folder_fingerprint(path: Path) -> dict[str, Any]:
     stat = path.stat()
     return {
@@ -531,13 +552,25 @@ class WorkspaceResolver:
     ) -> FrozenTaskDirectories:
         space_id = options.space_id or options.project_id
         task_lock.workdir_mode = options.workdir_mode
-        if options.space_root_path:
-            self.ensure_space_binding(
-                options.email,
-                space_id,
-                options.space_root_path,
-                user_id=options.user_id,
-            )
+        # Prefer the space_root_path the client sent. If it is missing but the
+        # task belongs to a folder Space (`folder_<sha256(root)>`), recover the
+        # folder's real root from the folder registry (folder_spaces.json). This
+        # makes the agent operate in the open folder even when the client didn't
+        # forward space_root_path — without it the task falls back to the legacy
+        # per-task directory (~/eigent/user_/project_/task_).
+        root_path = options.space_root_path or _folder_root_for_space_id(space_id)
+        if root_path:
+            try:
+                self.ensure_space_binding(
+                    options.email,
+                    space_id,
+                    root_path,
+                    user_id=options.user_id,
+                )
+            except ValueError as exc:
+                logger.warning(
+                    "Could not bind space %s to %r: %s", space_id, root_path, exc
+                )
         return self.freeze_task_directories_for(
             space_id=space_id,
             project_id=options.project_id,
@@ -559,6 +592,34 @@ class WorkspaceResolver:
         user_id: str | int | None = None,
     ) -> FrozenTaskDirectories:
         binding = self.store.get_binding(email, space_id, user_id)
+        # DIAGNOSTIC (handoff): the single most important datapoint for the
+        # working-dir bug is what space_id the client actually sends. If this is
+        # NOT a `folder_<hash>` id, the folder can never be resolved and the task
+        # drops to the legacy dir. Grep `.brain.log` for "WORKDIR-DIAG".
+        logger.info(
+            "WORKDIR-DIAG space_id=%r is_folder=%s has_binding=%s folder_root=%r",
+            space_id,
+            bool(space_id and space_id.startswith("folder_")),
+            binding is not None,
+            _folder_root_for_space_id(space_id),
+        )
+        # Follow-up tasks (POST /chat/{id}) call this directly, bypassing
+        # freeze_task_directories. If there is no binding yet but this is a
+        # folder Space, recover its root from the folder registry and create the
+        # binding here too, so the agent stays in the open folder across turns
+        # instead of dropping to the legacy per-task directory.
+        if binding is None:
+            folder_root = _folder_root_for_space_id(space_id)
+            if folder_root:
+                try:
+                    binding = self.ensure_space_binding(
+                        email, space_id, folder_root, user_id=user_id
+                    )
+                except ValueError as exc:
+                    logger.warning(
+                        "Could not bind space %s to %r: %s",
+                        space_id, folder_root, exc,
+                    )
         if binding and Path(binding.workspace_root).expanduser().is_dir():
             source_root = Path(binding.workspace_root).expanduser().resolve()
             task_output = run_output_root(

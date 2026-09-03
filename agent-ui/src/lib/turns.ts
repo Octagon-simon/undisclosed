@@ -83,7 +83,18 @@ export function enqueueTurnPost(
   const url = `/api/v1/chat/${encodeURIComponent(chatId)}/turns/${encodeURIComponent(
     queryId
   )}/messages`;
-  queue.push({ url, body: { role, message }, attempts: 0 });
+  // Coalesce by (url, message.id): a streamed assistant message may be
+  // re-enqueued as it is updated (e.g. the END step gaining its fileList).
+  // Replacing the still-queued item keeps last-write-wins and prevents the
+  // queue from flooding with intermediate versions. The backend upserts by id.
+  const existingIdx = queue.findIndex(
+    (q) => q.url === url && q.body.message.id === message.id
+  );
+  if (existingIdx !== -1) {
+    queue[existingIdx]!.body = { role, message };
+  } else {
+    queue.push({ url, body: { role, message }, attempts: 0 });
+  }
   scheduleFlushSoon();
 }
 

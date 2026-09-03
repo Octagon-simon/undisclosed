@@ -923,10 +923,19 @@ export const useSpaceStore = create<SpaceStore>()(
             const existingProjectIds = Object.keys(
               nextBySpaceId[options.syncedSpaceId] ?? {}
             );
+            const preservedProjects: Record<string, SpaceProjectMeta> = {};
             for (const projectId of existingProjectIds) {
-              delete nextIndex[projectId];
+              const existingProject = nextBySpaceId[options.syncedSpaceId][projectId];
+              if (
+                existingProject &&
+                isPlaceholderProjectName(existingProject.name, existingProject.id)
+              ) {
+                preservedProjects[projectId] = existingProject;
+              } else {
+                delete nextIndex[projectId];
+              }
             }
-            nextBySpaceId[options.syncedSpaceId] = {};
+            nextBySpaceId[options.syncedSpaceId] = preservedProjects;
           }
 
           for (const project of projects) {

@@ -188,4 +188,23 @@ def register_routers(app: FastAPI, prefix: str = "") -> None:
             exc_info=True,
         )
 
+    # Register local Spaces/Projects router under /api/v1 — the REST surface the
+    # History panel + sidebar use to list spaces and their conversations. Without
+    # it every `/api/v1/spaces*` call 404s and the panel shows "No conversations".
+    try:
+        from app.controller import space_controller
+
+        app.include_router(
+            space_controller.router,
+            prefix=prefix + "/api/v1",
+            tags=["spaces"],
+            dependencies=[Depends(get_brain_auth_context)],
+        )
+        logger.info("Registered spaces router under /api/v1")
+    except Exception:
+        logger.warning(
+            "Failed to register spaces router; local Spaces/Projects API unavailable",
+            exc_info=True,
+        )
+
     logger.info(f"Total routers registered: {len(routers_config)}")

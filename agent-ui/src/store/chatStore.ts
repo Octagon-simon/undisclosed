@@ -52,6 +52,7 @@ import {
   toRemoteSubAgentRuntimeConfig,
 } from '@/lib/remoteSubAgent';
 import { isLocalWorkspaceSpace } from '@/lib/spaceLabel';
+import { getOpenFolderRoot } from '@/lib/openFolder';
 import { deriveAttachFileName } from '@/lib/attachmentUrl';
 import { proxyUpdateTriggerExecution } from '@/service/triggerApi';
 import { ExecutionStatus } from '@/types';
@@ -1528,6 +1529,50 @@ const chatStore = (initial?: Partial<ChatStore>) =>
           },
         };
       });
+      // Re-persist an updated content-bearing agent message so late mutations
+      // (e.g. the END step gaining its merged fileList) survive a reload. The
+      // queue coalesces and the backend upserts by id, so this is idempotent.
+      try {
+        if (message?.role === 'agent') {
+          const step = (message as any)?.step;
+          const content = (message as any)?.content;
+          const hasContent =
+            typeof content === 'string' ? content.trim().length > 0 : !!content;
+          if (step && hasContent) {
+            const projectId = useProjectStore.getState().activeProjectId;
+            const { getAllChatStores } = useProjectStore.getState();
+            const chatStores = projectId ? getAllChatStores(projectId) : [];
+            const chatEntry = chatStores.find((e) =>
+              Object.prototype.hasOwnProperty.call(e.chatStore.getState().tasks, taskId)
+            );
+            const chatId = chatEntry?.chatId;
+            const task = get().tasks[taskId];
+            const lastUser = [...(task?.messages || [])]
+              .reverse()
+              .find((m: any) => m.role === 'user');
+            const queryId = lastUser?.id;
+            if (chatId && queryId) {
+              (async () => {
+                const { enqueueTurnPost } = await import('@/lib/turns');
+                enqueueTurnPost(chatId, queryId, 'assistant', {
+                  id: message.id,
+                  step,
+                  content: String(content ?? ''),
+                  reasoning: (message as any)?.reasoning ?? null,
+                  agent_name: (message as any)?.agent_name || null,
+                  attaches: (message as any)?.attaches || [],
+                  fileList: (message as any)?.fileList || [],
+                  createdAt: new Date().toISOString(),
+                });
+              })().catch((e) =>
+                console.warn('Failed to enqueue assistant turn update persist:', e)
+              );
+            }
+          }
+        }
+      } catch (persistErr) {
+        console.warn('Error in updateMessage persist hook:', persistErr);
+      }
     },
     stopTask(taskId: string) {
       // Abort the SSE connection for this task
@@ -2144,9 +2189,16 @@ const chatStore = (initial?: Partial<ChatStore>) =>
       const requestSpace = spaceId
         ? useSpaceStore.getState().getSpaceById(spaceId)
         : null;
-      const spaceRootPath = isLocalWorkspaceSpace(requestSpace)
-        ? requestSpace?.rootPath || undefined
-        : undefined;
+      // Prefer the active Space's bound root, but ALWAYS fall back to the folder
+      // actually open in the host editor. The active Space can be a rootless
+      // scratch/placeholder space (bootstrapWorkspace runs async and isn't
+      // awaited), in which case the request would otherwise carry no
+      // space_root_path and the agent would run in the legacy per-task dir
+      // instead of the open folder.
+      const spaceRootPath =
+        (isLocalWorkspaceSpace(requestSpace)
+          ? requestSpace?.rootPath || undefined
+          : undefined) || getOpenFolderRoot();
       if (!type && !startOptions.skipHistoryCreate) {
         const authStore = getAuthStore();
 
@@ -2155,6 +2207,11 @@ const chatStore = (initial?: Partial<ChatStore>) =>
           project_id: project_id,
           task_id: newTaskId,
           run_id: newTaskId,
+          // Forward the open folder so the brain can bind this conversation to
+          // its folder Space even when space_id isn't a folder id (rootless
+          // scratch space). This is what makes it show under the folder's
+          // History and survive reload.
+          space_root_path: spaceRootPath,
           user_id: authStore.user_id,
           // Persist Project execution mode on the server so reload reflects
           // the user's last choice (workforce vs single-agent). Without this
@@ -2553,8 +2610,20 @@ const chatStore = (initial?: Partial<ChatStore>) =>
                   question,
                   isFollowUpConfirm,
                 });
+                // Reuse the ORIGINAL user message id when this confirm is just
+                // moving the live message from the previous chat store into the
+                // new one (it was removed above). Minting a fresh id here made
+                // the same question persist as TWO turns (the removed original
+                // + this copy), which showed up as a duplicated/"stacked" user
+                // bubble on reload. Keeping the id stable means the turn upserts
+                // to a single record. Only mint a new id when there is no
+                // original user message to carry over (e.g. pure replay).
+                const carriedUserId =
+                  lastMessage?.role === 'user' && lastMessage?.id
+                    ? lastMessage.id
+                    : generateUniqueId();
                 newChatStore.getState().addMessages(newTaskId, {
-                  id: generateUniqueId(),
+                  id: carriedUserId,
                   role: 'user',
                   content: userMessageContent,
                   attaches: attachesForNewMessage,
@@ -4590,34 +4659,11 @@ const chatStore = (initial?: Partial<ChatStore>) =>
             step: agentMessages.step,
             isConfirm: false,
           };
+          // Persistence is handled centrally by the addMessages() hook, which
+          // resolves chatId robustly (by taskId membership) and keys the turn
+          // on the most recent user message — so this fall-through step is
+          // saved for reload/playback without a fragile per-branch persist.
           addMessages(currentTaskId, newMessage);
-          try {
-            // Persist this assistant step as part of the current turn so reload hydrates it.
-            // Turn key = {chatId, queryId}; chatId is the Project's active chat id for this store,
-            // queryId is the user message id that opened the group. We infer it as the most recent
-            // user message before this agent step in the same task.
-            const projectId = useProjectStore.getState().activeProjectId;
-            const { getAllChatStores } = useProjectStore.getState();
-            const chatStores = projectId ? getAllChatStores(projectId) : [];
-            const entry = chatStores.find((e) => e.chatStore.getState() === getCurrentChatStore());
-            const chatId = entry?.chatId;
-            const task = getCurrentChatStore().tasks[currentTaskId];
-            const lastUser = [...(task?.messages || [])].reverse().find((m) => m.role === 'user');
-            const queryId = lastUser?.id;
-            if (chatId && queryId) {
-              // Lazy import to avoid cycle at module top
-              const { enqueueTurnPost } = await import('@/lib/turns');
-              enqueueTurnPost(chatId, queryId, 'assistant', {
-                id: newMessage.id,
-                step: newMessage.step,
-                content: newMessage.content as string,
-                agent_name: (agentMessages as any)?.agent_name || null,
-                createdAt: new Date().toISOString(),
-              });
-            }
-          } catch (persistErr) {
-            console.warn('Failed to enqueue assistant turn persist:', persistErr);
-          }
         },
         async onopen(respond) {
           console.log('open', respond);
@@ -4862,8 +4908,14 @@ const chatStore = (initial?: Partial<ChatStore>) =>
         },
       }));
       try {
-        // Persist USER messages immediately so a reload can reconstruct groups.
-        if (message?.role === 'user') {
+        // Persist turns so a reload can reconstruct the conversation. Both the
+        // user query AND the assistant reply(ies) are persisted through the
+        // SAME robust chatId resolution — previously only user messages were
+        // saved here while assistant messages relied on a fragile SSE
+        // catch-all that most answer-bearing steps returned before reaching,
+        // so every reloaded conversation lost its answers.
+        const role = message?.role;
+        if (role === 'user' || role === 'agent') {
           const projectId = useProjectStore.getState().activeProjectId;
           const { getAllChatStores } = useProjectStore.getState();
           const chatStores = projectId ? getAllChatStores(projectId) : [];
@@ -4872,20 +4924,53 @@ const chatStore = (initial?: Partial<ChatStore>) =>
             Object.prototype.hasOwnProperty.call(e.chatStore.getState().tasks, taskId)
           );
           const chatId = chatEntry?.chatId;
-          const queryId = message.id; // user message id is the turn key
-          if (chatId && queryId) {
-            (async () => {
-              const { enqueueTurnPost } = await import('@/lib/turns');
-              enqueueTurnPost(chatId, queryId, 'user', {
-                id: message.id,
-                step: (message as any)?.step,
-                content: String((message as any)?.content ?? ''),
-                createdAt: new Date().toISOString(),
-                attaches: (message as any)?.attaches || [],
-                fileList: (message as any)?.fileList || [],
-                agent_name: (message as any)?.agent_name || null,
-              });
-            })().catch((e) => console.warn('Failed to enqueue user turn persist:', e));
+
+          if (role === 'user') {
+            const queryId = message.id; // user message id is the turn key
+            if (chatId && queryId) {
+              (async () => {
+                const { enqueueTurnPost } = await import('@/lib/turns');
+                enqueueTurnPost(chatId, queryId, 'user', {
+                  id: message.id,
+                  step: (message as any)?.step,
+                  content: String((message as any)?.content ?? ''),
+                  createdAt: new Date().toISOString(),
+                  attaches: (message as any)?.attaches || [],
+                  fileList: (message as any)?.fileList || [],
+                  agent_name: (message as any)?.agent_name || null,
+                });
+              })().catch((e) => console.warn('Failed to enqueue user turn persist:', e));
+            }
+          } else {
+            // Assistant: only persist content-bearing steps (the answer and
+            // other visible agent text); skip transient/structural empties.
+            const step = (message as any)?.step;
+            const content = (message as any)?.content;
+            const hasContent =
+              typeof content === 'string' ? content.trim().length > 0 : !!content;
+            // queryId = the most recent user message in this task (turn key).
+            const task = get().tasks[taskId];
+            const lastUser = [...(task?.messages || [])]
+              .reverse()
+              .find((m: any) => m.role === 'user');
+            const queryId = lastUser?.id;
+            if (chatId && queryId && step && hasContent) {
+              (async () => {
+                const { enqueueTurnPost } = await import('@/lib/turns');
+                enqueueTurnPost(chatId, queryId, 'assistant', {
+                  id: message.id,
+                  step,
+                  content: String(content ?? ''),
+                  reasoning: (message as any)?.reasoning ?? null,
+                  agent_name: (message as any)?.agent_name || null,
+                  attaches: (message as any)?.attaches || [],
+                  fileList: (message as any)?.fileList || [],
+                  createdAt: new Date().toISOString(),
+                });
+              })().catch((e) =>
+                console.warn('Failed to enqueue assistant turn persist:', e)
+              );
+            }
           }
         }
       } catch (persistErr) {

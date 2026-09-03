@@ -34,6 +34,7 @@ import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { ConnectionProvider } from '@/context/ConnectionContext';
 import { createHost, HostProvider } from '@/host';
+import { setOpenFolderRoot } from '@/lib/openFolder';
 import type { AppHost } from '@/host/types';
 import i18n from '@/i18n';
 import { useAuthStore } from '@/store/authStore';
@@ -125,6 +126,10 @@ export function mountAgentPanel(
   //    embed has none (the host page has its own empty storage). Scope ONE SPACE
   //    PER FOLDER so History shows only the current folder's conversations
   //    (Antigravity model). Best-effort + async — the UI renders immediately.
+  //    Record the open folder up front so every chat request can forward it as
+  //    space_root_path even before bootstrapWorkspace finishes (it isn't awaited,
+  //    so a conversation started immediately would otherwise miss the folder).
+  setOpenFolderRoot(config.workspaceRoot);
   void bootstrapWorkspace(config.userId ?? undefined, config.workspaceRoot);
 
   // Scope marker: the agent stylesheet scopes its global resets under this
