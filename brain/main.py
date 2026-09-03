@@ -240,9 +240,9 @@ def run_standalone():
     """Run Brain in standalone mode (no Electron dependency)."""
     import uvicorn
 
-    port = int(env("EIGENT_BRAIN_PORT", "5001"))
-    host = env("EIGENT_BRAIN_HOST", "0.0.0.0")  # nosec B104 - bind all for Docker/dev
-    reload = os.environ.get("EIGENT_DEBUG", "").lower() in ("1", "true", "yes")
+    port = int(env("UNDISCLOSED_BRAIN_PORT", "5001"))
+    host = env("UNDISCLOSED_BRAIN_HOST", "0.0.0.0")  # nosec B104 - bind all for Docker/dev
+    reload = os.environ.get("UNDISCLOSED_DEBUG", "").lower() in ("1", "true", "yes")
 
     app_logger.info(
         f"Starting Brain in standalone mode: {host}:{port} (reload={reload})"

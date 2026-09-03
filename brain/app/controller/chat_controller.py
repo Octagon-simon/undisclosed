@@ -113,7 +113,7 @@ async def _prepare_browser_for_request(
 ) -> bool:
     existing_cdp_url = (
         get_connected_cdp_endpoint_for_request(request)
-        or env("EIGENT_CDP_URL", "")
+        or env("UNDISCLOSED_CDP_URL", "")
     ).strip()
     if existing_cdp_url:
         is_available = await asyncio.to_thread(

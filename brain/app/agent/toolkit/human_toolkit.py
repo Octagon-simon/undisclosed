@@ -82,7 +82,7 @@ class HumanToolkit(BaseToolkit, AbstractToolkit):
         )
         # Fire-and-forget: this is the one genuine "needs a human" moment in
         # this toolkit (get_human_input below actually blocks on it). Scheduled
-        # rather than awaited so a slow/misconfigured EIGENT_NOTIFY_COMMAND
+        # rather than awaited so a slow/misconfigured UNDISCLOSED_NOTIFY_COMMAND
         # can never delay the real wait-for-human-input path.
         asyncio.create_task(
             fire_notify(

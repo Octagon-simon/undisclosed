@@ -26,7 +26,7 @@ pytestmark = pytest.mark.unit
 
 
 def test_policy_is_disabled_by_default(monkeypatch):
-    monkeypatch.delenv("EIGENT_REMOTE_SUB_AGENT_ENABLED", raising=False)
+    monkeypatch.delenv("UNDISCLOSED_REMOTE_SUB_AGENT_ENABLED", raising=False)
 
     policy = build_default_policy()
 
@@ -36,9 +36,9 @@ def test_policy_is_disabled_by_default(monkeypatch):
 
 
 def test_policy_allows_enabled_provider(monkeypatch):
-    monkeypatch.setenv("EIGENT_REMOTE_SUB_AGENT_ENABLED", "true")
+    monkeypatch.setenv("UNDISCLOSED_REMOTE_SUB_AGENT_ENABLED", "true")
     monkeypatch.setenv(
-        "EIGENT_REMOTE_SUB_AGENT_ALLOWED_PROVIDERS",
+        "UNDISCLOSED_REMOTE_SUB_AGENT_ALLOWED_PROVIDERS",
         "gemini_agents,other_provider",
     )
 
@@ -49,7 +49,7 @@ def test_policy_allows_enabled_provider(monkeypatch):
 
 
 def test_configured_policy_does_not_read_env_enablement(monkeypatch):
-    monkeypatch.setenv("EIGENT_REMOTE_SUB_AGENT_ENABLED", "true")
+    monkeypatch.setenv("UNDISCLOSED_REMOTE_SUB_AGENT_ENABLED", "true")
 
     policy = build_configured_policy(None)
 

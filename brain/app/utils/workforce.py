@@ -917,7 +917,7 @@ class Workforce(BaseWorkforce):
         # when task fails (e.g. max retries exceeded)
         task = _schedule_async_task(task_lock.put_queue(ActionEndData()))
         # Same thread-safety concern as above — fire-and-forget, so a
-        # missing/broken EIGENT_NOTIFY_COMMAND can't affect shutdown.
+        # missing/broken UNDISCLOSED_NOTIFY_COMMAND can't affect shutdown.
         _schedule_async_task(
             fire_notify("task_end", {"taskId": self.api_task_id})
         )

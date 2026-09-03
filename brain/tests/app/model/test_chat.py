@@ -216,7 +216,7 @@ class TestChatSkillConfigUserId:
             json.dumps({"version": 1, "skills": {"pdf": {"enabled": False}}}),
             encoding="utf-8",
         )
-        monkeypatch.setattr(skill_config_service, "EIGENT_ROOT", eigent_root)
+        monkeypatch.setattr(skill_config_service, "UNDISCLOSED_ROOT", eigent_root)
 
         chat = Chat(
             task_id="task-1",

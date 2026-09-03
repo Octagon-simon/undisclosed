@@ -19,7 +19,7 @@
  * we must not disturb. Eigent's stylesheet has aggressive GLOBAL rules
  * (`* { font-family }`, preflight resets on html/body/elements) that would
  * clobber the host. The PostCSS pass below **scopes only bare-element / `*`
- * selectors** under `.eigent-agent-root`, while leaving class/id/attr/`:root`
+ * selectors** under `.undisclosed-agent-root`, while leaving class/id/attr/`:root`
  * selectors global — so theme variables (`:root`, `.dark`, `[data-theme]`) and
  * utility classes (used by portaled dropdowns/tooltips too) still work, but the
  * global resets can't leak out of the panel.
@@ -33,7 +33,7 @@ import tailwindcss from 'tailwindcss';
 import tailwindcssNesting from 'tailwindcss/nesting';
 import { defineConfig } from 'vite';
 
-const AGENT_ROOT = '.eigent-agent-root';
+const AGENT_ROOT = '.undisclosed-agent-root';
 
 function scopeSelector(sel: string): string {
   const s = sel.trim();
@@ -95,7 +95,7 @@ export default defineConfig({
     sourcemap: true,
     lib: {
       entry: path.resolve(__dirname, 'src/agent-embed/mount.tsx'),
-      name: 'EigentAgentEmbed',
+      name: 'UndisclosedAgentEmbed',
       formats: ['es', 'umd'],
       fileName: (format) => `agent-embed.${format}.js`,
     },

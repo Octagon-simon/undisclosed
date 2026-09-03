@@ -6,10 +6,10 @@
  * Electron, NO authStore, NO IPC — everything injected. Run against a live
  * backend:
  *
- *   EIGENT_BASE_URL=http://localhost:5001 \
- *   EIGENT_TOKEN=<your token> \
- *   EIGENT_USER_ID=<id> \
- *   [EIGENT_SSE_PATH=/chat EIGENT_SSE_BODY='{"...":"..."}'] \
+ *   UNDISCLOSED_BASE_URL=http://localhost:5001 \
+ *   UNDISCLOSED_TOKEN=<your token> \
+ *   UNDISCLOSED_USER_ID=<id> \
+ *   [UNDISCLOSED_SSE_PATH=/chat UNDISCLOSED_SSE_BODY='{"...":"..."}'] \
  *   node lib/probe.js
  *
  * Steps: (1) unauth transport check, (2) an authed GET if a token is given,
@@ -21,11 +21,11 @@ import { AgentNetConfig } from './config';
 import { createHttpClient } from './http';
 import { openAgentStream } from './sse';
 
-const BASE_URL = process.env.EIGENT_BASE_URL || 'http://localhost:5001';
-const TOKEN = process.env.EIGENT_TOKEN || '';
-const USER_ID = process.env.EIGENT_USER_ID || '';
-const SSE_PATH = process.env.EIGENT_SSE_PATH || '';
-const SSE_BODY = process.env.EIGENT_SSE_BODY || '';
+const BASE_URL = process.env.UNDISCLOSED_BASE_URL || 'http://localhost:5001';
+const TOKEN = process.env.UNDISCLOSED_TOKEN || '';
+const USER_ID = process.env.UNDISCLOSED_USER_ID || '';
+const SSE_PATH = process.env.UNDISCLOSED_SSE_PATH || '';
+const SSE_BODY = process.env.UNDISCLOSED_SSE_BODY || '';
 
 const config: AgentNetConfig = {
   baseUrl: BASE_URL,
@@ -62,7 +62,7 @@ async function main(): Promise<void> {
       line(`[2] auth       GET /api/v1/providers -> FAIL ❌  ${(err as Error).message}`);
     }
   } else {
-    line(`[2] auth       (skipped — set EIGENT_TOKEN to test the injected Bearer)`);
+    line(`[2] auth       (skipped — set UNDISCLOSED_TOKEN to test the injected Bearer)`);
   }
 
   // 3) SSE turn — proves the streaming path works standalone.
@@ -103,7 +103,7 @@ async function main(): Promise<void> {
     });
     await done;
   } else {
-    line(`[3] stream     (skipped — set EIGENT_SSE_PATH e.g. /chat + EIGENT_SSE_BODY)`);
+    line(`[3] stream     (skipped — set UNDISCLOSED_SSE_PATH e.g. /chat + UNDISCLOSED_SSE_BODY)`);
   }
 
   line(`=== done ===\n`);

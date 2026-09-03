@@ -86,7 +86,7 @@ class TestRunnerToolkit(BaseToolkit, AbstractToolkit):
     def _skill_md_path(self) -> Path | None:
         """Locate the lacuna-cli skill's SKILL.md across known layouts."""
         candidates = []
-        override = env("EIGENT_SKILLS_DIR", "")
+        override = env("UNDISCLOSED_SKILLS_DIR", "")
         if override:
             candidates.append(Path(override) / _SKILL_NAME / "SKILL.md")
         home_skills = Path.home() / ".undisclosed"

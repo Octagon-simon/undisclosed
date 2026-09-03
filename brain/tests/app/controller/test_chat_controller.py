@@ -126,7 +126,7 @@ class TestChatController:
     async def test_post_chat_sets_cdp_url_when_browser_ready(
         self, sample_chat_data, mock_request, mock_task_lock
     ):
-        """Web mode should set EIGENT_CDP_URL after successful browser ensure."""
+        """Web mode should set UNDISCLOSED_CDP_URL after successful browser ensure."""
         chat_data = Chat(**sample_chat_data)
         mock_request.state = SimpleNamespace()
 
@@ -170,7 +170,7 @@ class TestChatController:
     async def test_post_chat_clears_cdp_url_when_browser_unavailable(
         self, sample_chat_data, mock_request, mock_task_lock
     ):
-        """Web mode should mark browser unavailable and clear EIGENT_CDP_URL."""
+        """Web mode should mark browser unavailable and clear UNDISCLOSED_CDP_URL."""
         chat_data = Chat(**sample_chat_data)
         mock_request.state = SimpleNamespace()
 
@@ -196,7 +196,7 @@ class TestChatController:
             patch("pathlib.Path.home", return_value=MagicMock()),
             patch.dict(
                 os.environ,
-                {"EIGENT_CDP_URL": "http://127.0.0.1:9222"},
+                {"UNDISCLOSED_CDP_URL": "http://127.0.0.1:9222"},
                 clear=True,
             ),
         ):
@@ -240,7 +240,7 @@ class TestChatController:
             patch("pathlib.Path.home", return_value=MagicMock()),
             patch.dict(
                 os.environ,
-                {"EIGENT_CDP_URL": "http://worker-17:9222"},
+                {"UNDISCLOSED_CDP_URL": "http://worker-17:9222"},
                 clear=True,
             ),
         ):

@@ -681,7 +681,7 @@ class HybridBrowserToolkit(BaseHybridBrowserToolkit, AbstractToolkit):
 
     def _should_prime_shared_cdp_tab(self) -> bool:
         enabled = (
-            env("EIGENT_INTERIM_SHARED_BROWSER_TAB_ISOLATION", "true")
+            env("UNDISCLOSED_INTERIM_SHARED_BROWSER_TAB_ISOLATION", "true")
             .strip()
             .lower()
         )

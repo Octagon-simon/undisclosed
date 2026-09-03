@@ -83,15 +83,15 @@ RUN uv run pybabel compile -d lang 2>/dev/null || true
 # Bake the latest brain/ commit into the image for stale-server detection.
 # Uses --mount=type=bind to access .git without adding it to a layer.
 RUN --mount=type=bind,source=.git,target=/tmp/.git \
-    echo "EIGENT_BRAIN_GIT_COMMIT=$(git --git-dir=/tmp/.git log -1 --format=%H -- brain/ 2>/dev/null || echo unknown)" > /app/.image_env
+    echo "UNDISCLOSED_BRAIN_GIT_COMMIT=$(git --git-dir=/tmp/.git log -1 --format=%H -- brain/ 2>/dev/null || echo unknown)" > /app/.image_env
 
 # Place executables in the environment at the front of the path.
 ENV PATH="/app/.venv/bin:$PATH"
 
 # The FastAPI app is exported as `main:api` (see brain/main.py) and launched via
-# `python main.py`, which starts uvicorn internally on EIGENT_BRAIN_PORT (default
+# `python main.py`, which starts uvicorn internally on UNDISCLOSED_BRAIN_PORT (default
 # 5001). We bind 0.0.0.0 so Docker can publish it.
-ENV EIGENT_BRAIN_HOST=0.0.0.0
+ENV UNDISCLOSED_BRAIN_HOST=0.0.0.0
 EXPOSE 5678
 
 # Reset the entrypoint — don't invoke `uv`.

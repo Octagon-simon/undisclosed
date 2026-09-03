@@ -41,8 +41,8 @@ def _max_iteration() -> int | None:
     """Optional cap on tool-call rounds per turn. DEFAULT: unbounded (0) — a low
     cap truncates legitimate long tasks and leaves a dangling non-answer, and the
     real "runs forever" case is handled by the deferred-follow-up fix, not this
-    blunt cap. Set EIGENT_MAX_ITERATION=<N> to re-enable a safety cap."""
-    raw = env("EIGENT_MAX_ITERATION", "0")
+    blunt cap. Set UNDISCLOSED_MAX_ITERATION=<N> to re-enable a safety cap."""
+    raw = env("UNDISCLOSED_MAX_ITERATION", "0")
     try:
         n = int(raw)
     except (TypeError, ValueError):

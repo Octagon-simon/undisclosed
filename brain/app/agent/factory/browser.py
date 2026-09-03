@@ -224,7 +224,7 @@ def browser_agent(
                 f"port={selected_port}, session_id={toolkit_session_id}"
             )
     elif use_browser:
-        existing_cdp_url = env("EIGENT_CDP_URL", "").strip()
+        existing_cdp_url = env("UNDISCLOSED_CDP_URL", "").strip()
         selected_port = env("browser_port", "9222")
         cdp_url = f"http://localhost:{selected_port}"
 

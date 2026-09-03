@@ -542,13 +542,13 @@ export default function ChatBox(): JSX.Element {
     if (useCloudModelInDev) return true;
     if (task.isContextExceeded) return true;
 
-    // Single-agent tasks accept follow-up messages while busy: the backend
-    // injects them into the live agent's memory. Workforce mode still
-    // disables the composer while a run is in progress.
-    const busySessionMode =
-      activeProjectMode ?? inferSessionModeFromTask(task, null);
-    const canSendWhileBusy =
-      !task.activeAsk && busySessionMode === SessionMode.SINGLE_AGENT;
+    // Accept follow-up messages while a run is in progress in BOTH modes
+    // (queueing). Both backend paths handle it sequentially: single-agent
+    // defers the follow-up and runs it as the next turn (emitting a "notice"
+    // acknowledgement); workforce's inline streaming loop only pulls the next
+    // queued item once the current run finishes. The only case we still block
+    // is an active ask-human prompt, which is a different (blocking) flow.
+    const canSendWhileBusy = !task.activeAsk;
     if (!canSendWhileBusy && isTaskBusy) return true;
 
     return false;
@@ -559,7 +559,6 @@ export default function ChatBox(): JSX.Element {
     hasModel,
     useCloudModelInDev,
     isTaskBusy,
-    activeProjectMode,
   ]);
 
   const handleSendShare = useCallback(
@@ -729,14 +728,11 @@ export default function ChatBox(): JSX.Element {
     // Multi-turn support: Check if task is running or planning (splitting/confirm)
     const task = chatStore.tasks[_taskId];
     const requiresHumanReply = Boolean(task?.activeAsk);
-    const inferredBusySessionMode =
-      activeProjectMode ?? inferSessionModeFromTask(task, null);
-    // Single-agent runs accept follow-up messages while busy: the backend
-    // injects them into the live agent's memory, so they steer the agent
-    // on its next step instead of being dropped.
-    const canSendWhileBusy =
-      !requiresHumanReply &&
-      inferredBusySessionMode === SessionMode.SINGLE_AGENT;
+    // Both modes queue follow-ups sent while busy: single-agent defers and runs
+    // it as the next turn (with a "notice"); workforce's sequential loop pulls
+    // it once the current run finishes. Only an active ask-human prompt is a
+    // hard block. Mirrors isInputDisabled so the composer and send agree.
+    const canSendWhileBusy = !requiresHumanReply;
     const isTaskBusy =
       (task.status === ChatTaskStatus.RUNNING && task.hasMessages) ||
       task.status === ChatTaskStatus.PAUSE ||
@@ -756,7 +752,12 @@ export default function ChatBox(): JSX.Element {
         task.status === ChatTaskStatus.PENDING);
     const _isTaskInProgress = ['running', 'pause'].includes(task?.status || '');
     const isReplayChatStore = task?.type === 'replay';
-    if (!requiresHumanReply && isTaskBusy && !isReplayChatStore) {
+    if (
+      !requiresHumanReply &&
+      isTaskBusy &&
+      !isReplayChatStore &&
+      !canSendWhileBusy
+    ) {
       toast.error(
         'Current task is in progress. Please wait for it to finish before sending a new request.',
         {

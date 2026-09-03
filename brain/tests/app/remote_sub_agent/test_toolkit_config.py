@@ -39,7 +39,7 @@ def _valid_config() -> dict:
 
 
 def test_toolkit_disabled_without_user_config_even_if_env_enabled(monkeypatch):
-    monkeypatch.setenv("EIGENT_REMOTE_SUB_AGENT_ENABLED", "true")
+    monkeypatch.setenv("UNDISCLOSED_REMOTE_SUB_AGENT_ENABLED", "true")
     monkeypatch.setenv("GEMINI_API_KEY", "env-key")
 
     assert RemoteSubAgentToolkit.is_enabled(None) is False

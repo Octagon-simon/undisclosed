@@ -1,12 +1,12 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright (c) 2026 Simon Ugorji
  *
- * Match the embedded Eigent agent panel to Theia's ACTIVE theme by remapping
+ * Match the embedded Undisclosed agent panel to Theia's ACTIVE theme by remapping
  * the dominant --ds-* surface/text/border/icon tokens to Theia's --theia-*
  * theme variables. Injected AFTER the bundle stylesheet so it wins over the
- * bundle's own (Eigent) dark values. Theia's own UI never references --ds-*,
+ * bundle's own (Undisclosed) dark values. Theia's own UI never references --ds-*,
  * so this can't affect the editor; it only re-skins the agent panel + its
- * portaled overlays. Brand/status accents intentionally keep Eigent's colors.
+ * portaled overlays. Brand/status accents intentionally keep Undisclosed's colors.
  */
 /* Targets `.dark` / `[data-theme]` too so PORTALED overlays (the model
  * dropdown, tooltips, toasts) — which render to <body> outside the panel and
@@ -16,7 +16,7 @@
 .dark,
 [data-theme='dark'],
 [data-theme='light'],
-.eigent-agent-root {
+.undisclosed-agent-root {
   /* Surfaces. neutral-default backs elevated things (dropdowns, the ⋯ menu),
      so map it to Theia's menu/dropdown color to match native menus. */
   --ds-bg-neutral-default-default: var(--theia-dropdown-background, var(--theia-menu-background, var(--theia-editor-background)));
@@ -32,7 +32,7 @@
   /* Brand accent. These were UNMAPPED, so brand-colored elements (welcome logo,
      primary buttons, "on" toggles) resolved to nothing -> black / invisible in
      dark mode. Pin explicit brand values that read on BOTH light and dark
-     (Eigent keeps its brand color across themes). */
+     (Undisclosed keeps its brand color across themes). */
   --ds-bg-brand-default-default: #7c3aed;
   --ds-bg-brand-default-hover: #6d28d9;
   --ds-bg-brand-default-active: #5b21b6;
@@ -59,7 +59,7 @@
   --ds-border-neutral-strong-default: var(--theia-panel-border, var(--theia-editorWidget-border));
 
   /* NOTE: primary buttons (the composer send button) intentionally keep
-     Eigent's saturated brand/success colors — mapping their bg to Theia's
+     Undisclosed's saturated brand/success colors — mapping their bg to Theia's
      button vars made the bg light in some themes and hid the white icon. */
 
   /* Inputs (composer) */
@@ -124,7 +124,7 @@
   --ds-text-success-strong-default: #16a34a !important;
   /* Subtle success chip (the Models "Default" badge, the browser "Live" pill)
      → a neutral Theia surface so the chip fits the editor in either theme; the
-     green text/icon above carries the status. Without this it kept Eigent's
+     green text/icon above carries the status. Without this it kept Undisclosed's
      fixed light-green bg and didn't adapt to dark. Mirrors warning-subtle. */
   --ds-bg-success-subtle-default: var(--theia-editorWidget-background, var(--theia-editor-background));
 
@@ -141,25 +141,25 @@
 
 /* Use modern, sleek UI font stack (Inter/system sans) for the panel and chatbox,
  * while preserving monospace for code blocks. */
-.eigent-agent-root,
-.eigent-agent-root *,
-.eigent-agent-root textarea,
-.eigent-agent-root input,
-.eigent-agent-root [contenteditable] {
+.undisclosed-agent-root,
+.undisclosed-agent-root *,
+.undisclosed-agent-root textarea,
+.undisclosed-agent-root input,
+.undisclosed-agent-root [contenteditable] {
   font-family: var(--theia-ui-font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji") !important;
 }
 
-.eigent-agent-root code,
-.eigent-agent-root pre,
-.eigent-agent-root code *,
-.eigent-agent-root pre * {
+.undisclosed-agent-root code,
+.undisclosed-agent-root pre,
+.undisclosed-agent-root code *,
+.undisclosed-agent-root pre * {
   font-family: var(--theia-editor-font-family, ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace) !important;
 }
 
 /* Give the agent panel the EXPLORER's background (Theia sideBar) so it reads as
  * a distinct surface from the editor — matching the Antigravity 3-tone layout
  * (explorer + agent share sideBar bg; editor is its own color). */
-.eigent-agent-root {
+.undisclosed-agent-root {
   background-color: var(--theia-sideBar-background, var(--theia-editor-background));
   color: var(--theia-sideBar-foreground, var(--theia-foreground));
 }
@@ -196,11 +196,11 @@
  * only appeared on :hover, whose 0,2,0 rule won). Pinning the token variable
  * didn't help — the losing declaration never reads the variable. Force the
  * PROPERTY itself here, scoped to the panel, so rest + hover are solid. */
-.eigent-agent-root .bg-ds-bg-success-default-default {
+.undisclosed-agent-root .bg-ds-bg-success-default-default {
   background-color: #16a34a !important;
   border-color: #16a34a !important;
 }
-.eigent-agent-root .bg-ds-bg-error-default-default {
+.undisclosed-agent-root .bg-ds-bg-error-default-default {
   background-color: #dc2626 !important;
   border-color: #dc2626 !important;
 }
@@ -210,14 +210,14 @@
  * box stayed light in a dark theme. Force the surface (and the red danger
  * accents for denied) on the PROPERTY, scoped to the panel, so they follow the
  * active Theia theme. */
-.eigent-agent-root .bg-ds-bg-error-subtle-default,
-.eigent-agent-root .bg-ds-bg-information-subtle-default {
+.undisclosed-agent-root .bg-ds-bg-error-subtle-default,
+.undisclosed-agent-root .bg-ds-bg-information-subtle-default {
   background-color: var(--theia-editorWidget-background, var(--theia-editor-background)) !important;
 }
-.eigent-agent-root .border-ds-border-error-default-default {
+.undisclosed-agent-root .border-ds-border-error-default-default {
   border-color: #dc2626 !important;
 }
-.eigent-agent-root .text-ds-text-error-strong-default {
+.undisclosed-agent-root .text-ds-text-error-strong-default {
   color: #dc2626 !important;
 }
 
@@ -226,51 +226,51 @@
  * tables, blockquotes stayed light in a dark editor). Re-map them to Theia vars
  * so they follow the editor theme. Scoped to the panel + !important to beat the
  * hardcoded [data-theme] rules. */
-.eigent-agent-root .markdown-body {
+.undisclosed-agent-root .markdown-body {
   color: var(--theia-foreground) !important;
 }
-.eigent-agent-root .markdown-body pre {
+.undisclosed-agent-root .markdown-body pre {
   background-color: var(--theia-textCodeBlock-background, var(--theia-editorWidget-background, var(--theia-editor-background))) !important;
   color: var(--theia-editor-foreground, var(--theia-foreground)) !important;
 }
-.eigent-agent-root .markdown-body code {
+.undisclosed-agent-root .markdown-body code {
   background-color: var(--theia-textCodeBlock-background, rgba(127, 127, 127, 0.18)) !important;
   color: var(--theia-editor-foreground, var(--theia-foreground)) !important;
 }
-.eigent-agent-root .markdown-body pre code {
+.undisclosed-agent-root .markdown-body pre code {
   background-color: transparent !important;
   color: inherit !important;
 }
-.eigent-agent-root .markdown-body table th,
-.eigent-agent-root .markdown-body table td {
+.undisclosed-agent-root .markdown-body table th,
+.undisclosed-agent-root .markdown-body table td {
   border-color: var(--theia-panel-border, var(--theia-editorWidget-border)) !important;
 }
-.eigent-agent-root .markdown-body table th {
+.undisclosed-agent-root .markdown-body table th {
   background-color: var(--theia-editorWidget-background, var(--theia-editor-background)) !important;
   color: var(--theia-foreground) !important;
 }
-.eigent-agent-root .markdown-body table tr {
+.undisclosed-agent-root .markdown-body table tr {
   background-color: transparent !important;
   border-top-color: var(--theia-panel-border) !important;
 }
-.eigent-agent-root .markdown-body table tr:nth-child(2n) {
+.undisclosed-agent-root .markdown-body table tr:nth-child(2n) {
   background-color: var(--theia-editorWidget-background, rgba(127, 127, 127, 0.06)) !important;
 }
-.eigent-agent-root .markdown-body blockquote {
+.undisclosed-agent-root .markdown-body blockquote {
   color: var(--theia-descriptionForeground, var(--theia-foreground)) !important;
   border-left-color: var(--theia-panel-border) !important;
 }
-.eigent-agent-root .markdown-body a {
+.undisclosed-agent-root .markdown-body a {
   color: var(--theia-textLink-foreground, #58a6ff) !important;
 }
 
 /* The composer shows an unwanted blue focus outline (browser/Theia default) —
  * the input has its own border, so drop the outline. */
-.eigent-agent-root textarea:focus,
-.eigent-agent-root textarea:focus-visible,
-.eigent-agent-root [contenteditable]:focus,
-.eigent-agent-root [contenteditable]:focus-visible,
-.eigent-agent-root input:focus-visible {
+.undisclosed-agent-root textarea:focus,
+.undisclosed-agent-root textarea:focus-visible,
+.undisclosed-agent-root [contenteditable]:focus,
+.undisclosed-agent-root [contenteditable]:focus-visible,
+.undisclosed-agent-root input:focus-visible {
   outline: none !important;
 }
 
@@ -283,9 +283,9 @@
 }
 
 /* (Theia's side-panel title bar is intentionally VISIBLE now — the agent's
- * actions live there as native toolbar items beside the "Eigent Agent" label,
+ * actions live there as native toolbar items beside the "Undisclosed Agent" label,
  * so the React header was removed. No duplicate anymore.) */
 
 /* (The RIGHT side-panel tab strip is removed via the Lumino widget API in
- * eigent-agent-layout-contribution.ts — hiding it in CSS left a ~48px gap
+ * undisclosed-agent-layout-contribution.ts — hiding it in CSS left a ~48px gap
  * because Lumino positions absolutely and wouldn't re-flow.) */

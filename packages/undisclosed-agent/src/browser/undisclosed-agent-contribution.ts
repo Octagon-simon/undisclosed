@@ -18,27 +18,27 @@ import {
   MenuModelRegistry,
   MenuPath,
 } from '@theia/core/lib/common';
-import { EigentAgentWidget } from './eigent-agent-widget';
+import { UndisclosedAgentWidget } from './undisclosed-agent-widget';
 
-export const EIGENT_AGENT_TOGGLE_COMMAND_ID = 'eigent-agent:toggle';
-const INTRODUCED_KEY = 'eigent-agent.introduced';
+export const UNDISCLOSED_AGENT_TOGGLE_COMMAND_ID = 'undisclosed-agent:toggle';
+const INTRODUCED_KEY = 'undisclosed-agent.introduced';
 
-const NEW: Command = { id: 'eigent-agent.new-conversation', label: 'New Conversation' };
-const HISTORY: Command = { id: 'eigent-agent.history', label: 'History' };
-const CLOSE: Command = { id: 'eigent-agent.close', label: 'Close Panel' };
-const GOV_ASK: Command = { id: 'eigent-agent.governance-ask' };
-const GOV_AUTO: Command = { id: 'eigent-agent.governance-auto' };
-const USAGE: Command = { id: 'eigent-agent.usage', label: 'Usage overview' };
-const MEMORY: Command = { id: 'eigent-agent.memory', label: 'Memory' };
-const MODELS: Command = { id: 'eigent-agent.models', label: 'Models' };
-const SETTINGS: Command = { id: 'eigent-agent.settings', label: 'Settings' };
-const BROWSER: Command = { id: 'eigent-agent.browser', label: 'Agent browser' };
-const THINKING: Command = { id: 'eigent-agent.thinking', label: 'Show thinking' };
+const NEW: Command = { id: 'undisclosed-agent.new-conversation', label: 'New Conversation' };
+const HISTORY: Command = { id: 'undisclosed-agent.history', label: 'History' };
+const CLOSE: Command = { id: 'undisclosed-agent.close', label: 'Close Panel' };
+const GOV_ASK: Command = { id: 'undisclosed-agent.governance-ask' };
+const GOV_AUTO: Command = { id: 'undisclosed-agent.governance-auto' };
+const USAGE: Command = { id: 'undisclosed-agent.usage', label: 'Usage overview' };
+const MEMORY: Command = { id: 'undisclosed-agent.memory', label: 'Memory' };
+const MODELS: Command = { id: 'undisclosed-agent.models', label: 'Models' };
+const SETTINGS: Command = { id: 'undisclosed-agent.settings', label: 'Settings' };
+const BROWSER: Command = { id: 'undisclosed-agent.browser', label: 'Agent browser' };
+const THINKING: Command = { id: 'undisclosed-agent.thinking', label: 'Show thinking' };
 /** The `⋯` toolbar item opens this menu. */
-const MORE_MENU: MenuPath = ['eigent-agent-more-menu'];
+const MORE_MENU: MenuPath = ['undisclosed-agent-more-menu'];
 
-function asAgent(arg: unknown): EigentAgentWidget | undefined {
-  return arg instanceof EigentAgentWidget ? arg : undefined;
+function asAgent(arg: unknown): UndisclosedAgentWidget | undefined {
+  return arg instanceof UndisclosedAgentWidget ? arg : undefined;
 }
 
 /**
@@ -48,8 +48,8 @@ function asAgent(arg: unknown): EigentAgentWidget | undefined {
  * header, so the actions sit beside the title (the Antigravity layout).
  */
 @injectable()
-export class EigentAgentContribution
-  extends AbstractViewContribution<EigentAgentWidget>
+export class UndisclosedAgentContribution
+  extends AbstractViewContribution<UndisclosedAgentWidget>
   implements TabBarToolbarContribution, FrontendApplicationContribution
 {
   @inject(StorageService)
@@ -57,10 +57,10 @@ export class EigentAgentContribution
 
   constructor() {
     super({
-      widgetId: EigentAgentWidget.ID,
-      widgetName: EigentAgentWidget.LABEL,
+      widgetId: UndisclosedAgentWidget.ID,
+      widgetName: UndisclosedAgentWidget.LABEL,
       defaultWidgetOptions: { area: 'right', rank: 100 },
-      toggleCommandId: EIGENT_AGENT_TOGGLE_COMMAND_ID,
+      toggleCommandId: UNDISCLOSED_AGENT_TOGGLE_COMMAND_ID,
       toggleKeybinding: 'ctrlcmd+shift+a',
     });
   }
@@ -189,7 +189,7 @@ export class EigentAgentContribution
       isVisible,
     });
     registry.registerItem({
-      id: 'eigent-agent.more',
+      id: 'undisclosed-agent.more',
       icon: 'codicon codicon-ellipsis',
       tooltip: 'Governance mode',
       text: 'Governance mode',

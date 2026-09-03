@@ -120,7 +120,7 @@ def test_browser_agent_prefers_preconnected_cdp_url(sample_chat_data):
         patch("uuid.uuid4") as mock_uuid,
         patch.dict(
             os.environ,
-            {"EIGENT_CDP_URL": "http://worker-17:9222"},
+            {"UNDISCLOSED_CDP_URL": "http://worker-17:9222"},
             clear=True,
         ),
     ):

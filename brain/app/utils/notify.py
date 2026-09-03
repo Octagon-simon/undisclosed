@@ -16,14 +16,14 @@
 
 Historically this module was the whole beckon integration (see
 documents/github/beckon README + EXTENDING.md): one user-configured command
-(EIGENT_NOTIFY_COMMAND), run with a JSON payload on stdin whenever the agent
+(UNDISCLOSED_NOTIFY_COMMAND), run with a JSON payload on stdin whenever the agent
 genuinely needs a human or a task finishes.
 
 The mechanism now lives in :mod:`app.hooks`, which adds typed events,
-per-event routing (EIGENT_HOOKS), fan-out to multiple commands, and an
+per-event routing (UNDISCLOSED_HOOKS), fan-out to multiple commands, and an
 overridable timeout. This module remains so existing imports
-(`fire_notify`, ``EIGENT_NOTIFY_COMMAND`` setups) behave exactly as before:
-with no EIGENT_HOOKS configured, fire_notify runs EIGENT_NOTIFY_COMMAND for
+(`fire_notify`, ``UNDISCLOSED_NOTIFY_COMMAND`` setups) behave exactly as before:
+with no UNDISCLOSED_HOOKS configured, fire_notify runs UNDISCLOSED_NOTIFY_COMMAND for
 every event, byte-for-byte the same stdin contract as always.
 """
 
@@ -36,7 +36,7 @@ logger = logging.getLogger("notify")
 
 # Kept for backward compatibility with anything importing this constant.
 # The live value is app.hooks.dispatcher.DEFAULT_HOOK_TIMEOUT_SECONDS,
-# overridable via EIGENT_HOOK_TIMEOUT_MS.
+# overridable via UNDISCLOSED_HOOK_TIMEOUT_MS.
 NOTIFY_TIMEOUT_SECONDS = 2.0
 
 

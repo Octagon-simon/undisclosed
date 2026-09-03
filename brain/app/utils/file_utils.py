@@ -291,7 +291,7 @@ def resolve_upload_ref(ref: str) -> str:
     """Resolve an ``upload://<stored_name>`` attach ref to an absolute file path
     the agent can actually read.
 
-    Uploaded files live under ``<EIGENT_WORKSPACE>/<session_id>/uploads/
+    Uploaded files live under ``<UNDISCLOSED_WORKSPACE>/<session_id>/uploads/
     <stored_name>`` (see file_controller.upload_file). The stored name is unique
     (it carries a millisecond timestamp), so a glob across sessions resolves to
     exactly one file without needing the session id plumbed through the run.
@@ -306,7 +306,7 @@ def resolve_upload_ref(ref: str) -> str:
         return ref
     try:
         workspace_root = Path(
-            env("EIGENT_WORKSPACE", "~/.undisclosed/workspace")
+            env("UNDISCLOSED_WORKSPACE", "~/.undisclosed/workspace")
         ).expanduser()
         matches = sorted(workspace_root.glob(f"*/uploads/{name}"))
         for candidate in matches:

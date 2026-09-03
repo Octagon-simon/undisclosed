@@ -115,6 +115,22 @@ export function mountAgentPanel(
   const host = config.host ?? createHost();
   injectHost(host);
 
+  // 3a) Live editor-context sync: mirror the host's active editor into a store
+  //     the send path reads, so the agent knows which file the user is looking
+  //     at without shelling out. Best-effort; hosts without an editor omit it.
+  let unsubscribeActiveEditor: (() => void) | undefined;
+  void import('@/store/activeEditorStore')
+    .then(({ useActiveEditorStore }) => {
+      const set = useActiveEditorStore.getState().setActiveEditor;
+      set(host.getActiveEditor?.() ?? null);
+      unsubscribeActiveEditor = host.onActiveEditorChanged?.((info) =>
+        set(info)
+      );
+    })
+    .catch((err) =>
+      console.warn('[agent-embed] active-editor sync failed:', err)
+    );
+
   // 3b) Load the user's skills from the Brain (`/skills`). The desktop app does
   //     this at startup; the embed has no such trigger, so the composer's skill
   //     picker + `#` autocomplete came up empty. Best-effort, non-blocking.
@@ -134,7 +150,7 @@ export function mountAgentPanel(
 
   // Scope marker: the agent stylesheet scopes its global resets under this
   // class (see vite.config.agent-embed.ts) so they don't leak into the host.
-  element.classList.add('eigent-agent-root');
+  element.classList.add('undisclosed-agent-root');
 
   // Keep Cmd/Ctrl+A local to the panel's own inputs. Theia binds select-all
   // globally and it fires on the active editor even when a chatbox input is
@@ -192,8 +208,9 @@ export function mountAgentPanel(
   return {
     unmount: () => {
       window.removeEventListener('keydown', selectAllGuard, true);
+      unsubscribeActiveEditor?.();
       root.unmount();
-      element.classList.remove('eigent-agent-root');
+      element.classList.remove('undisclosed-agent-root');
     },
     newConversation: () => apiRef.current?.newConversation(),
     toggleHistory: () => apiRef.current?.toggleHistory(),

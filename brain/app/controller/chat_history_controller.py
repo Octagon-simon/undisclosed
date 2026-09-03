@@ -38,12 +38,15 @@ class Turn:
     # reload can show the correct mode chip instead of defaulting. Persisted with
     # the user message; never cleared by later assistant appends.
     sessionMode: str | None = None
+    # Token usage for this turn, summed into the conversation total on the usage
+    # overview. Set when the turn completes; never lowered by later appends.
+    tokens: int = 0
 
 
 def _turns_root() -> Path:
     root = Path.home() / ".undisclosed" / "turns"
     # Allow override for tests
-    override = env("EIGENT_TURNS_ROOT", "").strip()
+    override = env("UNDISCLOSED_TURNS_ROOT", "").strip()
     if override:
         root = Path(override).expanduser()
     root.mkdir(parents=True, exist_ok=True)
@@ -78,6 +81,7 @@ def _load_turn(chat_id: str, query_id: str) -> Turn:
     turn.userMessage = data.get("userMessage")
     turn.otherMessages = list(data.get("otherMessages") or [])
     turn.sessionMode = data.get("sessionMode")
+    turn.tokens = int(data.get("tokens") or 0)
     return turn
 
 
@@ -93,6 +97,7 @@ async def post_message(
     role: str = Body(..., embed=True),
     message: dict = Body(..., embed=True),
     session_mode: str | None = Body(None, embed=True),
+    tokens: int | None = Body(None, embed=True),
 ):
     """Append a message to a turn; upsert turn by (chatId, queryId)."""
     turn = _load_turn(chat_id, query_id)
@@ -100,6 +105,10 @@ async def post_message(
     # message). Only set it when given so later assistant appends never null it.
     if session_mode:
         turn.sessionMode = session_mode
+    # Token usage arrives when the turn completes (sent with the final assistant
+    # message). Keep the max so a late 0 never wipes a real count.
+    if tokens:
+        turn.tokens = max(turn.tokens, int(tokens))
     if role == "user":
         turn.userMessage = message
     else:

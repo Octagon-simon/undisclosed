@@ -28,7 +28,7 @@ class _FakeHands:
 
 @pytest.mark.asyncio
 async def test_health_detail_prefers_configured_cdp_url(monkeypatch):
-    monkeypatch.setenv("EIGENT_CDP_URL", "http://worker-17:9222")
+    monkeypatch.setenv("UNDISCLOSED_CDP_URL", "http://worker-17:9222")
     monkeypatch.setenv("browser_port", "9222")
 
     with (

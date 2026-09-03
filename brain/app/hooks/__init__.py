@@ -14,7 +14,7 @@
 
 """Beckon-style lifecycle hooks for Undisclosed's backend.
 
-Generalizes the original single-command ``EIGENT_NOTIFY_COMMAND`` patch into
+Generalizes the original single-command ``UNDISCLOSED_NOTIFY_COMMAND`` patch into
 a hook system with typed events, per-event command routing, fan-out to
 multiple commands, and strict failure isolation. Wire format stays
 compatible with beckon's ``eigent-hook`` adapter (flat JSON on stdin).

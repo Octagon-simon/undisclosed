@@ -26,6 +26,9 @@ from app.agent.prompt import (
     DEVELOPER_SYS_PROMPT,
     append_connected_app_mcp_notice,
 )
+from app.agent.toolkit.code_execution_toolkit import CodeExecutionToolkit
+from app.agent.toolkit.diff_toolkit import DiffToolkit
+from app.agent.toolkit.github_toolkit import GithubToolkit
 from app.agent.toolkit.human_toolkit import HumanToolkit
 
 # TODO: Remove NoteTakingToolkit and use TerminalToolkit instead
@@ -34,6 +37,7 @@ from app.agent.toolkit.screenshot_toolkit import ScreenshotToolkit
 from app.agent.toolkit.search_toolkit import SearchToolkit
 from app.agent.toolkit.skill_toolkit import SkillToolkit
 from app.agent.toolkit.terminal_toolkit import TerminalToolkit
+from app.agent.toolkit.test_runner_toolkit import TestRunnerToolkit
 from app.agent.toolkit.web_deploy_toolkit import WebDeployToolkit
 from app.agent.utils import NOW_STR
 from app.hands.interface import IHands
@@ -92,6 +96,34 @@ async def developer_agent(
     else:
         search_tools = []
 
+    # Specialized developer toolkits (diff/patch, test runner, code execution)
+    # so the workforce developer worker is as equipped for real engineering as
+    # the single agent — previously it only had terminal/notes/search.
+    diff_toolkit = message_integration.register_toolkits(
+        DiffToolkit(
+            options.project_id,
+            Agents.developer_agent,
+            working_directory=working_directory,
+        )
+    )
+    test_runner_toolkit = message_integration.register_toolkits(
+        TestRunnerToolkit(
+            options.project_id,
+            Agents.developer_agent,
+            working_directory=working_directory,
+        )
+    )
+    code_execution_toolkit = message_integration.register_toolkits(
+        CodeExecutionToolkit(options.project_id)
+    )
+    # GitHub tools are only available when a token is configured (returns [] if
+    # not), so this stays a no-op for users without GITHUB_ACCESS_TOKEN.
+    github_tools = GithubToolkit.get_can_use_tools(options.project_id)
+    if github_tools:
+        github_tools = message_integration.register_functions(github_tools)
+    else:
+        github_tools = []
+
     tools = [
         *HumanToolkit.get_can_use_tools(
             options.project_id, Agents.developer_agent
@@ -101,6 +133,10 @@ async def developer_agent(
         *screenshot_toolkit.get_tools(),
         *skill_toolkit.get_tools(),
         *search_tools,
+        *diff_toolkit.get_tools(),
+        *test_runner_toolkit.get_tools(),
+        *code_execution_toolkit.get_tools(),
+        *github_tools,
     ]
     tool_names = [
         HumanToolkit.toolkit_name(),
@@ -108,9 +144,14 @@ async def developer_agent(
         WebDeployToolkit.toolkit_name(),
         ScreenshotToolkit.toolkit_name(),
         SkillToolkit.toolkit_name(),
+        DiffToolkit.toolkit_name(),
+        TestRunnerToolkit.toolkit_name(),
+        CodeExecutionToolkit.toolkit_name(),
     ]
     if search_tools:
         tool_names.append(SearchToolkit.toolkit_name())
+    if github_tools:
+        tool_names.append(GithubToolkit.toolkit_name())
     if hands is None or hands.can_execute_terminal():
         terminal_toolkit = TerminalToolkit(
             options.project_id,

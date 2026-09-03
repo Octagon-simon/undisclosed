@@ -24,12 +24,12 @@ nvm use
 npm install && npm run build
 
 # transport + client, no auth needed (Brain /health is open):
-EIGENT_BASE_URL=http://localhost:5001 npm run probe
+UNDISCLOSED_BASE_URL=http://localhost:5001 npm run probe
 
 # a REAL streaming turn (starts a billable agent run — your call):
-EIGENT_BASE_URL=http://localhost:5001 \
-EIGENT_TOKEN=<token> EIGENT_USER_ID=<id> \
-EIGENT_SSE_PATH=/chat EIGENT_SSE_BODY='<the /chat json body>' \
+UNDISCLOSED_BASE_URL=http://localhost:5001 \
+UNDISCLOSED_TOKEN=<token> UNDISCLOSED_USER_ID=<id> \
+UNDISCLOSED_SSE_PATH=/chat UNDISCLOSED_SSE_BODY='<the /chat json body>' \
 npm run probe
 ```
 

@@ -104,6 +104,10 @@ class Chat(BaseModel):
     # Durable Project context reconstructed from persisted runs after restart.
     # In-process follow-ups still prefer TaskLock.conversation_history.
     project_context: str | None = None
+    # File the user has open in the editor (path, language, selection), pushed
+    # from the host bridge so the agent has live "what am I looking at" context
+    # without shelling out. See the frontend active-editor store.
+    active_editor: dict[str, Any] | None = None
 
     @field_validator("model_type")
     @classmethod

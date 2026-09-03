@@ -84,7 +84,7 @@ def _new_http_cluster(
 
 
 def _build_remote_cluster() -> IHandsCluster | None:
-    config_file = env("EIGENT_HANDS_CLUSTER_CONFIG_FILE", "").strip()
+    config_file = env("UNDISCLOSED_HANDS_CLUSTER_CONFIG_FILE", "").strip()
     if not config_file:
         return None
 
@@ -138,7 +138,7 @@ def _create_remote_hands(workspace_root: str) -> RemoteHands:
     cluster = _build_remote_cluster()
     if cluster is None:
         logger.warning(
-            "RemoteHands enabled but EIGENT_HANDS_CLUSTER_CONFIG_FILE is missing/invalid; "
+            "RemoteHands enabled but UNDISCLOSED_HANDS_CLUSTER_CONFIG_FILE is missing/invalid; "
             "browser resource acquisition will fallback to localhost endpoint"
         )
     return RemoteHands(cluster=cluster, workspace_root=workspace_root)
@@ -147,11 +147,11 @@ def _create_remote_hands(workspace_root: str) -> RemoteHands:
 def init_environment_hands(config: dict | None = None) -> IHands:
     """Initialize global EnvironmentHands (capability set) at Brain startup"""
     global _environment_hands
-    mode = env("EIGENT_HANDS_MODE", "").strip().lower()
-    remote_enabled = _is_truthy(env("EIGENT_HANDS_REMOTE", "false"))
+    mode = env("UNDISCLOSED_HANDS_MODE", "").strip().lower()
+    remote_enabled = _is_truthy(env("UNDISCLOSED_HANDS_REMOTE", "false"))
 
     if mode == "remote" or remote_enabled:
-        workspace_root = env("EIGENT_WORKSPACE", "~/.undisclosed/workspace")
+        workspace_root = env("UNDISCLOSED_WORKSPACE", "~/.undisclosed/workspace")
         logger.info(
             "Initializing RemoteHands from env switch",
             extra={"mode": mode, "remote_enabled": remote_enabled},
@@ -190,7 +190,7 @@ def get_hands_for_channel(
     - hands_override: For debugging; force full/sandbox/remote
     - workspace_root: Override workspace root (optional)
     """
-    root = workspace_root or env("EIGENT_WORKSPACE", "~/.undisclosed/workspace")
+    root = workspace_root or env("UNDISCLOSED_WORKSPACE", "~/.undisclosed/workspace")
 
     if hands_override:
         if hands_override in ("full", "sandbox", "remote"):

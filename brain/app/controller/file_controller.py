@@ -37,7 +37,7 @@ file_logger = logging.getLogger("file_controller")
 # Config
 MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024  # 50MB
 MAX_FILES_PER_SESSION = 20
-WORKSPACE_ROOT = env("EIGENT_WORKSPACE", "~/.undisclosed/workspace")
+WORKSPACE_ROOT = env("UNDISCLOSED_WORKSPACE", "~/.undisclosed/workspace")
 SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 FILE_LIST_SEMAPHORE = asyncio.Semaphore(4)
 SLOW_FILE_LIST_LOG_MS = 300

@@ -36,39 +36,39 @@ Payload shape (flat JSON scalars only, compatible with beckon's
 
 Two sources, combined additively (all matching commands run):
 
-1. `EIGENT_HOOKS` — JSON object mapping event names (or `"*"`) to a command
+1. `UNDISCLOSED_HOOKS` — JSON object mapping event names (or `"*"`) to a command
    string or list of command strings:
 
    ```bash
-   export EIGENT_HOOKS='{
+   export UNDISCLOSED_HOOKS='{
      "permission_requested": ["node /path/beckoned-eigent-hook.js"],
      "*": "/usr/bin/logger -t eigent-hook"
    }'
    ```
 
-2. `EIGENT_NOTIFY_COMMAND` — the original single command from the beckon
+2. `UNDISCLOSED_NOTIFY_COMMAND` — the original single command from the beckon
    patch. Still fires for every event unless explicitly suppressed.
 
 An explicit empty list (`"task_end": []`) is the kill switch for an event:
 it suppresses the wildcard and legacy command for that event only.
-`EIGENT_HOOK_TIMEOUT_MS` overrides the per-command timeout (default 2000).
+`UNDISCLOSED_HOOK_TIMEOUT_MS` overrides the per-command timeout (default 2000).
 
-Unknown event names in `EIGENT_HOOKS` are ignored with a warning, so the
+Unknown event names in `UNDISCLOSED_HOOKS` are ignored with a warning, so the
 config tolerates forward/backward version skew.
 
 ### Beckon (macOS notifications)
 
 ```bash
-export EIGENT_NOTIFY_COMMAND="node $HOME/.beckoned/opt/dist/bin/beckoned-eigent-hook.js"
+export UNDISCLOSED_NOTIFY_COMMAND="node $HOME/.beckoned/opt/dist/bin/beckoned-eigent-hook.js"
 # or, per-event routing:
-export EIGENT_HOOKS='{"*": "node '$HOME'/.beckoned/opt/dist/bin/beckoned-eigent-hook.js"}'
+export UNDISCLOSED_HOOKS='{"*": "node '$HOME'/.beckoned/opt/dist/bin/beckoned-eigent-hook.js"}'
 ```
 
 Verify with `beckoned-test`, or fire one synthetic event through Python:
 
 ```python
 import asyncio, os
-os.environ["EIGENT_NOTIFY_COMMAND"] = "node ~/.beckoned/opt/dist/bin/beckoned-eigent-hook.js"
+os.environ["UNDISCLOSED_NOTIFY_COMMAND"] = "node ~/.beckoned/opt/dist/bin/beckoned-eigent-hook.js"
 from app.hooks.dispatcher import fire_hook
 from app.hooks.events import HookEvent
 asyncio.run(fire_hook(HookEvent.task_end, taskId="demo"))

@@ -86,14 +86,14 @@ def _new_artifact_id() -> str:
 
 
 def _default_memory_token_budget() -> int:
-    raw = os.environ.get("EIGENT_MEMORY_TOKEN_BUDGET")
+    raw = os.environ.get("UNDISCLOSED_MEMORY_TOKEN_BUDGET")
     if not raw:
         return 8000
     try:
         return int(raw)
     except ValueError:
         logger.warning(
-            "Invalid EIGENT_MEMORY_TOKEN_BUDGET=%r; using default 8000", raw
+            "Invalid UNDISCLOSED_MEMORY_TOKEN_BUDGET=%r; using default 8000", raw
         )
         return 8000
 

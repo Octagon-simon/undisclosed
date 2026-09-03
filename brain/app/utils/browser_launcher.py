@@ -240,9 +240,9 @@ def _find_chrome_executable() -> str | None:
     system = platform.system()
 
     # 0. Explicit override wins (e.g. a bundled Chromium in a packaged build).
-    override = os.environ.get("EIGENT_CHROME_PATH")
+    override = os.environ.get("UNDISCLOSED_CHROME_PATH")
     if override and Path(override).exists():
-        logger.debug(f"Using EIGENT_CHROME_PATH Chromium: {override}")
+        logger.debug(f"Using UNDISCLOSED_CHROME_PATH Chromium: {override}")
         return override
 
     # 1. Try Playwright's Chromium (most reliable, cross-platform)
@@ -360,7 +360,7 @@ def ensure_cdp_browser_available(port: int = DEFAULT_CDP_PORT) -> bool:
         False otherwise.
     """
     # Check if auto-launch is disabled
-    if os.environ.get("EIGENT_BRAIN_LAUNCH_BROWSER", "true").lower() in (
+    if os.environ.get("UNDISCLOSED_BRAIN_LAUNCH_BROWSER", "true").lower() in (
         "false",
         "0",
         "no",

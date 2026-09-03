@@ -55,7 +55,7 @@ class RunContext:
             "CAMEL_WORKDIR": str(self.task_output_root),
         }
         if self.cdp_url:
-            values["EIGENT_CDP_URL"] = self.cdp_url
+            values["UNDISCLOSED_CDP_URL"] = self.cdp_url
         if self.api_key:
             values["OPENAI_API_KEY"] = self.api_key
         if self.api_base_url:

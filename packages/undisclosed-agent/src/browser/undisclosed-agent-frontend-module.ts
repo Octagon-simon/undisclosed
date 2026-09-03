@@ -13,10 +13,10 @@ import {
   MenuContribution,
 } from '@theia/core/lib/common';
 import { SidePanelHandler } from '@theia/core/lib/browser/shell/side-panel-handler';
-import { EigentSidePanelHandler } from './eigent-side-panel-handler';
-import { EigentAgentWidget } from './eigent-agent-widget';
-import { EigentAgentContribution } from './eigent-agent-contribution';
-import { EigentAgentLayoutContribution } from './eigent-agent-layout-contribution';
+import { UndisclosedSidePanelHandler } from './undisclosed-side-panel-handler';
+import { UndisclosedAgentWidget } from './undisclosed-agent-widget';
+import { UndisclosedAgentContribution } from './undisclosed-agent-contribution';
+import { UndisclosedAgentLayoutContribution } from './undisclosed-agent-layout-contribution';
 import { GitExtrasContribution } from './git-extras-contribution';
 
 /**
@@ -30,18 +30,18 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
   // SidePanelHandlerFactory is a toAutoFactory over SidePanelHandler, so
   // rebinding the impl makes both left+right handlers use our subclass (which
   // only alters the RIGHT side).
-  rebind(SidePanelHandler).to(EigentSidePanelHandler);
+  rebind(SidePanelHandler).to(UndisclosedSidePanelHandler);
 
-  bindViewContribution(bind, EigentAgentContribution);
-  bind(FrontendApplicationContribution).toService(EigentAgentContribution);
-  bind(TabBarToolbarContribution).toService(EigentAgentContribution);
-  bind(EigentAgentLayoutContribution).toSelf().inSingletonScope();
-  bind(FrontendApplicationContribution).toService(EigentAgentLayoutContribution);
-  bind(EigentAgentWidget).toSelf();
+  bindViewContribution(bind, UndisclosedAgentContribution);
+  bind(FrontendApplicationContribution).toService(UndisclosedAgentContribution);
+  bind(TabBarToolbarContribution).toService(UndisclosedAgentContribution);
+  bind(UndisclosedAgentLayoutContribution).toSelf().inSingletonScope();
+  bind(FrontendApplicationContribution).toService(UndisclosedAgentLayoutContribution);
+  bind(UndisclosedAgentWidget).toSelf();
   bind(WidgetFactory)
     .toDynamicValue((ctx) => ({
-      id: EigentAgentWidget.ID,
-      createWidget: () => ctx.container.get<EigentAgentWidget>(EigentAgentWidget),
+      id: UndisclosedAgentWidget.ID,
+      createWidget: () => ctx.container.get<UndisclosedAgentWidget>(UndisclosedAgentWidget),
     }))
     .inSingletonScope();
 

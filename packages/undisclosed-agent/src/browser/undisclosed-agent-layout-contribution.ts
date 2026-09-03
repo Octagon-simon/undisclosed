@@ -23,7 +23,7 @@ const REMOVE_VIEW_IDS = [
  * automatic launch.
  */
 @injectable()
-export class EigentAgentLayoutContribution
+export class UndisclosedAgentLayoutContribution
   implements FrontendApplicationContribution
 {
   @inject(ApplicationShell)
@@ -70,7 +70,7 @@ export class EigentAgentLayoutContribution
     if (typeof document === 'undefined') {
       return;
     }
-    const styleId = 'eigent-agent-header-style';
+    const styleId = 'undisclosed-agent-header-style';
     if (document.getElementById(styleId)) {
       return;
     }
@@ -92,7 +92,7 @@ export class EigentAgentLayoutContribution
         padding: 0 6px 0 12px !important;
       }
 
-      /* Panel Title ("EIGENT AGENT") Flush Left */
+      /* Panel Title ("UNDISCLOSED AGENT") Flush Left */
       .theia-sidepanel-toolbar.theia-right-side-panel .theia-sidepanel-title,
       #theia-right-content-panel .theia-sidepanel-title {
         font-size: 11px !important;
@@ -173,18 +173,18 @@ export class EigentAgentLayoutContribution
       }
 
       /* 3. Chatbox & Panel Typography */
-      .eigent-agent-root,
-      .eigent-agent-root *,
-      .eigent-agent-root textarea,
-      .eigent-agent-root input,
-      .eigent-agent-root [contenteditable] {
+      .undisclosed-agent-root,
+      .undisclosed-agent-root *,
+      .undisclosed-agent-root textarea,
+      .undisclosed-agent-root input,
+      .undisclosed-agent-root [contenteditable] {
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji" !important;
       }
 
-      .eigent-agent-root code,
-      .eigent-agent-root pre,
-      .eigent-agent-root code *,
-      .eigent-agent-root pre * {
+      .undisclosed-agent-root code,
+      .undisclosed-agent-root pre,
+      .undisclosed-agent-root code *,
+      .undisclosed-agent-root pre * {
         font-family: var(--theia-editor-font-family, ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace) !important;
       }
     `;
@@ -192,7 +192,7 @@ export class EigentAgentLayoutContribution
   }
 
   private removeViews(): void {
-    // (The right tab strip is handled by EigentSidePanelHandler, not here.)
+    // (The right tab strip is handled by UndisclosedSidePanelHandler, not here.)
     for (const widget of this.shell.widgets) {
       if (this.isUnwantedView(widget.id, widget.title?.label)) {
         widget.close();

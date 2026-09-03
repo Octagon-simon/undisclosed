@@ -97,10 +97,10 @@ def _fire_hook(coro) -> None:
 
 
 # Char budget for the durable memory bundle (~32k chars at 4 chars/token).
-# Override via EIGENT_MEMORY_TOKEN_BUDGET if you need to tune in the field.
+# Override via UNDISCLOSED_MEMORY_TOKEN_BUDGET if you need to tune in the field.
 try:
     _MEMORY_TOKEN_BUDGET = int(
-        os.environ.get("EIGENT_MEMORY_TOKEN_BUDGET", "8000")
+        os.environ.get("UNDISCLOSED_MEMORY_TOKEN_BUDGET", "8000")
     )
 except ValueError:
     _MEMORY_TOKEN_BUDGET = 8000
@@ -186,6 +186,25 @@ def _thinking_enabled(options: Chat) -> bool:
     return True
 
 
+# Minimum length for a reasoning payload to be treated as a real "thinking
+# process" worth surfacing. Non-reasoning models sometimes drop a trivial echo
+# (e.g. the user typed "Hii" and reasoning_content comes back "Hii") into the
+# thinking block; those are noise, not thought.
+_MIN_MEANINGFUL_REASONING_LEN = 40
+
+
+def _is_meaningful_reasoning(reasoning: str, final_result: str) -> bool:
+    """True when ``reasoning`` looks like genuine model thinking rather than a
+    trivial echo of the user's input or a restatement of the final answer."""
+    r = (reasoning or "").strip()
+    if len(r) < _MIN_MEANINGFUL_REASONING_LEN:
+        return False
+    fr = (final_result or "").strip()
+    if fr and (r == fr or r in fr or fr in r):
+        return False
+    return True
+
+
 def _build_single_agent_context(
     task_lock: TaskLock,
     project_context: str | None = None,
@@ -255,6 +274,26 @@ def _finalize_memory_for_turn(
     )
 
 
+def _format_active_editor(active_editor: dict | None) -> str:
+    """One-line note about the file the user is looking at, for the agent's
+    background context. Empty when there's no active editor."""
+    if not isinstance(active_editor, dict):
+        return ""
+    path = str(active_editor.get("path") or "").strip()
+    if not path:
+        return ""
+    lang = str(active_editor.get("languageId") or "").strip()
+    sel = active_editor.get("selection") or {}
+    lines = ""
+    if isinstance(sel, dict) and sel.get("startLine") and sel.get("endLine"):
+        lines = f", lines {sel['startLine']}-{sel['endLine']}"
+    lang_part = f", language: {lang}" if lang else ""
+    return (
+        f"The user currently has `{path}`{lang_part}{lines} open in the editor. "
+        "Treat this as their likely focus unless they say otherwise."
+    )
+
+
 def _build_single_agent_prompt(
     task_lock: TaskLock,
     question: str,
@@ -263,6 +302,7 @@ def _build_single_agent_prompt(
     vision_capable: bool = True,
     memory_enabled: bool = True,
     is_fresh_agent: bool = True,
+    active_editor: dict | None = None,
 ) -> tuple[str, str]:
     """Return (clean_user_prompt, background_context).
 
@@ -282,6 +322,12 @@ def _build_single_agent_prompt(
         )
     else:
         context = ""
+
+    # Live editor context applies to EVERY turn (not just a fresh agent): it's
+    # ephemeral "what am I looking at now" state, refreshed each message.
+    editor_note = _format_active_editor(active_editor)
+    if editor_note:
+        context = f"{context}\n\n{editor_note}".strip() if context else editor_note
 
     attachment_context = ""
     if attaches:
@@ -658,8 +704,8 @@ async def single_agent_solve(
         if selector is not None:
             # Prefer the LLM router (it DECIDES which capabilities the task needs
             # from a compact catalog); it falls back to embeddings internally.
-            # Set EIGENT_TOOL_ROUTER=0 to force the embeddings-only path.
-            router_on = str(env("EIGENT_TOOL_ROUTER", "1")).strip().lower() not in {
+            # Set UNDISCLOSED_TOOL_ROUTER=0 to force the embeddings-only path.
+            router_on = str(env("UNDISCLOSED_TOOL_ROUTER", "1")).strip().lower() not in {
                 "0",
                 "false",
                 "no",
@@ -691,6 +737,7 @@ async def single_agent_solve(
             vision_capable=vision_capable,
             memory_enabled=_memory_enabled(options),
             is_fresh_agent=is_fresh_agent,
+            active_editor=options.active_editor,
         )
         # Inject recalled facts + earlier turns as a SYSTEM memory record so it
         # stays BACKGROUND: it never leaks into the UI (the user message is just
@@ -1056,7 +1103,11 @@ async def single_agent_solve(
                 # Surface the model's reasoning (thinking block) when the model
                 # produced any and the user hasn't turned it off.
                 reasoning = getattr(task_lock, "last_reasoning", "") or ""
-                if reasoning and _thinking_enabled(options):
+                if (
+                    reasoning
+                    and _thinking_enabled(options)
+                    and _is_meaningful_reasoning(reasoning, final_result)
+                ):
                     end_payload["reasoning"] = reasoning
                 task_lock.last_reasoning = ""
                 yield sse_json("end", end_payload)

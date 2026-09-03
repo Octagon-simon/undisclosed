@@ -21,7 +21,7 @@ is the only path to "the editor's agent section *is* Eigent's agent."
   This matches exactly how the main Eigent app already spawns an editor engine:
   `CodeEditorManager` reads `~/.eigent/editor/launch.json` (`{ "cmd": "…{port}…
   {dir}…" }`) and spawns it. So swapping code-server → this Theia build is a
-  `launch.json` change — the engine seam is already there (`EIGENT_THEIA_*`).
+  `launch.json` change — the engine seam is already there (`UNDISCLOSED_THEIA_*`).
 - **Backend untouched.** Eigent's FastAPI agent backend (models, toolkits, SSE)
   stays as-is. "Bring your own models" and existing features are preserved
   because they live server-side; the editor is just the skin.
@@ -37,7 +37,7 @@ is the only path to "the editor's agent section *is* Eigent's agent."
 4. **Eigent features as contributions**: Context / Scheduled / Dispatch, spaces,
    history — as Theia views / a custom area.
 5. **Package per-OS** and wire into the main app via `launch.json`
-   (`EIGENT_THEIA_BUNDLE_URL` / download-on-first-use, mirroring the current
+   (`UNDISCLOSED_THEIA_BUNDLE_URL` / download-on-first-use, mirroring the current
    provisioner).
 
 > Agent decoupling (extracting Eigent's agent UI + its store/SSE layer into a

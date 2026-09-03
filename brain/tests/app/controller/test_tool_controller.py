@@ -156,7 +156,7 @@ class TestToolController:
                 _ = (resource_type, session_id, kwargs)
                 return "http://worker-17:9222"
 
-        monkeypatch.delenv("EIGENT_CDP_URL", raising=False)
+        monkeypatch.delenv("UNDISCLOSED_CDP_URL", raising=False)
         tool_controller._clear_connected_cdp_browser("local")
         request = SimpleNamespace(
             state=SimpleNamespace(hands=_FakeRemoteHands()),
@@ -176,7 +176,7 @@ class TestToolController:
     async def test_open_browser_login_uses_dedicated_cookie_port_when_existing(
         self, monkeypatch: pytest.MonkeyPatch
     ):
-        monkeypatch.delenv("EIGENT_LOGIN_BROWSER_CDP_PORT", raising=False)
+        monkeypatch.delenv("UNDISCLOSED_LOGIN_BROWSER_CDP_PORT", raising=False)
 
         with patch(
             "app.controller.tool_controller._is_port_in_use",
@@ -192,7 +192,7 @@ class TestToolController:
     async def test_browser_status_uses_dedicated_cookie_port(
         self, monkeypatch: pytest.MonkeyPatch
     ):
-        monkeypatch.delenv("EIGENT_LOGIN_BROWSER_CDP_PORT", raising=False)
+        monkeypatch.delenv("UNDISCLOSED_LOGIN_BROWSER_CDP_PORT", raising=False)
 
         with patch(
             "app.controller.tool_controller._is_port_in_use",
@@ -285,7 +285,7 @@ class TestToolControllerIntegration:
     def test_launch_cdp_browser_endpoint_integration(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ):
-        monkeypatch.delenv("EIGENT_CDP_URL", raising=False)
+        monkeypatch.delenv("UNDISCLOSED_CDP_URL", raising=False)
         tool_controller._clear_connected_cdp_browser("local")
 
         with patch(
@@ -306,7 +306,7 @@ class TestToolControllerIntegration:
     def test_connect_list_and_disconnect_cdp_browser_endpoints(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ):
-        monkeypatch.delenv("EIGENT_CDP_URL", raising=False)
+        monkeypatch.delenv("UNDISCLOSED_CDP_URL", raising=False)
         tool_controller._clear_connected_cdp_browser("local")
 
         with (
@@ -342,7 +342,7 @@ class TestToolControllerIntegration:
     def test_connect_cdp_browser_endpoint_returns_error_when_unreachable(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ):
-        monkeypatch.delenv("EIGENT_CDP_URL", raising=False)
+        monkeypatch.delenv("UNDISCLOSED_CDP_URL", raising=False)
         tool_controller._clear_connected_cdp_browser("local")
 
         with patch(

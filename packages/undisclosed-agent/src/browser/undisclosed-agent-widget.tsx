@@ -15,6 +15,14 @@ import {
 import URI from '@theia/core/lib/common/uri';
 import { WorkspaceService } from '@theia/workspace/lib/browser';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
+import { EditorManager } from '@theia/editor/lib/browser';
+
+/** What the embed wants to know about the file open in the editor. */
+interface ActiveEditorInfo {
+  path: string;
+  languageId?: string;
+  selection?: { startLine: number; endLine: number } | null;
+}
 
 export type GovernanceMode = 'ask' | 'auto';
 
@@ -51,16 +59,20 @@ type MountFn = (
       ipcRenderer: unknown;
       openFile?(path: string): void | Promise<void>;
       readFileAsDataUrl?(path: string): Promise<string | null>;
+      onActiveEditorChanged?(
+        cb: (info: ActiveEditorInfo | null) => void
+      ): () => void;
+      getActiveEditor?(): ActiveEditorInfo | null;
     };
   }
 ) => AgentPanelHandle;
 
-const BUNDLE_JS = '/eigent-agent/agent-embed.umd.js';
-const BUNDLE_CSS = '/eigent-agent/style.css';
+const BUNDLE_JS = '/undisclosed-agent/agent-embed.umd.js';
+const BUNDLE_CSS = '/undisclosed-agent/style.css';
 // Remaps --ds-* tokens to Theia's --theia-* theme vars; loaded AFTER the bundle
 // CSS so it wins, theming the panel to match the active editor theme.
-const THEME_CSS = '/eigent-agent/theme.css';
-const GLOBAL = 'EigentAgentEmbed';
+const THEME_CSS = '/undisclosed-agent/theme.css';
+const GLOBAL = 'UndisclosedAgentEmbed';
 
 /** Best-effort image MIME from a file name, for building a `data:` URL. */
 function mimeFromPath(name: string): string {
@@ -107,8 +119,8 @@ function loadAgentBundle(): Promise<MountFn> {
   if (bundlePromise) return bundlePromise;
   bundlePromise = new Promise<MountFn>((resolve, reject) => {
     // Order matters: bundle CSS first, then the Theia theme override.
-    injectStylesheet('eigent-agent-css', BUNDLE_CSS);
-    injectStylesheet('eigent-agent-theme-css', THEME_CSS);
+    injectStylesheet('undisclosed-agent-css', BUNDLE_CSS);
+    injectStylesheet('undisclosed-agent-theme-css', THEME_CSS);
     const existing = (window as unknown as Record<string, { mountAgentPanel?: MountFn }>)[GLOBAL];
     if (existing?.mountAgentPanel) {
       resolve(existing.mountAgentPanel);
@@ -135,8 +147,8 @@ function loadAgentBundle(): Promise<MountFn> {
  * one window — no iframe.
  */
 @injectable()
-export class EigentAgentWidget extends BaseWidget {
-  static readonly ID = 'eigent-agent-widget';
+export class UndisclosedAgentWidget extends BaseWidget {
+  static readonly ID = 'undisclosed-agent-widget';
   static readonly LABEL = 'Undisclosed Agent';
 
   @inject(WorkspaceService)
@@ -148,8 +160,36 @@ export class EigentAgentWidget extends BaseWidget {
   @inject(FileService)
   protected readonly fileService!: FileService;
 
+  @inject(EditorManager)
+  protected readonly editorManager!: EditorManager;
+
   protected host!: HTMLDivElement;
   protected handle?: AgentPanelHandle;
+
+  /** Snapshot the file/selection open in the editor for the agent's context. */
+  private activeEditorInfo(): ActiveEditorInfo | null {
+    const widget =
+      this.editorManager.activeEditor ?? this.editorManager.currentEditor;
+    const editor = widget?.editor;
+    if (!editor) {
+      return null;
+    }
+    const uri = editor.uri;
+    const path = uri.scheme === 'file' ? uri.path.toString() : uri.toString();
+    // editor.selection is an LSP Range (0-based start/end); cast past the
+    // ambiguous `Selection` type resolution.
+    const sel = editor.selection as unknown as
+      | { start?: { line: number }; end?: { line: number } }
+      | undefined;
+    return {
+      path,
+      languageId: (editor.document as { languageId?: string })?.languageId,
+      selection:
+        sel && sel.start && sel.end
+          ? { startLine: sel.start.line + 1, endLine: sel.end.line + 1 }
+          : null,
+    };
+  }
 
   /**
    * Open a file the agent touched in Theia's editor (wired to the trace's
@@ -171,7 +211,7 @@ export class EigentAgentWidget extends BaseWidget {
       }
       await open(this.openerService, uri);
     } catch (err) {
-      console.warn('[eigent-agent] openFile failed for', path, err);
+      console.warn('[undisclosed-agent] openFile failed for', path, err);
     }
   }
 
@@ -205,7 +245,7 @@ export class EigentAgentWidget extends BaseWidget {
       const base64 = btoa(binary);
       return `data:${mimeFromPath(uri.path.base)};base64,${base64}`;
     } catch (err) {
-      console.warn('[eigent-agent] readFileAsDataUrl failed for', path, err);
+      console.warn('[undisclosed-agent] readFileAsDataUrl failed for', path, err);
       return null;
     }
   }
@@ -260,12 +300,12 @@ export class EigentAgentWidget extends BaseWidget {
 
   @postConstruct()
   protected init(): void {
-    this.id = EigentAgentWidget.ID;
-    this.title.label = EigentAgentWidget.LABEL;
-    this.title.caption = EigentAgentWidget.LABEL;
+    this.id = UndisclosedAgentWidget.ID;
+    this.title.label = UndisclosedAgentWidget.LABEL;
+    this.title.caption = UndisclosedAgentWidget.LABEL;
     this.title.iconClass = 'codicon codicon-hubot';
     this.title.closable = true;
-    this.addClass('eigent-agent-widget');
+    this.addClass('undisclosed-agent-widget');
     this.node.style.height = '100%';
 
     this.host = document.createElement('div');
@@ -320,6 +360,15 @@ export class EigentAgentWidget extends BaseWidget {
           ipcRenderer: null,
           openFile: (path: string) => this.openFileInEditor(path),
           readFileAsDataUrl: (path: string) => this.readFileAsDataUrl(path),
+          // Live editor-context sync: the agent learns which file the user is
+          // looking at (and the selection) with zero shell calls.
+          getActiveEditor: () => this.activeEditorInfo(),
+          onActiveEditorChanged: (cb: (info: ActiveEditorInfo | null) => void) => {
+            const sub = this.editorManager.onActiveEditorChanged(() =>
+              cb(this.activeEditorInfo())
+            );
+            return () => sub.dispose();
+          },
         },
       });
     } catch (err) {

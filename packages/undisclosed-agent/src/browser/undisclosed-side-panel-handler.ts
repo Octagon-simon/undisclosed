@@ -15,7 +15,7 @@ import { SidePanelHandler } from '@theia/core/lib/browser/shell/side-panel-handl
  * and reclaims the space) is what makes it stick. Left panel is untouched.
  */
 @injectable()
-export class EigentSidePanelHandler extends SidePanelHandler {
+export class UndisclosedSidePanelHandler extends SidePanelHandler {
   override refresh(): void {
     super.refresh();
     if (this.side !== 'right') {

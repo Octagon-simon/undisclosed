@@ -41,7 +41,7 @@ async def health_check(detail: bool = Query(False)):
     if detail:
         hands = get_environment_hands()
         capabilities = hands.get_capability_manifest()
-        cdp_url = env("EIGENT_CDP_URL", "").strip()
+        cdp_url = env("UNDISCLOSED_CDP_URL", "").strip()
         if cdp_url:
             cdp_reachable = is_cdp_url_available(cdp_url)
         else:

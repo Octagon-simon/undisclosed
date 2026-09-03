@@ -32,7 +32,12 @@ export type TurnMessage = {
 
 type QueueItem = {
   url: string;
-  body: { role: TurnRole; message: TurnMessage; session_mode?: string };
+  body: {
+    role: TurnRole;
+    message: TurnMessage;
+    session_mode?: string;
+    tokens?: number;
+  };
   attempts: number;
 };
 
@@ -93,7 +98,10 @@ export function enqueueTurnPost(
   // Conversation session mode, sent with the user turn so a reload can restore
   // the correct mode chip. Omitted on assistant appends (backend keeps the
   // stored value when this is absent).
-  sessionMode?: string
+  sessionMode?: string,
+  // Cumulative token count for the conversation, sent with assistant appends so
+  // the usage overview can report a real total. Backend keeps the max.
+  tokens?: number
 ): void {
   if (!chatId || !queryId) return;
   if (!message || !message.id) return;
@@ -101,9 +109,9 @@ export function enqueueTurnPost(
   const url = `/api/v1/chat/${encodeURIComponent(chatId)}/turns/${encodeURIComponent(
     queryId
   )}/messages`;
-  const body: QueueItem['body'] = sessionMode
-    ? { role, message, session_mode: sessionMode }
-    : { role, message };
+  const body: QueueItem['body'] = { role, message };
+  if (sessionMode) body.session_mode = sessionMode;
+  if (tokens) body.tokens = tokens;
   // Coalesce by (url, message.id): a streamed assistant message may be
   // re-enqueued as it is updated (e.g. the END step gaining its fileList).
   // Replacing the still-queued item keeps last-write-wins and prevents the

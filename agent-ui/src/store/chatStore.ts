@@ -72,6 +72,7 @@ import { createStore } from 'zustand';
 import { getAuthStore, getWorkerList } from './authStore';
 import { getCloudModelStore } from './cloudModelStore';
 import { usePageTabStore } from './pageTabStore';
+import { useActiveEditorStore } from './activeEditorStore';
 import { useProjectStore } from './projectStore';
 import { getServerCapabilityStore } from './serverCapabilityStore';
 import { legacySpaceIdForUser, useSpaceStore } from './spaceStore';
@@ -1118,7 +1119,7 @@ const ensureSingleAgentAssignment = (
   if (existingIndex !== -1) return existingIndex;
   taskAssigning.push({
     agent_id: agentId || `${taskId}-single-agent`,
-    name: 'CAMEL Agent',
+    name: 'Undisclosed Agent',
     type: 'single_agent',
     status: AgentStatusValue.RUNNING,
     tasks: [],
@@ -1554,16 +1555,27 @@ const chatStore = (initial?: Partial<ChatStore>) =>
             if (chatId && queryId) {
               (async () => {
                 const { enqueueTurnPost } = await import('@/lib/turns');
-                enqueueTurnPost(chatId, queryId, 'assistant', {
-                  id: message.id,
-                  step,
-                  content: String(content ?? ''),
-                  reasoning: (message as any)?.reasoning ?? null,
-                  agent_name: (message as any)?.agent_name || null,
-                  attaches: (message as any)?.attaches || [],
-                  fileList: (message as any)?.fileList || [],
-                  createdAt: new Date().toISOString(),
-                });
+                // Persist the conversation's cumulative token count with the
+                // assistant turn so the usage overview reports a real total
+                // (backend keeps the max across turns).
+                const turnTokens = get().tasks[taskId]?.tokens || 0;
+                enqueueTurnPost(
+                  chatId,
+                  queryId,
+                  'assistant',
+                  {
+                    id: message.id,
+                    step,
+                    content: String(content ?? ''),
+                    reasoning: (message as any)?.reasoning ?? null,
+                    agent_name: (message as any)?.agent_name || null,
+                    attaches: (message as any)?.attaches || [],
+                    fileList: (message as any)?.fileList || [],
+                    createdAt: new Date().toISOString(),
+                  },
+                  undefined,
+                  turnTokens
+                );
               })().catch((e) =>
                 console.warn('Failed to enqueue assistant turn update persist:', e)
               );
@@ -2364,6 +2376,10 @@ const chatStore = (initial?: Partial<ChatStore>) =>
               project_id,
               newTaskId
             ),
+            // Live editor context (what file the user is looking at), pushed
+            // from the host bridge so the agent syncs without shelling out.
+            active_editor:
+              useActiveEditorStore.getState().activeEditor ?? undefined,
           }
         : undefined;
 
@@ -2475,7 +2491,7 @@ const chatStore = (initial?: Partial<ChatStore>) =>
             document_agent: 'Document Agent',
             multi_modal_agent: 'Multi Modal Agent',
             social_media_agent: 'Social Media Agent',
-            single_agent: 'CAMEL Agent',
+            single_agent: 'Undisclosed Agent',
           };
 
           /**
@@ -3147,7 +3163,7 @@ const chatStore = (initial?: Partial<ChatStore>) =>
               existingIndex === -1
                 ? {
                     agent_id: agentId,
-                    name: 'CAMEL Agent',
+                    name: 'Undisclosed Agent',
                     type: 'single_agent',
                     tasks: todoTasks,
                     log: [],
@@ -3158,7 +3174,7 @@ const chatStore = (initial?: Partial<ChatStore>) =>
                 : {
                     ...existingAgents[existingIndex],
                     agent_id: existingAgents[existingIndex].agent_id || agentId,
-                    name: existingAgents[existingIndex].name || 'CAMEL Agent',
+                    name: existingAgents[existingIndex].name || 'Undisclosed Agent',
                     type: 'single_agent',
                     tasks: todoTasks,
                   };
@@ -4966,16 +4982,27 @@ const chatStore = (initial?: Partial<ChatStore>) =>
             if (chatId && queryId && step && hasContent) {
               (async () => {
                 const { enqueueTurnPost } = await import('@/lib/turns');
-                enqueueTurnPost(chatId, queryId, 'assistant', {
-                  id: message.id,
-                  step,
-                  content: String(content ?? ''),
-                  reasoning: (message as any)?.reasoning ?? null,
-                  agent_name: (message as any)?.agent_name || null,
-                  attaches: (message as any)?.attaches || [],
-                  fileList: (message as any)?.fileList || [],
-                  createdAt: new Date().toISOString(),
-                });
+                // Persist the conversation's cumulative token count with the
+                // assistant turn so the usage overview reports a real total
+                // (backend keeps the max across turns).
+                const turnTokens = get().tasks[taskId]?.tokens || 0;
+                enqueueTurnPost(
+                  chatId,
+                  queryId,
+                  'assistant',
+                  {
+                    id: message.id,
+                    step,
+                    content: String(content ?? ''),
+                    reasoning: (message as any)?.reasoning ?? null,
+                    agent_name: (message as any)?.agent_name || null,
+                    attaches: (message as any)?.attaches || [],
+                    fileList: (message as any)?.fileList || [],
+                    createdAt: new Date().toISOString(),
+                  },
+                  undefined,
+                  turnTokens
+                );
               })().catch((e) =>
                 console.warn('Failed to enqueue assistant turn persist:', e)
               );

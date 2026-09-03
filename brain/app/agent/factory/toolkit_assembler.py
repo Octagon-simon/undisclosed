@@ -488,7 +488,7 @@ async def assemble_single_agent_toolkits(
             selected_port = _get_browser_port(selected_browser)
             cdp_url = _get_browser_endpoint(selected_browser)
         else:
-            existing_cdp_url = env("EIGENT_CDP_URL", "").strip()
+            existing_cdp_url = env("UNDISCLOSED_CDP_URL", "").strip()
             selected_port = int(env("browser_port", "9222"))
             cdp_url = f"http://localhost:{selected_port}"
             if existing_cdp_url:

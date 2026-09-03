@@ -22,8 +22,8 @@ services:
     ports:
       - '5001:5001'
     environment:
-      - EIGENT_BRAIN_HOST=0.0.0.0
-      - EIGENT_BRAIN_PORT=5001
+      - UNDISCLOSED_BRAIN_HOST=0.0.0.0
+      - UNDISCLOSED_BRAIN_PORT=5001
     volumes:
       # Use the host's ~/.undisclosed directory directly.
       - ~/.undisclosed:/root/.undisclosed

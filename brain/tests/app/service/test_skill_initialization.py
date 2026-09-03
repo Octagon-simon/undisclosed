@@ -99,7 +99,7 @@ def test_skill_config_init_registers_bundled_example_skills(
 
     eigent_root = tmp_path / "home" / ".undisclosed"
     monkeypatch.setenv(skill_service.EXAMPLE_SKILLS_ENV, str(example_root))
-    monkeypatch.setattr(skill_config_service, "EIGENT_ROOT", eigent_root)
+    monkeypatch.setattr(skill_config_service, "UNDISCLOSED_ROOT", eigent_root)
 
     config = skill_config_service.skill_config_init("new_user")
 
@@ -136,7 +136,7 @@ def test_skill_config_load_migrates_legacy_email_config(tmp_path, monkeypatch):
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr(skill_config_service, "EIGENT_ROOT", eigent_root)
+    monkeypatch.setattr(skill_config_service, "UNDISCLOSED_ROOT", eigent_root)
 
     config = skill_config_service.skill_config_load(
         "user_42", legacy_user_id="alice@example.com"
@@ -178,7 +178,7 @@ def test_skill_config_migration_merges_without_overwriting_new_config(
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr(skill_config_service, "EIGENT_ROOT", eigent_root)
+    monkeypatch.setattr(skill_config_service, "UNDISCLOSED_ROOT", eigent_root)
 
     config = skill_config_service.skill_config_load(42, legacy_user_id="alice")
 

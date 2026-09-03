@@ -11,7 +11,8 @@
     "target": "browser",
     "frontend": {
       "config": {
-        "applicationName": "Eigent Editor",
+        "applicationName": "Undisclosed",
+        "warnOnPotentiallyInsecureHostPattern": false,
         "preferences": {
           "security.workspace.trust.enabled": false,
           "workbench.startupEditor": "none",
@@ -40,7 +41,7 @@
     "@theia/terminal": "1.60.0",
     "@theia/vsx-registry": "1.60.0",
     "@theia/workspace": "1.60.0",
-    "eigent-agent": "file:packages/eigent-agent",
+    "undisclosed-agent": "file:packages/undisclosed-agent",
     "undisclosed-languages": "file:packages/undisclosed-languages",
     "lodash": "^4.18.1"
   },
@@ -58,6 +59,6 @@
     "start": "THEIA_WEBVIEW_EXTERNAL_ENDPOINT='{{hostname}}' theia start --hostname 0.0.0.0 --port 3000",
     "watch": "theia build --watch --mode development",
     "build:agent-ui": "npm --prefix agent-ui run build:agent-embed && npm run sync:agent-bundle",
-    "sync:agent-bundle": "cp agent-ui/dist-agent-embed/agent-embed.umd.js agent-ui/dist-agent-embed/style.css packages/eigent-agent/assets/agent-embed/ && echo synced"
+    "sync:agent-bundle": "cp agent-ui/dist-agent-embed/agent-embed.umd.js agent-ui/dist-agent-embed/style.css packages/undisclosed-agent/assets/agent-embed/ && echo synced"
   }
 }

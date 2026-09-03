@@ -134,20 +134,20 @@ def build_default_policy(
     working_directory: str | Path | None = None,
 ) -> RemoteSubAgentPolicy:
     snapshot_mb = _parse_int(
-        env("EIGENT_REMOTE_SUB_AGENT_MAX_SNAPSHOT_MB"),
+        env("UNDISCLOSED_REMOTE_SUB_AGENT_MAX_SNAPSHOT_MB"),
         _DEFAULT_MAX_SNAPSHOT_BYTES // (1024 * 1024),
     )
     return RemoteSubAgentPolicy(
-        enabled=_parse_bool(env("EIGENT_REMOTE_SUB_AGENT_ENABLED"), False),
+        enabled=_parse_bool(env("UNDISCLOSED_REMOTE_SUB_AGENT_ENABLED"), False),
         allowed_providers=_parse_providers(
-            env("EIGENT_REMOTE_SUB_AGENT_ALLOWED_PROVIDERS")
+            env("UNDISCLOSED_REMOTE_SUB_AGENT_ALLOWED_PROVIDERS")
         ),
         allow_snapshot_download=_parse_bool(
-            env("EIGENT_REMOTE_SUB_AGENT_ALLOW_SNAPSHOT_DOWNLOAD"),
+            env("UNDISCLOSED_REMOTE_SUB_AGENT_ALLOW_SNAPSHOT_DOWNLOAD"),
             False,
         ),
         max_wall_time_seconds=_parse_int(
-            env("EIGENT_REMOTE_SUB_AGENT_MAX_WALL_TIME_SECONDS"),
+            env("UNDISCLOSED_REMOTE_SUB_AGENT_MAX_WALL_TIME_SECONDS"),
             600,
         ),
         max_snapshot_bytes=snapshot_mb * 1024 * 1024,

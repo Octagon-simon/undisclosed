@@ -70,7 +70,7 @@ def _get_login_browser_cdp_port() -> int:
     Keep this outside the Browser Agent fallback range (9223-9299), otherwise
     Cookie Management can mistake a managed task browser for the login window.
     """
-    raw_port = os.environ.get("EIGENT_LOGIN_BROWSER_CDP_PORT")
+    raw_port = os.environ.get("UNDISCLOSED_LOGIN_BROWSER_CDP_PORT")
     if not raw_port:
         return DEFAULT_LOGIN_BROWSER_CDP_PORT
 
@@ -78,7 +78,7 @@ def _get_login_browser_cdp_port() -> int:
         port = int(raw_port)
     except ValueError:
         logger.warning(
-            "Invalid EIGENT_LOGIN_BROWSER_CDP_PORT=%s; using default %s",
+            "Invalid UNDISCLOSED_LOGIN_BROWSER_CDP_PORT=%s; using default %s",
             raw_port,
             DEFAULT_LOGIN_BROWSER_CDP_PORT,
         )
@@ -86,7 +86,7 @@ def _get_login_browser_cdp_port() -> int:
 
     if port <= 0 or port > 65535:
         logger.warning(
-            "Out-of-range EIGENT_LOGIN_BROWSER_CDP_PORT=%s; using default %s",
+            "Out-of-range UNDISCLOSED_LOGIN_BROWSER_CDP_PORT=%s; using default %s",
             raw_port,
             DEFAULT_LOGIN_BROWSER_CDP_PORT,
         )

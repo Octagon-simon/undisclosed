@@ -84,11 +84,11 @@ class ChannelSessionMiddleware:
         session_id = _get_header(scope, "X-Session-ID")
         user_id = _get_header(scope, "X-User-ID")
         hands_override = _get_header(scope, "X-Hands-Override")
-        debug_override_enabled = _is_truthy(env("EIGENT_DEBUG", "false"))
+        debug_override_enabled = _is_truthy(env("UNDISCLOSED_DEBUG", "false"))
 
         if hands_override and not debug_override_enabled:
             logger.warning(
-                "Ignoring X-Hands-Override because EIGENT_DEBUG is disabled"
+                "Ignoring X-Hands-Override because UNDISCLOSED_DEBUG is disabled"
             )
             hands_override = None
 

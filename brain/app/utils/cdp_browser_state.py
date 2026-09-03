@@ -85,7 +85,7 @@ def build_web_cdp_browser(
 def get_connected_cdp_endpoint(owner_key: str) -> str | None:
     if owner_key in _web_cdp_browser_meta_by_owner:
         return _web_cdp_browser_meta_by_owner[owner_key].get("endpoint")
-    cdp_url = env("EIGENT_CDP_URL")
+    cdp_url = env("UNDISCLOSED_CDP_URL")
     if cdp_url:
         return cdp_url
     return None
@@ -109,7 +109,7 @@ def get_connected_cdp_port(owner_key: str) -> int | None:
         _, _, port = normalize_cdp_url(cdp_url)
         return port
     except Exception:
-        logger.warning("Invalid EIGENT_CDP_URL: %s", cdp_url)
+        logger.warning("Invalid UNDISCLOSED_CDP_URL: %s", cdp_url)
         return None
 
 

@@ -59,7 +59,7 @@ def _is_running_in_docker() -> bool:
 
 def _probe_cdp_browser() -> bool:
     """Check if CDP browser is configured/available."""
-    if env("EIGENT_CDP_URL"):
+    if env("UNDISCLOSED_CDP_URL"):
         return True
     cdp_json = Path.home() / ".undisclosed" / "cdp.json"
     if cdp_json.exists():
@@ -71,12 +71,12 @@ def _probe_cdp_browser() -> bool:
 
 def _is_electron_runtime() -> bool:
     """Detect whether Brain is launched by Electron desktop host."""
-    return env("EIGENT_RUNTIME", "").lower().strip() == "electron"
+    return env("UNDISCLOSED_RUNTIME", "").lower().strip() == "electron"
 
 
 def _can_launch_local_cdp_browser() -> bool:
     """Check if local runtime can provision a CDP browser on demand."""
-    if os.environ.get("EIGENT_BRAIN_LAUNCH_BROWSER", "true").lower() in (
+    if os.environ.get("UNDISCLOSED_BRAIN_LAUNCH_BROWSER", "true").lower() in (
         "false",
         "0",
         "no",
@@ -153,13 +153,13 @@ class BrainCapabilities:
 def detect_capabilities(config: dict | None = None) -> BrainCapabilities:
     """
     Detect Brain capabilities, two-layer decision:
-    1. Deployment env: EIGENT_DEPLOYMENT_TYPE / Docker auto-detect
-    2. Env var overrides: EIGENT_HANDS_*
+    1. Deployment env: UNDISCLOSED_DEPLOYMENT_TYPE / Docker auto-detect
+    2. Env var overrides: UNDISCLOSED_HANDS_*
     """
     cfg = config or {}
 
     # 1. Deployment env determines base capabilities
-    deployment = env("EIGENT_DEPLOYMENT_TYPE") or ""
+    deployment = env("UNDISCLOSED_DEPLOYMENT_TYPE") or ""
     deployment = deployment.lower().strip()
 
     if deployment in DEPLOYMENT_FULL:
@@ -174,7 +174,7 @@ def detect_capabilities(config: dict | None = None) -> BrainCapabilities:
                 filesystem_scope="workspace_only",
                 mcp_mode="all",  # MCP available in all deployment modes
                 workspace_root=Path(
-                    env("EIGENT_WORKSPACE", "~/.undisclosed/workspace")
+                    env("UNDISCLOSED_WORKSPACE", "~/.undisclosed/workspace")
                 ).expanduser(),
                 deployment_type="docker",
             )
@@ -197,7 +197,7 @@ def detect_capabilities(config: dict | None = None) -> BrainCapabilities:
                 filesystem_scope="full",
                 mcp_mode="all",
                 workspace_root=Path(
-                    env("EIGENT_WORKSPACE", "~/.undisclosed/workspace")
+                    env("UNDISCLOSED_WORKSPACE", "~/.undisclosed/workspace")
                 ).expanduser(),
                 deployment_type="cloud_vm"
                 if deployment == "cloud_vm"
@@ -211,29 +211,29 @@ def detect_capabilities(config: dict | None = None) -> BrainCapabilities:
             filesystem_scope="workspace_only",
             mcp_mode="all",  # MCP available in all deployment modes
             workspace_root=Path(
-                env("EIGENT_WORKSPACE", "~/.undisclosed/workspace")
+                env("UNDISCLOSED_WORKSPACE", "~/.undisclosed/workspace")
             ).expanduser(),
             deployment_type=deployment or "sandbox",
         )
 
     # 2. Env var overrides
-    if env("EIGENT_HANDS_TERMINAL") is not None:
-        caps.has_terminal = env("EIGENT_HANDS_TERMINAL", "true").lower() in (
+    if env("UNDISCLOSED_HANDS_TERMINAL") is not None:
+        caps.has_terminal = env("UNDISCLOSED_HANDS_TERMINAL", "true").lower() in (
             "1",
             "true",
             "yes",
         )
-    if env("EIGENT_HANDS_BROWSER") is not None:
-        caps.has_browser = env("EIGENT_HANDS_BROWSER", "false").lower() in (
+    if env("UNDISCLOSED_HANDS_BROWSER") is not None:
+        caps.has_browser = env("UNDISCLOSED_HANDS_BROWSER", "false").lower() in (
             "1",
             "true",
             "yes",
         )
-    if env("EIGENT_HANDS_FILESYSTEM") is not None:
-        caps.filesystem_scope = env("EIGENT_HANDS_FILESYSTEM", "full")
-    if env("EIGENT_HANDS_MCP") is not None:
-        caps.mcp_mode = env("EIGENT_HANDS_MCP", "all")
-    if env("EIGENT_CDP_URL"):
+    if env("UNDISCLOSED_HANDS_FILESYSTEM") is not None:
+        caps.filesystem_scope = env("UNDISCLOSED_HANDS_FILESYSTEM", "full")
+    if env("UNDISCLOSED_HANDS_MCP") is not None:
+        caps.mcp_mode = env("UNDISCLOSED_HANDS_MCP", "all")
+    if env("UNDISCLOSED_CDP_URL"):
         caps.has_browser = True
 
     # 3. Config file overrides

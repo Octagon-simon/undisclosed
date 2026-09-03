@@ -23,10 +23,10 @@ const httpProxy = require('http-proxy') as {
 };
 
 /** Cloud proxy target (the local Undisclosed proxy service). Overridable. */
-const PROXY_TARGET = process.env.EIGENT_PROXY_TARGET || 'http://localhost:3001';
+const PROXY_TARGET = process.env.UNDISCLOSED_PROXY_TARGET || 'http://localhost:3001';
 
 function resolveAssetsDir(): string {
-  const rel = path.join('packages', 'eigent-agent', 'assets', 'agent-embed');
+  const rel = path.join('packages', 'undisclosed-agent', 'assets', 'agent-embed');
   const candidates = [
     path.resolve(process.cwd(), rel),
     path.join(__dirname, '..', '..', 'assets', 'agent-embed'),
@@ -37,7 +37,7 @@ function resolveAssetsDir(): string {
 
 /**
  * Backend contributions for the Undisclosed agent widget:
- *  1. Serve the prebuilt agent bundle at `/eigent-agent/*`.
+ *  1. Serve the prebuilt agent bundle at `/undisclosed-agent/*`.
  *  2. Same-origin-proxy `/api/*` -> the Undisclosed cloud-proxy (`:3001`), so the
  *     browser makes no cross-origin (CORS) calls.
  *
@@ -52,7 +52,7 @@ export default new ContainerModule((bind) => {
         const dir = resolveAssetsDir();
         // eslint-disable-next-line no-console
         console.log(
-          `[eigent-agent] bundle: ${dir} -> /eigent-agent ; proxy: /api -> ${PROXY_TARGET}`
+          `[undisclosed-agent] bundle: ${dir} -> /undisclosed-agent ; proxy: /api -> ${PROXY_TARGET}`
         );
 
         const proxy = httpProxy.createProxyServer({ changeOrigin: true });
@@ -96,7 +96,7 @@ export default new ContainerModule((bind) => {
           }
         );
 
-        app.use('/eigent-agent', express.static(dir));
+        app.use('/undisclosed-agent', express.static(dir));
       },
     }))
     .inSingletonScope();

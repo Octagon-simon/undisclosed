@@ -35,7 +35,7 @@ NODE20="$HOME/.nvm/versions/node/v20.20.2/bin"
 # Point the editor's /api proxy at eigent-theia's OWN local brain (:5001)
 # instead of the old external eigent backend (default :3001). This is what makes
 # eigent-theia self-sufficient — no eigent/server Docker stack needed.
-export EIGENT_PROXY_TARGET="${EIGENT_PROXY_TARGET:-http://localhost:5001}"
+export UNDISCLOSED_PROXY_TARGET="${UNDISCLOSED_PROXY_TARGET:-http://localhost:5001}"
 
 if [ -d "$NODE20" ]; then
   export PATH="$NODE20:$PATH"
@@ -86,8 +86,8 @@ build() {
   local ok=0
   echo "== build agent UI bundle (agent-ui -> assets) =="
   npm run build:agent-ui || { echo "❌ agent-ui build FAILED"; ok=1; }
-  echo "== build eigent-agent extension (tsc) =="
-  npm run build --prefix packages/eigent-agent || { echo "❌ eigent-agent (tsc) build FAILED"; ok=1; }
+  echo "== build undisclosed-agent extension (tsc) =="
+  npm run build --prefix packages/undisclosed-agent || { echo "❌ undisclosed-agent (tsc) build FAILED"; ok=1; }
   echo "== theia build (development) =="
   npm run build || { echo "❌ theia build FAILED"; ok=1; }
   return $ok

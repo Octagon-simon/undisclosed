@@ -28,7 +28,7 @@ def root():
     return {"service": "eigent-brain", "docs": "/docs", "health": "/health"}
 
 
-_cors_raw = os.environ.get("EIGENT_CORS_ORIGINS", "")
+_cors_raw = os.environ.get("UNDISCLOSED_CORS_ORIGINS", "")
 _allowed_origins = [o.strip() for o in _cors_raw.split(",") if o.strip()]
 _default_frame_ancestors = [
     "'self'",

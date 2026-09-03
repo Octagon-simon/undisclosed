@@ -15,7 +15,7 @@
 """Hook dispatcher.
 
 Runs user-configured commands with a JSON event payload on stdin -- the same
-contract as the original ``EIGENT_NOTIFY_COMMAND`` patch (see
+contract as the original ``UNDISCLOSED_NOTIFY_COMMAND`` patch (see
 documents/github/beckon README + EXTENDING.md): fire-and-forget from the
 caller's perspective, short timeout, silent on failure.
 
@@ -27,8 +27,8 @@ Invariants (all inherited from notify.py's contract):
   never add latency to agent execution paths.
 
 Environment:
-    EIGENT_HOOKS            JSON object: {event|* : command | [commands]}
-    EIGENT_HOOK_TIMEOUT_MS  Per-hook timeout in ms (default 2000)
+    UNDISCLOSED_HOOKS            JSON object: {event|* : command | [commands]}
+    UNDISCLOSED_HOOK_TIMEOUT_MS  Per-hook timeout in ms (default 2000)
 """
 
 from __future__ import annotations
@@ -48,14 +48,14 @@ DEFAULT_HOOK_TIMEOUT_SECONDS = 2.0
 
 
 def get_hook_timeout() -> float:
-    """Per-command timeout in seconds, overridable via EIGENT_HOOK_TIMEOUT_MS."""
-    raw = os.environ.get("EIGENT_HOOK_TIMEOUT_MS", "").strip()
+    """Per-command timeout in seconds, overridable via UNDISCLOSED_HOOK_TIMEOUT_MS."""
+    raw = os.environ.get("UNDISCLOSED_HOOK_TIMEOUT_MS", "").strip()
     if not raw:
         return DEFAULT_HOOK_TIMEOUT_SECONDS
     try:
         ms = float(raw)
     except ValueError:
-        logger.warning("Invalid EIGENT_HOOK_TIMEOUT_MS=%r; using default", raw)
+        logger.warning("Invalid UNDISCLOSED_HOOK_TIMEOUT_MS=%r; using default", raw)
         return DEFAULT_HOOK_TIMEOUT_SECONDS
     if ms <= 0:
         return DEFAULT_HOOK_TIMEOUT_SECONDS

@@ -41,12 +41,12 @@ from app.utils.notify import NOTIFY_TIMEOUT_SECONDS, fire_notify
 
 class TestParseHooksEnv:
     def test_unset_returns_empty(self, monkeypatch):
-        monkeypatch.delenv("EIGENT_HOOKS", raising=False)
+        monkeypatch.delenv("UNDISCLOSED_HOOKS", raising=False)
         assert parse_hooks_env(None) == {}
         assert parse_hooks_env("") == {}
 
     def test_invalid_json_returns_empty(self, monkeypatch):
-        monkeypatch.setenv("EIGENT_HOOKS", "{not json")
+        monkeypatch.setenv("UNDISCLOSED_HOOKS", "{not json")
         assert parse_hooks_env("{not json") == {}
 
     def test_non_dict_returns_empty(self, monkeypatch):
@@ -83,14 +83,14 @@ class TestParseHooksEnv:
 
 class TestResolution:
     def test_nothing_configured_is_noop(self, monkeypatch):
-        monkeypatch.delenv("EIGENT_HOOKS", raising=False)
-        monkeypatch.delenv("EIGENT_NOTIFY_COMMAND", raising=False)
+        monkeypatch.delenv("UNDISCLOSED_HOOKS", raising=False)
+        monkeypatch.delenv("UNDISCLOSED_NOTIFY_COMMAND", raising=False)
         assert resolve_commands_for_event(HookEvent.task_end) == []
 
     def test_legacy_command_fires_for_every_event(self, monkeypatch):
-        monkeypatch.delenv("EIGENT_HOOKS", raising=False)
+        monkeypatch.delenv("UNDISCLOSED_HOOKS", raising=False)
         monkeypatch.setenv(
-            "EIGENT_NOTIFY_COMMAND", "node beckoned-eigent-hook.js"
+            "UNDISCLOSED_NOTIFY_COMMAND", "node beckoned-eigent-hook.js"
         )
         assert resolve_commands_for_event(HookEvent.task_end) == [
             "node beckoned-eigent-hook.js"
@@ -102,10 +102,10 @@ class TestResolution:
     def test_specific_adds_to_legacy(self, monkeypatch):
         """Adding a routed command must not silently unhook existing setups."""
         monkeypatch.setenv(
-            "EIGENT_HOOKS",
+            "UNDISCLOSED_HOOKS",
             json.dumps({"task_end": "specific.sh"}),
         )
-        monkeypatch.setenv("EIGENT_NOTIFY_COMMAND", "legacy.sh")
+        monkeypatch.setenv("UNDISCLOSED_NOTIFY_COMMAND", "legacy.sh")
         assert resolve_commands_for_event(HookEvent.task_end) == [
             "specific.sh",
             "legacy.sh",
@@ -116,27 +116,27 @@ class TestResolution:
         ]
 
     def test_duplicate_command_deduplicated(self, monkeypatch):
-        monkeypatch.setenv("EIGENT_HOOKS", json.dumps({"*": "same.sh"}))
-        monkeypatch.setenv("EIGENT_NOTIFY_COMMAND", "same.sh")
+        monkeypatch.setenv("UNDISCLOSED_HOOKS", json.dumps({"*": "same.sh"}))
+        monkeypatch.setenv("UNDISCLOSED_NOTIFY_COMMAND", "same.sh")
         assert resolve_commands_for_event(HookEvent.task_end) == ["same.sh"]
 
     def test_wildcard_combines_with_legacy(self, monkeypatch):
-        monkeypatch.setenv("EIGENT_HOOKS", json.dumps({"*": "audit.sh"}))
-        monkeypatch.setenv("EIGENT_NOTIFY_COMMAND", "legacy.sh")
+        monkeypatch.setenv("UNDISCLOSED_HOOKS", json.dumps({"*": "audit.sh"}))
+        monkeypatch.setenv("UNDISCLOSED_NOTIFY_COMMAND", "legacy.sh")
         resolved = resolve_commands_for_event(HookEvent.task_started)
         assert resolved == ["audit.sh", "legacy.sh"]
 
     def test_explicit_empty_list_suppresses_fallbacks(self, monkeypatch):
-        monkeypatch.setenv("EIGENT_HOOKS", json.dumps({"task_end": []}))
-        monkeypatch.setenv("EIGENT_NOTIFY_COMMAND", "legacy.sh")
+        monkeypatch.setenv("UNDISCLOSED_HOOKS", json.dumps({"task_end": []}))
+        monkeypatch.setenv("UNDISCLOSED_NOTIFY_COMMAND", "legacy.sh")
         assert resolve_commands_for_event(HookEvent.task_end) == []
         assert resolve_commands_for_event(HookEvent.task_started) == [
             "legacy.sh"
         ]
 
     def test_accepts_plain_string_event_names(self, monkeypatch):
-        monkeypatch.delenv("EIGENT_HOOKS", raising=False)
-        monkeypatch.setenv("EIGENT_NOTIFY_COMMAND", "legacy.sh")
+        monkeypatch.delenv("UNDISCLOSED_HOOKS", raising=False)
+        monkeypatch.setenv("UNDISCLOSED_NOTIFY_COMMAND", "legacy.sh")
         # Callers may pass raw strings (back-compat with fire_notify).
         assert resolve_commands_for_event("human_input_requested") == [
             "legacy.sh"
@@ -208,7 +208,7 @@ class TestRunHookCommand:
     @pytest.mark.asyncio
     async def test_timeout_kills_process(self, monkeypatch, tmp_path):
         marker = tmp_path / "never"
-        monkeypatch.setenv("EIGENT_HOOK_TIMEOUT_MS", "150")
+        monkeypatch.setenv("UNDISCLOSED_HOOK_TIMEOUT_MS", "150")
         start = time.monotonic()
         await run_hook_command(f"sleep 30; touch {marker}", {"event": "x"})
         elapsed = time.monotonic() - start
@@ -218,13 +218,13 @@ class TestRunHookCommand:
         assert get_hook_timeout() == pytest.approx(0.15)
 
     def test_default_timeout(self, monkeypatch):
-        monkeypatch.delenv("EIGENT_HOOK_TIMEOUT_MS", raising=False)
+        monkeypatch.delenv("UNDISCLOSED_HOOK_TIMEOUT_MS", raising=False)
         assert get_hook_timeout() == DEFAULT_HOOK_TIMEOUT_SECONDS
         assert DEFAULT_HOOK_TIMEOUT_SECONDS == NOTIFY_TIMEOUT_SECONDS
 
     @pytest.mark.asyncio
     async def test_invalid_timeout_falls_back(self, monkeypatch):
-        monkeypatch.setenv("EIGENT_HOOK_TIMEOUT_MS", "abc")
+        monkeypatch.setenv("UNDISCLOSED_HOOK_TIMEOUT_MS", "abc")
         assert get_hook_timeout() == DEFAULT_HOOK_TIMEOUT_SECONDS
 
 
@@ -250,8 +250,8 @@ class TestFanOut:
 class TestFireHook:
     @pytest.mark.asyncio
     async def test_noop_when_unconfigured(self, monkeypatch):
-        monkeypatch.delenv("EIGENT_HOOKS", raising=False)
-        monkeypatch.delenv("EIGENT_NOTIFY_COMMAND", raising=False)
+        monkeypatch.delenv("UNDISCLOSED_HOOKS", raising=False)
+        monkeypatch.delenv("UNDISCLOSED_NOTIFY_COMMAND", raising=False)
         # Must return promptly without spawning anything.
         await asyncio.wait_for(
             fire_hook(HookEvent.task_end, taskId="t1"), timeout=2
@@ -261,10 +261,10 @@ class TestFireHook:
     async def test_routes_via_config(self, monkeypatch, tmp_path):
         out = tmp_path / "routed.json"
         monkeypatch.setenv(
-            "EIGENT_HOOKS",
+            "UNDISCLOSED_HOOKS",
             json.dumps({"permission_requested": capture_cmd(out)}),
         )
-        monkeypatch.delenv("EIGENT_NOTIFY_COMMAND", raising=False)
+        monkeypatch.delenv("UNDISCLOSED_NOTIFY_COMMAND", raising=False)
         await fire_hook(
             HookEvent.permission_requested,
             taskId="t1",
@@ -298,7 +298,7 @@ class TestEmitters:
     async def test_permission_requested_fields(self, monkeypatch, tmp_path):
         out = tmp_path / "perm.json"
         monkeypatch.setenv(
-            "EIGENT_HOOKS",
+            "UNDISCLOSED_HOOKS",
             json.dumps({"permission_requested": capture_cmd(out)}),
         )
         await emit_permission_requested(
@@ -320,7 +320,7 @@ class TestEmitters:
         approved = tmp_path / "approved.json"
         denied = tmp_path / "denied.json"
         monkeypatch.setenv(
-            "EIGENT_HOOKS",
+            "UNDISCLOSED_HOOKS",
             json.dumps(
                 {
                     "permission_approved": capture_cmd(approved),
@@ -363,7 +363,7 @@ class TestEmitters:
         self, monkeypatch, tmp_path
     ):
         out = tmp_path / "end.json"
-        monkeypatch.setenv("EIGENT_HOOKS", json.dumps({"*": capture_cmd(out)}))
+        monkeypatch.setenv("UNDISCLOSED_HOOKS", json.dumps({"*": capture_cmd(out)}))
         await emit_task_completed(task_id="t9")
         payload = read_capture(out)
         assert payload["event"] == "task_end"
@@ -382,8 +382,8 @@ class TestBackwardCompat:
     ):
         """The exact setup documented in beckon's README keeps working."""
         out = tmp_path / "legacy.json"
-        monkeypatch.delenv("EIGENT_HOOKS", raising=False)
-        monkeypatch.setenv("EIGENT_NOTIFY_COMMAND", capture_cmd(out))
+        monkeypatch.delenv("UNDISCLOSED_HOOKS", raising=False)
+        monkeypatch.setenv("UNDISCLOSED_NOTIFY_COMMAND", capture_cmd(out))
         await fire_notify(
             "human_input_requested",
             {
@@ -400,8 +400,8 @@ class TestBackwardCompat:
 
     @pytest.mark.asyncio
     async def test_fire_notify_unconfigured_is_silent_noop(self, monkeypatch):
-        monkeypatch.delenv("EIGENT_HOOKS", raising=False)
-        monkeypatch.delenv("EIGENT_NOTIFY_COMMAND", raising=False)
+        monkeypatch.delenv("UNDISCLOSED_HOOKS", raising=False)
+        monkeypatch.delenv("UNDISCLOSED_NOTIFY_COMMAND", raising=False)
         await asyncio.wait_for(
             fire_notify("task_end", {"taskId": "t1"}), timeout=2
         )
@@ -420,7 +420,7 @@ class TestThreadSafeEmit:
         from app.utils.event_loop_utils import set_main_event_loop
 
         out = tmp_path / "threadsafe.json"
-        monkeypatch.setenv("EIGENT_HOOKS", json.dumps({"*": capture_cmd(out)}))
+        monkeypatch.setenv("UNDISCLOSED_HOOKS", json.dumps({"*": capture_cmd(out)}))
 
         async def scenario():
             set_main_event_loop(asyncio.get_running_loop())

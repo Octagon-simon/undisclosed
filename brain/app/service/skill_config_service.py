@@ -28,7 +28,7 @@ from app.service.skill_service import (
 
 logger = logging.getLogger("skill_config")
 
-EIGENT_ROOT = Path.home() / ".undisclosed"
+UNDISCLOSED_ROOT = Path.home() / ".undisclosed"
 SKILL_CONFIG_FILENAME = "skills-config.json"
 
 
@@ -59,7 +59,7 @@ def legacy_skill_config_user_id(value: str | int | None) -> str | None:
 
 
 def _config_path_for_key(user_key: str) -> Path:
-    return EIGENT_ROOT / user_key / SKILL_CONFIG_FILENAME
+    return UNDISCLOSED_ROOT / user_key / SKILL_CONFIG_FILENAME
 
 
 def _config_path(user_id: str | int) -> Path:

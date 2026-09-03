@@ -14,9 +14,34 @@
 // Host abstraction: desktop (Electron) vs web. No explicit platform checks.
 // See docs/design/04-client.md.
 
+/**
+ * What the host knows about the file the user is currently looking at in the
+ * editor. Lets the agent sync context (which file is open) with zero shell
+ * calls. All fields optional beyond `path` so hosts can supply what they have.
+ */
+export interface ActiveEditorInfo {
+  /** Absolute path of the active editor's file. */
+  path: string;
+  /** Monaco/Theia language id (e.g. "typescript", "python"), if known. */
+  languageId?: string;
+  /** 1-based selection range, when there is a selection/cursor. */
+  selection?: { startLine: number; endLine: number } | null;
+}
+
 export interface AppHost {
   electronAPI: any;
   ipcRenderer: any;
+  /**
+   * Subscribe to active-editor changes so the agent always knows which file is
+   * open without shelling out. Returns an unsubscribe function. Optional: hosts
+   * without an editor (the default web host) omit it. The Theia embed wires this
+   * to Monaco's EditorManager.
+   */
+  onActiveEditorChanged?(
+    cb: (info: ActiveEditorInfo | null) => void
+  ): () => void;
+  /** Current active editor synchronously, if the host tracks one. */
+  getActiveEditor?(): ActiveEditorInfo | null;
   /**
    * Open a file in the host's editor (e.g. Theia's OpenerService), used by the
    * activity trace's clickable filenames. Optional: hosts that can't open files

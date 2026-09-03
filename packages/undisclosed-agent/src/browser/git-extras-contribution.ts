@@ -35,23 +35,23 @@ const BRAIN_BASE_URL = 'http://localhost:5001';
 const GIT_MENU: MenuPath = [...MAIN_MENU_BAR, '8_git_extras'];
 
 const UNDO_SOFT: Command = {
-  id: 'eigent.git.undoLastCommit',
+  id: 'undisclosed.git.undoLastCommit',
   label: 'Git: Undo Last Commit (keep changes)',
 };
 const UNDO_HARD: Command = {
-  id: 'eigent.git.undoLastCommitHard',
+  id: 'undisclosed.git.undoLastCommitHard',
   label: 'Git: Undo Last Commit (discard changes)',
 };
 const UNSTAGE_ALL: Command = {
-  id: 'eigent.git.unstageAll',
+  id: 'undisclosed.git.unstageAll',
   label: 'Git: Unstage All',
 };
 const DISCARD_ALL: Command = {
-  id: 'eigent.git.discardAll',
+  id: 'undisclosed.git.discardAll',
   label: 'Git: Discard All Changes',
 };
 const GENERATE_MESSAGE: Command = {
-  id: 'eigent.git.generateCommitMessage',
+  id: 'undisclosed.git.generateCommitMessage',
   label: 'Git: Generate Commit Message (AI)',
   iconClass: 'codicon codicon-sparkle',
 };

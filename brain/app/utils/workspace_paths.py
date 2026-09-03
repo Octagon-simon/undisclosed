@@ -19,7 +19,7 @@ from app.component.environment import env
 
 
 def get_workspace_root() -> Path:
-    return Path(env("EIGENT_WORKSPACE", "~/.undisclosed/workspace")).expanduser()
+    return Path(env("UNDISCLOSED_WORKSPACE", "~/.undisclosed/workspace")).expanduser()
 
 
 def get_eigent_root() -> Path:

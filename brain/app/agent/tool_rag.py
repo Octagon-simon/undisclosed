@@ -68,8 +68,8 @@ def _core_toolkit_markers() -> tuple[str, ...]:
 
 
 def tool_rag_enabled() -> bool:
-    """On by default; set EIGENT_TOOL_RAG=0 to disable."""
-    return str(env("EIGENT_TOOL_RAG", "1")).strip().lower() not in {
+    """On by default; set UNDISCLOSED_TOOL_RAG=0 to disable."""
+    return str(env("UNDISCLOSED_TOOL_RAG", "1")).strip().lower() not in {
         "0",
         "false",
         "no",
@@ -79,7 +79,7 @@ def tool_rag_enabled() -> bool:
 
 def _default_top_k() -> int:
     try:
-        return max(1, int(env("EIGENT_TOOL_RAG_TOPK", "12")))
+        return max(1, int(env("UNDISCLOSED_TOOL_RAG_TOPK", "12")))
     except (TypeError, ValueError):
         return 12
 
@@ -89,9 +89,9 @@ def _min_score() -> float:
     Weak/no-intent messages (e.g. "hii") score below this, so ONLY the core
     tools are exposed instead of ballooning to whole toolkits. The agent can
     still pull anything in on demand via `load_capability`. Tune with
-    EIGENT_TOOL_RAG_MIN_SCORE."""
+    UNDISCLOSED_TOOL_RAG_MIN_SCORE."""
     try:
-        return float(env("EIGENT_TOOL_RAG_MIN_SCORE", "0.10"))
+        return float(env("UNDISCLOSED_TOOL_RAG_MIN_SCORE", "0.10"))
     except (TypeError, ValueError):
         return 0.10
 
@@ -99,9 +99,9 @@ def _min_score() -> float:
 def _max_per_toolkit() -> int:
     """Cap tools attached from a single toolkit. Atomic loading of a huge MCP
     toolkit (30 tools, ~40K tokens of schemas) is re-sent every step — so take
-    only the most relevant N. Tune with EIGENT_TOOL_RAG_MAX_PER_TOOLKIT."""
+    only the most relevant N. Tune with UNDISCLOSED_TOOL_RAG_MAX_PER_TOOLKIT."""
     try:
-        return max(1, int(env("EIGENT_TOOL_RAG_MAX_PER_TOOLKIT", "12")))
+        return max(1, int(env("UNDISCLOSED_TOOL_RAG_MAX_PER_TOOLKIT", "12")))
     except (TypeError, ValueError):
         return 12
 

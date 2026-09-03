@@ -46,6 +46,7 @@ from app.service.task import (
     ActionDeactivateAgentData,
     ActionDeactivateToolkitData,
     ActionRequestUsageData,
+    Agents,
     get_task_lock,
     get_task_lock_if_exists,
     set_process_task,
@@ -601,6 +602,18 @@ class ListenChatAgent(ChatAgent):
         response_format: type[BaseModel] | None = None,
     ) -> ChatAgentResponse | AsyncStreamingChatAgentResponse:
         task_lock = get_task_lock(self.api_task_id)
+        # The activation "message" narrates what a worker was handed — useful for
+        # workforce subtasks. For the SINGLE agent it's just the user's own
+        # prompt echoed back, which the UI rendered as a bogus "thinking" line
+        # (e.g. user types "Hii" -> a "Hii" thought appears). Suppress the echo
+        # for the single agent so nothing spurious shows before the real answer.
+        activate_message = (
+            input_message.content
+            if isinstance(input_message, BaseMessage)
+            else input_message
+        )
+        if self.agent_name == Agents.single_agent:
+            activate_message = ""
         await task_lock.put_queue(
             ActionActivateAgentData(
                 action=Action.activate_agent,
@@ -608,11 +621,7 @@ class ListenChatAgent(ChatAgent):
                     "agent_name": self.agent_name,
                     "process_task_id": self.process_task_id,
                     "agent_id": self.agent_id,
-                    "message": (
-                        input_message.content
-                        if isinstance(input_message, BaseMessage)
-                        else input_message
-                    ),
+                    "message": activate_message,
                 },
             )
         )

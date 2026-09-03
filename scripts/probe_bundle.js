@@ -1,5 +1,5 @@
 const fs = require('fs');
-const path = '/Users/octagon/Documents/github/eigent-theia/packages/eigent-agent/assets/agent-embed/agent-embed.umd.js';
+const path = '/Users/octagon/Documents/github/eigent-theia/packages/undisclosed-agent/assets/agent-embed/agent-embed.umd.js';
 const s = fs.readFileSync(path, 'utf8');
 const pat = process.argv[2];
 const before = parseInt(process.argv[3] || '0', 10);

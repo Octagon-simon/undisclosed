@@ -122,7 +122,7 @@ export default function AgentUsageStats() {
         <button
           type="button"
           onClick={() => refetch()}
-          className="flex items-center gap-1 rounded-md px-2 py-1 text-label-xs text-ds-text-neutral-subtle-default outline-none transition-colors hover:bg-ds-bg-neutral-muted-default"
+          className="flex items-center gap-1 rounded-md px-2 py-1 text-label-xs text-[var(--theia-descriptionForeground,var(--theia-foreground))] outline-none transition-colors hover:bg-[var(--theia-list-hoverBackground)]"
         >
           {isFetching ? (
             <Loader2 size={12} className="animate-spin" aria-hidden />

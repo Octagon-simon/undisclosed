@@ -17,7 +17,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BRAIN="$ROOT/brain"
 PY="$BRAIN/.venv/bin/python"
-PORT="${EIGENT_BRAIN_PORT:-5001}"
+PORT="${UNDISCLOSED_BRAIN_PORT:-5001}"
 LOG="$ROOT/.brain.log"
 PIDFILE="$ROOT/.brain.pid"
 RUNFILE="$ROOT/.brain.run"  # exists while the brain is meant to be running
@@ -47,8 +47,8 @@ start() {
   (
     cd "$BRAIN" || exit 1
     while [ -f "$RUNFILE" ]; do
-      EIGENT_BRAIN_PORT="$PORT" \
-      EIGENT_BRAIN_HOST="${EIGENT_BRAIN_HOST:-127.0.0.1}" \
+      UNDISCLOSED_BRAIN_PORT="$PORT" \
+      UNDISCLOSED_BRAIN_HOST="${UNDISCLOSED_BRAIN_HOST:-127.0.0.1}" \
         "$PY" main.py >>"$LOG" 2>&1
       [ -f "$RUNFILE" ] || break   # a clean `stop` removed it → exit
       cp -f "$LOG" "$LOG.prev" 2>/dev/null || true

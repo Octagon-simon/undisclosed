@@ -1,18 +1,19 @@
 {
-  "name": "eigent-agent",
+  "name": "undisclosed-agent",
   "version": "0.0.1",
   "private": true,
-  "description": "Eigent's native agent panel as a Theia extension (ReactWidget in the right dock). Placeholder now; hosts the decoupled Eigent agent UI later.",
+  "description": "Undisclosed agent panel as a Theia extension (ReactWidget in the right dock). Hosts the on-device agent UI. Agentic features powered by Eigent.ai.",
   "license": "Apache-2.0",
   "theiaExtensions": [
     {
-      "frontend": "lib/browser/eigent-agent-frontend-module",
-      "backend": "lib/node/eigent-agent-backend-module",
-      "style": "style/eigent-agent.css"
+      "frontend": "lib/browser/undisclosed-agent-frontend-module",
+      "backend": "lib/node/undisclosed-agent-backend-module",
+      "style": "style/undisclosed-agent.css"
     }
   ],
   "dependencies": {
     "@theia/core": "1.60.0",
+    "@theia/editor": "1.60.0",
     "@theia/filesystem": "1.60.0",
     "@theia/git": "1.60.0",
     "@theia/scm": "1.60.0",

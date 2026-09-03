@@ -113,7 +113,7 @@ _DEFAULT_LOCAL_USER_ID = "local"
 
 def _local_space_id() -> str:
     """Canonical personal-space id that history records are served under."""
-    user = os.environ.get("EIGENT_LOCAL_USER_ID", "") or _DEFAULT_LOCAL_USER_ID
+    user = os.environ.get("UNDISCLOSED_LOCAL_USER_ID", "") or _DEFAULT_LOCAL_USER_ID
     return f"legacy_{user}"
 
 
@@ -240,15 +240,22 @@ def _build_history_items() -> list[dict]:
         if not files:
             continue
 
-        question = ""
+        opening_prompt = ""
         created_at = None
         updated_at = None
-        for p in files:
+        total_tokens = 0
+        # Earliest-first so the opening prompt really is the conversation's first
+        # turn (file order is not chronological).
+        for p in sorted(files, key=os.path.getmtime):
             data = _load_json(p) or {}
             um = data.get("userMessage") or {}
-            q = (um.get("content") or "").strip() or data.get("queryId")
-            if q and not question:
-                question = q
+            content = (um.get("content") or "").strip()
+            if content and not opening_prompt:
+                opening_prompt = content
+            # Token usage persisted with each turn is the conversation's running
+            # (cumulative) total at that point, so the MAX across turns is the
+            # final conversation total. Older turns without it contribute 0.
+            total_tokens = max(total_tokens, int(data.get("tokens") or 0))
             st = os.path.getmtime(p)
             iso = _iso(st)
             if created_at is None or iso < created_at:
@@ -256,20 +263,25 @@ def _build_history_items() -> list[dict]:
             if updated_at is None or iso > updated_at:
                 updated_at = iso
 
+        # Human-readable label from the opening prompt (first line, trimmed) —
+        # never the raw chat id like "1788447783606-908".
+        title = opening_prompt.splitlines()[0][:80] if opening_prompt else ""
+        conversation_label = title or "Untitled conversation"
+
         items.append(
             {
                 "id": len(items) + 1,
                 "task_id": chat_id,
                 "project_id": chat_id,
                 "space_id": _local_space_id(),
-                "question": question or chat_id,
+                "question": opening_prompt or conversation_label,
                 "language": "",
                 "model_platform": "",
                 "model_type": "",
                 "max_retries": 3,
-                "project_name": chat_id,
+                "project_name": conversation_label,
                 "summary": None,
-                "tokens": 0,
+                "tokens": total_tokens,
                 "status": 2,  # ChatStatus.done
                 "created_at": created_at,
                 "updated_at": updated_at,
@@ -348,8 +360,8 @@ def _group_items(items: list[dict]) -> list[dict]:
 async def auto_login(payload: dict | None = None):
     """Local auto-login: return a fixed local identity + a session token."""
     _ = payload
-    email = os.environ.get("EIGENT_LOCAL_EMAIL", "local@eigent.local")
-    name = os.environ.get("EIGENT_LOCAL_NAME", "Local User")
+    email = os.environ.get("UNDISCLOSED_LOCAL_EMAIL", "local@eigent.local")
+    name = os.environ.get("UNDISCLOSED_LOCAL_NAME", "Local User")
     token = str(uuid.uuid4())
     return {
         "token": token,
