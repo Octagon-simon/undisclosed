@@ -327,7 +327,7 @@ class WorkforceMetricsCallback(WorkforceMetrics):
         with self.tracer.start_as_current_span(
             SPAN_WORKER_CREATED, context=ctx
         ) as span:
-            # Eigent-specific attributes
+            # Undisclosed-specific attributes
             span.set_attribute(ATTR_WORKER_ID, event.worker_id)
             span.set_attribute(ATTR_WORKER_TYPE, event.worker_type)
             span.set_attribute(ATTR_WORKER_ROLE, event.role)

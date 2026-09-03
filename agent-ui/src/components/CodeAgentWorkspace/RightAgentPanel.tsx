@@ -162,7 +162,7 @@ export default function RightAgentPanel({
             />
           </span>
           <span className="truncate text-body-sm font-semibold text-ds-text-neutral-default-default">
-            Eigent Agent
+            Undisclosed Agent
           </span>
           <TooltipSimple content={running ? 'Running' : 'Ready'} side="bottom">
             <span

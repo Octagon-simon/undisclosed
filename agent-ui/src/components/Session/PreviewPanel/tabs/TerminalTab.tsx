@@ -24,7 +24,7 @@ export function TerminalTab() {
   return (
     <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-ds-bg-neutral-strong-default">
       <div className="min-h-0 flex-1 overflow-auto p-3 font-mono text-body-sm text-ds-text-neutral-muted-default">
-        <div className="text-ds-text-neutral-default-default">Eigent:~$</div>
+        <div className="text-ds-text-neutral-default-default">Undisclosed:~$</div>
         <div className="mt-1 opacity-70">
           {t('layout.preview-terminal-placeholder', {
             defaultValue: 'Terminal output will appear here.',

@@ -528,7 +528,7 @@ export function buildActivityRenderEntries(
 
 /**
  * The compact, humanized activity trace is now the DEFAULT rendering — the
- * product is an editor + agent (not standalone Eigent), so the Claude-Code /
+ * product is an editor + agent (not standalone Undisclosed), so the Claude-Code /
  * Antigravity style trace is always on. Kept as a function so existing call
  * sites (TaskWorkLogAccordion) don't need to change.
  */

@@ -238,7 +238,7 @@ export default function AgentModels() {
     }
     setSaving(true);
     try {
-      // Optional, best-effort key check (Eigent needs tool-calling support).
+      // Optional, best-effort key check (Undisclosed needs tool-calling support).
       // Don't hard-block on transport errors — only on a clear invalid verdict.
       try {
         const v = await fetchPostWithTimeout('/model/validate', {
@@ -256,7 +256,7 @@ export default function AgentModels() {
         }
         if (v && v.is_tool_calls === false) {
           toast.warning(
-            'This model may not support tool-calling, which Eigent needs.'
+            'This model may not support tool-calling, which Undisclosed needs.'
           );
         }
       } catch {

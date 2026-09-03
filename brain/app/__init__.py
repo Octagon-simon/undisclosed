@@ -19,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
 # Initialize FastAPI with title
-api = FastAPI(title="Eigent Multi-Agent System API")
+api = FastAPI(title="Undisclosed Multi-Agent System API")
 
 
 @api.get("/")

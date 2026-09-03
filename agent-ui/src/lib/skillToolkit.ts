@@ -20,7 +20,7 @@ import { getConnectionConfig } from '@/store/connectionStore';
  *
  * Skills are stored as SKILL.md files with YAML frontmatter (name, description)
  * and a markdown body. Discovery order: repo > user > system (CAMEL);
- * in Eigent we use user scope at ~/.eigent/.camel/skills (one folder per skill).
+ * in Undisclosed we use user scope at ~/.eigent/.camel/skills (one folder per skill).
  */
 
 export interface SkillMeta {

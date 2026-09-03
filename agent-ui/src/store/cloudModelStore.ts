@@ -12,13 +12,10 @@
 // limitations under the License.
 // ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
 
-import { proxyFetchGet } from '@/api/http';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-const CLOUD_MODEL_CACHE_TTL_MS = 60 * 1000;
 export const LEGACY_DEFAULT_CLOUD_MODEL_ID = 'gpt-5.5';
-let cloudModelsRefreshPromise: Promise<CloudModel[]> | null = null;
 
 export interface CloudModel {
   id: string;
@@ -38,14 +35,6 @@ export interface CloudModel {
 export interface RetiredCloudModel {
   id: string;
   replaced_by_model_id?: string | null;
-}
-
-interface CloudModelsResponse {
-  models?: CloudModel[];
-  retired?: RetiredCloudModel[];
-  default_model_id?: string;
-  version?: string;
-  not_modified?: boolean;
 }
 
 export type CloudModelResolutionSource = 'selected' | 'replaced' | 'default';
@@ -351,12 +340,6 @@ function normalizePersistedState(
   };
 }
 
-function etagHeaderForVersion(version: string): Record<string, string> {
-  if (!version || version === 'legacy-fallback') return {};
-  const normalized = version.replace(/^W\//, '').replace(/^"|"$/g, '');
-  return normalized ? { 'If-None-Match': `"${normalized}"` } : {};
-}
-
 export const useCloudModelStore = create<CloudModelState>()(
   persist(
     (set, get) => ({
@@ -370,104 +353,20 @@ export const useCloudModelStore = create<CloudModelState>()(
       error: null,
 
       fetchCloudModels: async (force = false) => {
-        const state = get();
-        const now = Date.now();
-        const hasCachedModels =
-          state.models.length > 0 && state.lastFetchedAt > 0;
-        const hasFreshServerCache =
-          state.source === 'server' &&
-          hasCachedModels &&
-          now - state.lastFetchedAt < CLOUD_MODEL_CACHE_TTL_MS;
-        if (!force && hasFreshServerCache) {
-          return state.models;
-        }
-        if (!force && hasCachedModels) {
-          void get().fetchCloudModels(true);
-          return state.models;
-        }
-        if (cloudModelsRefreshPromise) {
-          return cloudModelsRefreshPromise;
-        }
-
-        cloudModelsRefreshPromise = (async () => {
-          const beforeFetch = get();
+        // Decoupled build: there is no cloud model service, so never call
+        // /api/v1/cloud-models (it 404s on the standalone brain). Cloud models
+        // aren't offered; users configure their own providers under
+        // Agents > Models. Short-circuit to a ready-but-empty state.
+        void force;
+        if (get().status !== 'ready') {
           set({
-            status:
-              beforeFetch.models.length > 0 ? beforeFetch.status : 'loading',
+            status: 'ready',
+            source: 'legacy',
             error: null,
+            lastFetchedAt: Date.now(),
           });
-          try {
-            const response = (await proxyFetchGet(
-              '/api/v1/cloud-models',
-              { kind: 'chat' },
-              etagHeaderForVersion(beforeFetch.version)
-            )) as CloudModelsResponse;
-            if (response?.not_modified) {
-              set({
-                lastFetchedAt: Date.now(),
-                status: 'ready',
-                source:
-                  beforeFetch.source === 'legacy'
-                    ? 'cache'
-                    : beforeFetch.source,
-                error: null,
-              });
-              return get().models;
-            }
-            const models = sortCloudModels(
-              (Array.isArray(response?.models) ? response.models : [])
-                .map(normalizeModel)
-                .filter((model): model is CloudModel => Boolean(model))
-                .filter((model) => model.kind === 'chat')
-            );
-            if (models.length === 0) {
-              throw new Error('Cloud model API returned no chat models');
-            }
-            const retired = (
-              Array.isArray(response?.retired) ? response.retired : []
-            )
-              .map(normalizeRetired)
-              .filter((model): model is RetiredCloudModel => Boolean(model));
-            const defaultModelId = chooseDefaultModelId(
-              models,
-              response.default_model_id
-            );
-            set({
-              models,
-              retired,
-              defaultModelId,
-              version: response.version || 'server',
-              lastFetchedAt: Date.now(),
-              status: 'ready',
-              source: 'server',
-              error: null,
-            });
-            return models;
-          } catch (error) {
-            const message =
-              error instanceof Error
-                ? error.message
-                : 'Failed to load cloud models';
-            const current = get();
-            const models =
-              current.models.length > 0 ? current.models : fallbackModels();
-            set({
-              models,
-              defaultModelId: chooseDefaultModelId(
-                models,
-                current.defaultModelId || LEGACY_DEFAULT_CLOUD_MODEL_ID
-              ),
-              lastFetchedAt: Date.now(),
-              status: 'error',
-              source: current.source === 'server' ? 'cache' : 'legacy',
-              error: message,
-            });
-            return models;
-          } finally {
-            cloudModelsRefreshPromise = null;
-          }
-        })();
-        return cloudModelsRefreshPromise;
+        }
+        return get().models;
       },
 
       resolveCloudModel: (modelId) => {

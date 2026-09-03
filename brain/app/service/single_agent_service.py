@@ -263,7 +263,16 @@ def _build_single_agent_prompt(
     vision_capable: bool = True,
     memory_enabled: bool = True,
     is_fresh_agent: bool = True,
-) -> str:
+) -> tuple[str, str]:
+    """Return (clean_user_prompt, background_context).
+
+    The user prompt is JUST the current message plus any attachments — nothing
+    else, so it never leaks the scaffold into the UI and the model responds to
+    exactly what the user typed. The background context (recalled facts + earlier
+    turns, only for a fresh agent) is returned separately; the caller injects it
+    as a SYSTEM memory record so it stays background instead of competing with
+    the current message.
+    """
     if is_fresh_agent:
         context = _build_single_agent_context(
             task_lock,
@@ -294,30 +303,8 @@ def _build_single_agent_prompt(
             )
         attachment_context += "\n\n"
 
-    if not is_fresh_agent:
-        return (
-            f"{context}{attachment_context}"
-            "=== CURRENT MESSAGE — respond to THIS ===\n"
-            f"{question}\n"
-            "=== END CURRENT MESSAGE ===\n\n"
-            "Respond ONLY to the current message above. Keep your response brief, "
-            "directly addressing the current request, and do NOT repeat or re-state "
-            "any of your earlier completed work."
-        )
-
-    return (
-        f"{context}{attachment_context}"
-        "=== CURRENT MESSAGE — respond to THIS ===\n"
-        f"{question}\n"
-        "=== END CURRENT MESSAGE ===\n\n"
-        "Respond ONLY to the current message above. Any earlier task in this "
-        "conversation is already finished — do NOT repeat, re-summarize, or "
-        "redo it unless the current message explicitly asks you to. If the "
-        "current message asks a question, answer that question directly. If it "
-        "corrects you or disputes something you said, ACCEPT the correction and "
-        "update your understanding — do not restate or defend your earlier "
-        "claims."
-    )
+    prompt = f"{attachment_context}{question}"
+    return prompt, context
 
 
 def _is_image_path(path: str) -> bool:
@@ -696,7 +683,7 @@ async def single_agent_solve(
         vision_capable = model_supports_vision(
             options.model_platform, options.model_type
         )
-        prompt = _build_single_agent_prompt(
+        prompt, bg_context = _build_single_agent_prompt(
             task_lock,
             question,
             attaches,
@@ -705,6 +692,38 @@ async def single_agent_solve(
             memory_enabled=_memory_enabled(options),
             is_fresh_agent=is_fresh_agent,
         )
+        # Inject recalled facts + earlier turns as a SYSTEM memory record so it
+        # stays BACKGROUND: it never leaks into the UI (the user message is just
+        # the question) and it stops competing with the current message, which is
+        # what made the agent re-answer old, completed tasks on a fresh session.
+        if bg_context.strip():
+            try:
+                from camel.types import OpenAIBackendRole
+
+                turn_agent.update_memory(
+                    BaseMessage.make_system_message(
+                        role_name="System",
+                        content=(
+                            "Background for this conversation (prior or related "
+                            "work, for reference only). Do NOT answer, repeat, or "
+                            "redo it. Respond only to the user's next message.\n\n"
+                            + bg_context.strip()
+                        ),
+                    ),
+                    OpenAIBackendRole.SYSTEM,
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to inject background context as system memory; "
+                    "prepending to the prompt instead.",
+                    exc_info=True,
+                )
+                prompt = (
+                    "[Background, reference only — do NOT answer this]\n"
+                    + bg_context.strip()
+                    + "\n\n"
+                    + prompt
+                )
         # Attach image files as vision content ONLY for models that can see them.
         # For text-only models (e.g. deepseek-chat) image_list is useless (or
         # rejected); the resolved paths in the prompt let the agent OCR them via

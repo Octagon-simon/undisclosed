@@ -1,0 +1,9 @@
+<svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Undisclosed">
+  <title>Undisclosed</title>
+  <!-- Redaction bars: three "blacked-out" lines of text, the brand metaphor for
+       something undisclosed / private / on-device. Descending widths read as a
+       redacted paragraph. Uses currentColor so it inherits the theme accent. -->
+  <rect x="7" y="13" width="34" height="6.4" rx="3.2" fill="currentColor"/>
+  <rect x="7" y="24" width="25" height="6.4" rx="3.2" fill="currentColor" opacity="0.82"/>
+  <rect x="7" y="35" width="16" height="6.4" rx="3.2" fill="currentColor" opacity="0.64"/>
+</svg>

@@ -29,7 +29,7 @@ class DepthLimitedAgentToolkit(AgentToolkit, AbstractToolkit):
     """CAMEL AgentToolkit with delegated-agent recursion disabled.
 
     CAMEL's native AgentToolkit clones the parent tool set into child agents.
-    For Eigent single-agent mode we want root agents to delegate, while child
+    For Undisclosed single-agent mode we want root agents to delegate, while child
     agents must not delegate again. This adapter keeps the CAMEL toolkit API
     and removes AgentToolkit tools from child tool sets.
     """

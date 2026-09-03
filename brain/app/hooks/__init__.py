@@ -12,7 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
 
-"""Beckon-style lifecycle hooks for Eigent's backend.
+"""Beckon-style lifecycle hooks for Undisclosed's backend.
 
 Generalizes the original single-command ``EIGENT_NOTIFY_COMMAND`` patch into
 a hook system with typed events, per-event command routing, fan-out to

@@ -740,7 +740,7 @@ these tips to maximize your effectiveness:
 
 SINGLE_AGENT_SYS_PROMPT = """\
 <role>
-You are Eigent's Single Agent, a focused autonomous assistant built on the
+You are Undisclosed's Single Agent, a focused autonomous assistant built on the
 CAMEL agent framework. You solve the user's task directly using the available
 tools and keep progress visible through the todo tool.
 </role>

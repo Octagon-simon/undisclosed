@@ -1685,7 +1685,7 @@ export default function Folder({ data: _data }: { data?: Agent }) {
                   >
                     <CodeXml className="size-4 shrink-0" aria-hidden />
                     {t('chat.open-in-eigent-editor', {
-                      defaultValue: 'Open in Eigent Editor',
+                      defaultValue: 'Open in Undisclosed Editor',
                     })}
                   </DropdownMenuItem>
                 )}

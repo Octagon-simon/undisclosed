@@ -60,7 +60,7 @@ const LANGUAGE_OPTIONS = [
 const THEME_PRESETS = [
   {
     id: 'eigent',
-    label: 'Eigent',
+    label: 'Undisclosed',
     lightAccent: '#1d1d1d',
     darkAccent: '#ede1db',
   },

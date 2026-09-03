@@ -22,7 +22,7 @@ const EnvOauthInfoMap = {
 const getElectronAPI = () => createHost().electronAPI;
 
 export class OAuth {
-  public client_name: string = 'Eigent';
+  public client_name: string = 'Undisclosed';
   public client_uri: string = 'https://eigent.ai/';
   public redirect_uris: string[] = [];
 

@@ -145,7 +145,7 @@ export default function Setting() {
           onClick={() => window.open(SITE_URL, '_blank', 'noopener,noreferrer')}
           className="no-drag mt-4 flex cursor-pointer items-center bg-transparent transition-opacity duration-200 hover:opacity-60"
         >
-          <img src={logoSrc} alt="Eigent" className="ml-3 h-6 w-auto" />
+          <img src={logoSrc} alt="Undisclosed" className="ml-3 h-6 w-auto" />
         </button>
         <button
           type="button"

@@ -251,7 +251,7 @@ export function ConnectorPickerPanel({
   const navigate = useNavigate();
   // Standalone product: the picker lists ONLY the user's LOCAL MCP servers
   // (~/.eigent/mcp.json via /mcp/list) — the exact source the agent reads, and
-  // the same list Manage Connectors shows. Eigent's hosted/cloud "account"
+  // the same list Manage Connectors shows. Undisclosed's hosted/cloud "account"
   // connectors (the :3001 service — built-ins, cloud-registered MCPs, gateway
   // OAuth providers) are intentionally NOT pulled in: one consistent list, and
   // no external dependency.

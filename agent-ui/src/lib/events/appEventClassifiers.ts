@@ -34,7 +34,7 @@ export function classifyError(message?: string | null): string {
 }
 
 /**
- * Classify "what job is Eigent hired for" entirely on-device. The raw project
+ * Classify "what job is Undisclosed hired for" entirely on-device. The raw project
  * name / summary is read locally but never emitted; only the resulting enum can
  * be forwarded to edition-specific analytics adapters.
  */

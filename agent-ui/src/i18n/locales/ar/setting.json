@@ -14,7 +14,7 @@
   "mcp-custom-server-tools": "أمر الخادم",
   "mcp-add": "إضافة",
   "disable": "تعطيل",
-  "eigent-cloud": "Eigent Cloud",
+  "eigent-cloud": "Undisclosed Cloud",
   "default": "افتراضي",
   "profile": "الملف الشخصي",
   "account": "حساب",
@@ -93,7 +93,7 @@
   "model-type": "نوع النموذج",
   "enter-your-local-model-type": "أدخل نوع نموذجك المحلي",
   "you-are-on-selft-host-mode": "أنت في وضع الاستضافة الذاتية",
-  "you-are-using-self-hosted-mode": ".أنت تستخدم وضع الاستضافة الذاتية. للحصول على أفضل أداء لهذا المنتج، يرجى إدخال مفتاح بحث Google في \"MCP والأدوات\" لضمان عمل Eigent بشكل صحيح",
+  "you-are-using-self-hosted-mode": ".أنت تستخدم وضع الاستضافة الذاتية. للحصول على أفضل أداء لهذا المنتج، يرجى إدخال مفتاح بحث Google في \"MCP والأدوات\" لضمان عمل Undisclosed بشكل صحيح",
   "the-google-search-key-is-essential-for-delivering-accurate-search-results": ".مفتاح بحث Google ضروري لتقديم نتائج بحث دقيقة. مفتاح بحث Exa اختياري ولكنه موصى به بشدة للحصول على أداء أفضل",
   "close": "إغلاق",
   "enter-your-api-key": "أدخل مفتاح واجهة برمجة التطبيقات الخاص بك",
@@ -205,7 +205,7 @@
   "configuring": "جارٍ التكوين...",
 
   "models-default-setting-title": "الإعداد الافتراضي",
-  "models-default-setting-description": "اختر أحد النماذج المكوّنة ليكون النموذج الافتراضي لـ Eigent، وسيتم تطبيقه عالميًا عبر مساحة العمل الخاصة بك.",
+  "models-default-setting-description": "اختر أحد النماذج المكوّنة ليكون النموذج الافتراضي لـ Undisclosed، وسيتم تطبيقه عالميًا عبر مساحة العمل الخاصة بك.",
   "models-configuration": "التكوين",
   "sub-agents": "الوكلاء الفرعيون",
   "gemini-agent": "Gemini Agents API",
@@ -298,7 +298,7 @@
   "model-type": "نوع النموذج",
   "enter-your-local-model-type": "أدخل نوع نموذجك المحلي",
   "you-are-on-selft-host-mode": "أنت في وضع الاستضافة الذاتية",
-  "you-are-using-self-hosted-mode": ".أنت تستخدم وضع الاستضافة الذاتية. للحصول على أفضل أداء لهذا المنتج، يرجى إدخال مفتاح بحث Google في \"MCP والأدوات\" لضمان عمل Eigent بشكل صحيح",
+  "you-are-using-self-hosted-mode": ".أنت تستخدم وضع الاستضافة الذاتية. للحصول على أفضل أداء لهذا المنتج، يرجى إدخال مفتاح بحث Google في \"MCP والأدوات\" لضمان عمل Undisclosed بشكل صحيح",
   "the-google-search-key-is-essential-for-delivering-accurate-search-results": ".مفتاح بحث Google ضروري لتقديم نتائج بحث دقيقة. مفتاح بحث Exa اختياري ولكنه موصى به بشدة للحصول على أداء أفضل",
   "close": "إغلاق",
   "enter-your-api-key": "أدخل مفتاح واجهة برمجة التطبيقات الخاص بك",
@@ -427,6 +427,6 @@
   "preferred-ide-description": "اختر التطبيق الذي سيتم استخدامه عند فتح مجلدات مشاريع الوكيل.",
   "system-file-manager": "مدير ملفات النظام",
   "agents": "الوكلاء",
-  "help-improve-eigent": "ساعد في تحسين Eigent",
-  "help-improve-eigent-description": "اسمح لـ Eigent بجمع سجلات الأخطاء المجهولة وبيانات الاستخدام لتحسين الخدمة. هذا اختياري ويمكن تغييره في أي وقت."
+  "help-improve-eigent": "ساعد في تحسين Undisclosed",
+  "help-improve-eigent-description": "اسمح لـ Undisclosed بجمع سجلات الأخطاء المجهولة وبيانات الاستخدام لتحسين الخدمة. هذا اختياري ويمكن تغييره في أي وقت."
 }

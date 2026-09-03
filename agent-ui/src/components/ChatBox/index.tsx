@@ -39,7 +39,12 @@ import {
 import { usePageTabStore } from '@/store/pageTabStore';
 import { useSpaceStore } from '@/store/spaceStore';
 import { ExecutionStatus } from '@/types';
-import { AgentStep, ChatTaskStatus, SessionMode } from '@/types/constants';
+import {
+  AgentStep,
+  ChatTaskStatus,
+  SessionMode,
+  type SessionModeType,
+} from '@/types/constants';
 import {
   useCallback,
   useEffect,
@@ -239,8 +244,12 @@ export default function ChatBox(): JSX.Element {
   const activeProjectMode = activeProjectMeta?.mode ?? activeProject?.mode;
   const effectiveSessionMode =
     activeProjectMode ?? inferredSessionMode ?? SessionMode.SINGLE_AGENT;
+  // Fall back to SINGLE_AGENT (not undefined) so the input footer — and with it
+  // the model selector — still renders on reloaded conversations that predate
+  // persisted session modes. Without a fallback the whole footer was hidden and
+  // users couldn't pick a model on old chats.
   const displaySessionMode =
-    activeProjectMode ?? inferredSessionMode ?? undefined;
+    activeProjectMode ?? inferredSessionMode ?? SessionMode.SINGLE_AGENT;
   const ensureActiveProjectMode = useCallback(() => {
     const projectId = projectStore.activeProjectId;
     if (!projectId || activeProjectMode) return;
@@ -251,6 +260,24 @@ export default function ChatBox(): JSX.Element {
     projectStore,
     updateProjectMeta,
   ]);
+  // User picked a session mode from the composer toggle. Persist it on both the
+  // project (drives activeProjectMode) and the active task (drives
+  // inferredSessionMode) so effectiveSessionMode — and therefore the mode sent
+  // on the next handleSend — reflects the choice regardless of which one the
+  // send path reads first.
+  const handleSessionModeChange = useCallback(
+    (mode: SessionModeType) => {
+      const projectId = projectStore.activeProjectId;
+      if (projectId) {
+        updateProjectMeta(projectId, { mode });
+      }
+      const taskId = chatStore.activeTaskId;
+      if (taskId) {
+        chatStore.setTaskSessionMode(taskId, mode);
+      }
+    },
+    [projectStore, updateProjectMeta, chatStore]
+  );
   const { hasModel, isConfigLoaded, cloudUsageLimitReached } =
     useModelConfigCheck();
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -1336,7 +1363,8 @@ export default function ChatBox(): JSX.Element {
                     useCloudModelInDev: useCloudModelInDev,
                   }}
                   sessionMode={effectiveSessionMode}
-                  sessionModeSelectInteractive={false}
+                  onSessionModeChange={handleSessionModeChange}
+                  sessionModeSelectInteractive={true}
                   modelSelectProjectId={activeProjectId}
                 />
               )}
@@ -1418,7 +1446,8 @@ export default function ChatBox(): JSX.Element {
                   useCloudModelInDev: useCloudModelInDev,
                 }}
                 sessionMode={displaySessionMode}
-                sessionModeSelectInteractive={false}
+                onSessionModeChange={handleSessionModeChange}
+                sessionModeSelectInteractive={!isTaskBusy}
                 modelSelectProjectId={activeProjectId}
               />
             </div>

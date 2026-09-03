@@ -26,10 +26,10 @@ logger = logging.getLogger("observable_todo_toolkit")
 
 
 class ObservableTodoToolkit(TodoToolkit, AbstractToolkit):
-    """CAMEL TodoToolkit with Eigent UI change events.
+    """CAMEL TodoToolkit with Undisclosed UI change events.
 
     This intentionally keeps CAMEL's todo data model and `todo_write` API as
-    the source of truth. Eigent only observes successful writes and emits an
+    the source of truth. Undisclosed only observes successful writes and emits an
     SSE-compatible action for the frontend.
     """
 

@@ -274,7 +274,7 @@ class GoogleCalendarToolkit(BaseGoogleCalendarToolkit, AbstractToolkit):
                         "<h1>Authorization successful!"
                         "</h1><p>You can close this "
                         "window and return to "
-                        "Eigent.</p>"
+                        "Undisclosed.</p>"
                     )
                     creds = flow.run_local_server(
                         port=0,

@@ -1416,7 +1416,7 @@ export default function SettingModels() {
         case 'oauth_callback_port_in_use':
           return t('setting.codex-port-in-use', {
             defaultValue:
-              'The Codex sign-in port (1455) is in use. Close other Codex/ChatGPT CLI sessions or another Eigent window, then try again.',
+              'The Codex sign-in port (1455) is in use. Close other Codex/ChatGPT CLI sessions or another Undisclosed window, then try again.',
           });
         case 'oauth_callback_unavailable':
           return t('setting.codex-callback-unavailable', {
@@ -2672,7 +2672,7 @@ export default function SettingModels() {
             {/* Sidebar */}
             <div className="-ml-2 mr-4 h-full w-[240px] rounded-2xl bg-ds-bg-neutral-default-default">
               <div className="flex flex-col gap-4">
-                {/* Eigent Cloud Section */}
+                {/* Undisclosed Cloud Section */}
                 <div className="flex flex-col gap-1">
                   <div className="px-3 py-2 text-body-sm font-bold text-ds-text-neutral-default-default">
                     {t('setting.eigent-cloud')}

@@ -36,7 +36,7 @@ export interface AgentPanelHandle {
   setShowThinking(value: boolean): void;
 }
 
-/** Signature exposed by the prebuilt agent bundle (Eigent's mountAgentPanel). */
+/** Signature exposed by the prebuilt agent bundle (Undisclosed's mountAgentPanel). */
 type MountFn = (
   element: HTMLElement,
   config: {
@@ -129,15 +129,15 @@ function loadAgentBundle(): Promise<MountFn> {
 }
 
 /**
- * Right-dock host for Eigent's real agent UI. This widget is just a native
+ * Right-dock host for Undisclosed's real agent UI. This widget is just a native
  * Theia container + lifecycle; the actual chat/governance/history UI is the
- * prebuilt Eigent bundle mounted into its node via `mountAgentPanel`. One DOM,
+ * prebuilt Undisclosed bundle mounted into its node via `mountAgentPanel`. One DOM,
  * one window — no iframe.
  */
 @injectable()
 export class EigentAgentWidget extends BaseWidget {
   static readonly ID = 'eigent-agent-widget';
-  static readonly LABEL = 'Eigent Agent';
+  static readonly LABEL = 'Undisclosed Agent';
 
   @inject(WorkspaceService)
   protected readonly workspaceService!: WorkspaceService;
@@ -306,7 +306,7 @@ export class EigentAgentWidget extends BaseWidget {
       this.handle = mountAgentPanel(this.host, {
         baseUrl: BRAIN_BASE_URL,
         // Cloud-proxy calls go same-origin (this app); the backend forwards
-        // /api -> the Eigent proxy, avoiding CORS.
+        // /api -> the Undisclosed proxy, avoiding CORS.
         proxyBaseUrl: window.location.origin,
         workspaceRoot,
         token: 'local-session-token',
@@ -323,7 +323,7 @@ export class EigentAgentWidget extends BaseWidget {
         },
       });
     } catch (err) {
-      this.host.textContent = `Failed to load the Eigent agent: ${
+      this.host.textContent = `Failed to load the Undisclosed agent: ${
         (err as Error).message
       }`;
     }

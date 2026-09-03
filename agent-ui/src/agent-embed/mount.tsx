@@ -14,9 +14,9 @@
 // ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
 
 /**
- * Embed entry for the Eigent agent UI.
+ * Embed entry for the Undisclosed agent UI.
  *
- * The agent panel (`ChatBox` + its providers) is built here with Eigent's own
+ * The agent panel (`ChatBox` + its providers) is built here with Undisclosed's own
  * Vite toolchain — so `import.meta.env`, Tailwind `ds-*` tokens, and i18n all
  * work — and exposed as a single `mountAgentPanel(el, config)`. A different host
  * (e.g. the Theia agent widget's `ReactWidget`) loads the built library and
@@ -84,7 +84,7 @@ export interface AgentPanelHandle extends AgentPanelApi {
 }
 
 /**
- * Mount the Eigent agent panel into `element`. Returns a handle (imperative API
+ * Mount the Undisclosed agent panel into `element`. Returns a handle (imperative API
  * + `unmount`). Idempotent per element (unmount before re-mounting the node).
  */
 export function mountAgentPanel(

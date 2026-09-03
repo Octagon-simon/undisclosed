@@ -22,7 +22,7 @@ const httpProxy = require('http-proxy') as {
   };
 };
 
-/** Cloud proxy target (the local Eigent proxy service). Overridable. */
+/** Cloud proxy target (the local Undisclosed proxy service). Overridable. */
 const PROXY_TARGET = process.env.EIGENT_PROXY_TARGET || 'http://localhost:3001';
 
 function resolveAssetsDir(): string {
@@ -36,9 +36,9 @@ function resolveAssetsDir(): string {
 }
 
 /**
- * Backend contributions for the Eigent agent widget:
+ * Backend contributions for the Undisclosed agent widget:
  *  1. Serve the prebuilt agent bundle at `/eigent-agent/*`.
- *  2. Same-origin-proxy `/api/*` -> the Eigent cloud-proxy (`:3001`), so the
+ *  2. Same-origin-proxy `/api/*` -> the Undisclosed cloud-proxy (`:3001`), so the
  *     browser makes no cross-origin (CORS) calls.
  *
  * The body is JSON-parsed then RE-STREAMED onto the proxied request: without

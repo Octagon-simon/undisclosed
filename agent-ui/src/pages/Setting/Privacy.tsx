@@ -124,7 +124,7 @@ export default function SettingPrivacy() {
           )}
         </div>
 
-        {/* Help Improve Eigent Section */}
+        {/* Help Improve Undisclosed Section */}
         <div className="rounded-2xl bg-ds-bg-neutral-default-default px-6 py-4">
           <div className="flex items-center justify-between gap-md">
             <div className="flex flex-col gap-2">

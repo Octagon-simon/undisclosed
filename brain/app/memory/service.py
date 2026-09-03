@@ -266,6 +266,36 @@ def finalize_task_lock_run_memory(
         finalized.add(run_context.run_id)
 
 
+_CONVERSATIONAL_STARTS = (
+    "hi ", "hi!", "hey", "hello", "sure", "of course", "no problem",
+    "you're welcome", "glad", "great", "thanks", "thank you", "got it",
+    "understood", "okay", "ok,", "ok!", "yes,", "yes!", "absolutely",
+)
+
+
+def _looks_conversational(text: str) -> bool:
+    """Heuristic: a greeting / small-talk reply, not a task outcome worth
+    recalling. Cheap first line of defense against memory pollution."""
+    head = text.strip().lower()[:24]
+    return any(head.startswith(s) for s in _CONVERSATIONAL_STARTS)
+
+
+# Above this length a message that merely *opens* with an acknowledgement
+# ("Got it — I implemented X across 4 files…") is real content worth keeping;
+# below it, a conversational-start reply is just greeting chatter to drop.
+_GREETING_CHATTER_MAX_LEN = 240
+
+
+def _is_greeting_chatter(text: str) -> bool:
+    """A short greeting/acknowledgement with no substantive content.
+
+    Distinguishes ``"Hi! How can I help?"`` (pollution) from a genuine summary
+    that merely opens with ``"Got it —"`` before describing actual work (kept).
+    """
+    t = (text or "").strip()
+    return bool(t) and _looks_conversational(t) and len(t) < _GREETING_CHATTER_MAX_LEN
+
+
 def _remember_run_outcome(
     run_context: Any,
     *,
@@ -273,11 +303,27 @@ def _remember_run_outcome(
     summary: str | None,
     final_result: str | None,
 ) -> None:
-    """Store a run's outcome (summary) as a recallable semantic memory."""
+    """Store a run's outcome (summary) as a recallable semantic memory.
+
+    Only SUBSTANTIAL task outcomes are stored. A distilled ``summary`` is always
+    kept; a raw ``final_result`` is kept only when it is long enough to be a real
+    task result. Short conversational replies (greetings, acknowledgements) are
+    skipped — storing them polluted the ``<remembered_facts>`` recall and made
+    the agent re-answer earlier turns.
+    """
     if state != "done":
         return
-    text = (summary or final_result or "").strip()
-    if not text:
+    summary_text = (summary or "").strip()
+    result_text = (final_result or "").strip()
+    # A summary is kept unless it is short greeting chatter; a raw final_result
+    # is kept only when it is long enough to be a real task outcome. Both paths
+    # drop pure greetings/acknowledgements, which polluted <remembered_facts>
+    # and made the agent re-answer earlier turns.
+    if summary_text and not _is_greeting_chatter(summary_text):
+        text = summary_text
+    elif len(result_text) >= 400 and not _is_greeting_chatter(result_text):
+        text = result_text
+    else:
         return
     # Keep the memory tight — a summary, not a transcript.
     if len(text) > 800:

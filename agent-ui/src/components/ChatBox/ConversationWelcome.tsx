@@ -19,8 +19,44 @@
  * can tweak and send. Replaces the previous blank panel.
  */
 
-import { Bot } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+
+/**
+ * Undisclosed logomark: three redaction bars ("blacked-out" lines of text) — the
+ * brand metaphor for private / on-device / undisclosed work. Inlined (not an
+ * <img>) so it renders under the agent-embed CSP, which blocks external assets.
+ */
+function UndisclosedMark({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 48 48"
+      className={className}
+      fill="none"
+      aria-hidden
+      style={{ color: '#8b5cf6' }}
+    >
+      <rect x="7" y="13" width="34" height="6.4" rx="3.2" fill="currentColor" />
+      <rect
+        x="7"
+        y="24"
+        width="25"
+        height="6.4"
+        rx="3.2"
+        fill="currentColor"
+        opacity="0.82"
+      />
+      <rect
+        x="7"
+        y="35"
+        width="16"
+        height="6.4"
+        rx="3.2"
+        fill="currentColor"
+        opacity="0.64"
+      />
+    </svg>
+  );
+}
 
 const SUGGESTIONS = [
   'Explain what this project does',
@@ -48,16 +84,16 @@ export function ConversationWelcome({
         className="flex h-11 w-11 items-center justify-center rounded-2xl"
         style={{ backgroundColor: 'rgba(124,58,237,0.16)' }}
       >
-        <Bot className="h-6 w-6" style={{ color: '#8b5cf6' }} aria-hidden />
+        <UndisclosedMark className="h-6 w-6" />
       </span>
       <div className="flex flex-col gap-1">
         <div className="text-heading-h5 font-bold text-ds-text-neutral-default-default">
-          {t('chat.welcome-title', { defaultValue: 'Welcome to Eigent' })}
+          {t('chat.welcome-title', { defaultValue: 'Welcome to Undisclosed' })}
         </div>
         <div className="max-w-[440px] text-body-sm leading-relaxed text-ds-text-neutral-subtle-default">
           {t('chat.welcome-sub', {
             defaultValue:
-              "I'm your agent inside this project. Ask me to explore the code, explain it, or get things done here.",
+              "I'm your coding agent inside this project. Ask me to explore the codebase, explain it, debug, or ship changes right here.",
           })}
         </div>
       </div>

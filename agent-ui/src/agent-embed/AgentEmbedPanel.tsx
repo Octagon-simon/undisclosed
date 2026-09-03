@@ -14,7 +14,7 @@
 // ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
 
 /**
- * The body `mountAgentPanel` renders: Eigent's `ChatBox` (or the History list),
+ * The body `mountAgentPanel` renders: Undisclosed's `ChatBox` (or the History list),
  * WITHOUT its own header. In an embedded host (the Theia agent widget) the
  * actions — New / History / governance — live in the host's NATIVE title bar,
  * which drives this panel through the imperative `AgentPanelApi` exposed via

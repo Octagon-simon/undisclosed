@@ -32,7 +32,7 @@ export type TurnMessage = {
 
 type QueueItem = {
   url: string;
-  body: { role: TurnRole; message: TurnMessage };
+  body: { role: TurnRole; message: TurnMessage; session_mode?: string };
   attempts: number;
 };
 
@@ -89,7 +89,11 @@ export function enqueueTurnPost(
   chatId: string | undefined,
   queryId: string | undefined,
   role: TurnRole,
-  message: TurnMessage
+  message: TurnMessage,
+  // Conversation session mode, sent with the user turn so a reload can restore
+  // the correct mode chip. Omitted on assistant appends (backend keeps the
+  // stored value when this is absent).
+  sessionMode?: string
 ): void {
   if (!chatId || !queryId) return;
   if (!message || !message.id) return;
@@ -97,6 +101,9 @@ export function enqueueTurnPost(
   const url = `/api/v1/chat/${encodeURIComponent(chatId)}/turns/${encodeURIComponent(
     queryId
   )}/messages`;
+  const body: QueueItem['body'] = sessionMode
+    ? { role, message, session_mode: sessionMode }
+    : { role, message };
   // Coalesce by (url, message.id): a streamed assistant message may be
   // re-enqueued as it is updated (e.g. the END step gaining its fileList).
   // Replacing the still-queued item keeps last-write-wins and prevents the
@@ -105,9 +112,9 @@ export function enqueueTurnPost(
     (q) => q.url === url && q.body.message.id === message.id
   );
   if (existingIdx !== -1) {
-    queue[existingIdx]!.body = { role, message };
+    queue[existingIdx]!.body = body;
   } else {
-    queue.push({ url, body: { role, message }, attempts: 0 });
+    queue.push({ url, body, attempts: 0 });
   }
   scheduleFlushSoon();
 }

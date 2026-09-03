@@ -43,7 +43,7 @@ class MemoryToolkit(AbstractToolkit):
         space_id: str | None = None,
         agent_name: str | None = None,
     ) -> None:
-        # api_task_id == project_id (matches the other Eigent toolkits).
+        # api_task_id == project_id (matches the other Undisclosed toolkits).
         self.api_task_id = api_task_id
         self.user_key = user_key
         self.space_id = space_id

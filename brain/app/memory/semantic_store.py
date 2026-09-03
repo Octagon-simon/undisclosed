@@ -12,7 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
 
-"""Semantic (vector) memory — the fact/recall layer Eigent's local store was
+"""Semantic (vector) memory — the fact/recall layer Undisclosed's local store was
 missing (`LocalMemoryStore.upsert_fact` was never wired). Distilled facts are
 embedded and recalled by meaning, then spliced into the agent's durable context.
 
@@ -170,6 +170,41 @@ def count(user_key: str | None = None) -> int:
         return int(collection.count())
     except Exception as exc:  # noqa: BLE001 - fail soft
         logger.warning("count() failed: %s", exc)
+        return 0
+
+
+def prune(
+    predicate: Any,
+    user_key: str | None = None,
+) -> int:
+    """Delete stored facts whose document text matches ``predicate``.
+
+    ``predicate`` is called with each fact's text and should return True to
+    delete it. Used for one-off cleanups (e.g. removing conversational
+    greetings that older code stored before the write-side guard existed).
+    Returns the number of facts removed.
+    """
+    collection = _get_collection()
+    if collection is None:
+        return 0
+    try:
+        got = (
+            collection.get(where={"user": user_key})
+            if user_key
+            else collection.get()
+        )
+        ids = got.get("ids", []) or []
+        docs = got.get("documents", []) or []
+        doomed = [
+            fid
+            for fid, doc in zip(ids, docs)
+            if isinstance(doc, str) and predicate(doc)
+        ]
+        if doomed:
+            collection.delete(ids=doomed)
+        return len(doomed)
+    except Exception as exc:  # noqa: BLE001 - fail soft
+        logger.warning("prune() failed: %s", exc)
         return 0
 
 

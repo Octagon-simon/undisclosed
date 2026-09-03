@@ -22,7 +22,7 @@ import { GitExtrasContribution } from './git-extras-contribution';
 /**
  * Frontend DI module (referenced by `theiaExtensions` in package.json). Binds
  * the view contribution + a widget factory so Theia can create/restore the
- * Eigent Agent panel, and wires `initializeLayout` via
+ * Undisclosed Agent panel, and wires `initializeLayout` via
  * FrontendApplicationContribution so it opens on first boot.
  */
 export default new ContainerModule((bind, _unbind, _isBound, rebind) => {

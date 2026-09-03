@@ -242,12 +242,12 @@ def _build_allowed_skills(
 
 
 class SkillToolkit(BaseSkillToolkit):
-    """Enhanced SkillToolkit with Eigent-specific features.
+    """Enhanced SkillToolkit with Undisclosed-specific features.
 
     Extends CAMEL's SkillToolkit with:
     - User-specific skill configuration
     - Agent-based access control
-    - Eigent-specific skill paths (.undisclosed/skills)
+    - Undisclosed-specific skill paths (.undisclosed/skills)
 
     Skill Discovery Priority (highest to lowest):
     1. Repo scope: <wd>/skills, <wd>/.undisclosed/skills, <wd>/.camel/skills
@@ -270,7 +270,7 @@ class SkillToolkit(BaseSkillToolkit):
         user_id: str | None = None,
         timeout: float | None = None,
     ) -> None:
-        """Initialize SkillToolkit with Eigent-specific context.
+        """Initialize SkillToolkit with Undisclosed-specific context.
 
         Args:
             api_task_id: Task/project identifier for logging
@@ -300,9 +300,9 @@ class SkillToolkit(BaseSkillToolkit):
         )
 
     def _skill_roots(self) -> list[tuple[str, Path]]:
-        """Return skill roots with Eigent + CAMEL paths.
+        """Return skill roots with Undisclosed + CAMEL paths.
 
-        Integrates Eigent-specific paths with CAMEL standard paths.
+        Integrates Undisclosed-specific paths with CAMEL standard paths.
         Priority order (highest to lowest):
         1. Repo scope: project-specific skills
         2. User scope: user-level skills

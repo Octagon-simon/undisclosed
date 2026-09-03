@@ -41,7 +41,7 @@
     "@theia/vsx-registry": "1.60.0",
     "@theia/workspace": "1.60.0",
     "eigent-agent": "file:packages/eigent-agent",
-    "eigent-languages": "file:packages/eigent-languages",
+    "undisclosed-languages": "file:packages/undisclosed-languages",
     "lodash": "^4.18.1"
   },
   "devDependencies": {

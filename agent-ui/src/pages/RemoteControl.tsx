@@ -383,7 +383,7 @@ export default function RemoteControlPage() {
               <p className="text-muted-foreground mt-1 text-xs">
                 {bridgeOnline
                   ? 'Desktop is online'
-                  : 'Desktop is offline. Keep Eigent open on the original computer and stay on the chat view.'}
+                  : 'Desktop is offline. Keep Undisclosed open on the original computer and stay on the chat view.'}
               </p>
             </div>
             <div

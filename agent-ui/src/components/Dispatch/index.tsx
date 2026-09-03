@@ -322,7 +322,7 @@ function LogPanel({ logs }: { logs: RemoteControlLogEntry[] }) {
 const REMOTE_CONTROL_TITLE_MAX_LENGTH = 80;
 
 function buildRemoteControlTitle(spaceName?: string | null): string {
-  const base = spaceName?.trim() || 'Eigent Remote Control';
+  const base = spaceName?.trim() || 'Undisclosed Remote Control';
   const text = base.replace(/\s+/g, ' ').trim();
   if (text.length <= REMOTE_CONTROL_TITLE_MAX_LENGTH) return text;
   return `${text.slice(0, REMOTE_CONTROL_TITLE_MAX_LENGTH - 3).trimEnd()}...`;
@@ -439,7 +439,7 @@ export function WorkspaceDispatch() {
       if (!bridgeReady) {
         toast.error('Remote control is still connecting.', {
           description:
-            'Keep Eigent Desktop open and try again in a few seconds.',
+            'Keep Undisclosed Desktop open and try again in a few seconds.',
         });
         return;
       }
@@ -484,7 +484,7 @@ export function WorkspaceDispatch() {
       if (code === 'BRIDGE_OFFLINE') {
         toast.error('Remote control bridge is offline.', {
           description:
-            'Keep Eigent Desktop open and wait for the bridge to reconnect, then try again.',
+            'Keep Undisclosed Desktop open and wait for the bridge to reconnect, then try again.',
         });
       } else {
         toast.error(err?.message || 'Failed to create remote control link.');

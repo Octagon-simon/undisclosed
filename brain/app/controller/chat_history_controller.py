@@ -34,6 +34,10 @@ class Turn:
     queryId: str
     userMessage: dict | None = None
     otherMessages: list[dict] = field(default_factory=list)
+    # Session mode ("workforce" | "single-agent") the conversation ran in, so a
+    # reload can show the correct mode chip instead of defaulting. Persisted with
+    # the user message; never cleared by later assistant appends.
+    sessionMode: str | None = None
 
 
 def _turns_root() -> Path:
@@ -73,6 +77,7 @@ def _load_turn(chat_id: str, query_id: str) -> Turn:
     turn = Turn(chatId=chat_id, queryId=query_id)
     turn.userMessage = data.get("userMessage")
     turn.otherMessages = list(data.get("otherMessages") or [])
+    turn.sessionMode = data.get("sessionMode")
     return turn
 
 
@@ -87,9 +92,14 @@ async def post_message(
     query_id: str,
     role: str = Body(..., embed=True),
     message: dict = Body(..., embed=True),
+    session_mode: str | None = Body(None, embed=True),
 ):
     """Append a message to a turn; upsert turn by (chatId, queryId)."""
     turn = _load_turn(chat_id, query_id)
+    # Persist the conversation's session mode when provided (sent with the user
+    # message). Only set it when given so later assistant appends never null it.
+    if session_mode:
+        turn.sessionMode = session_mode
     if role == "user":
         turn.userMessage = message
     else:

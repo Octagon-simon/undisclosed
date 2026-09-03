@@ -103,7 +103,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 
 def register_exception_handlers(app: FastAPI) -> None:
-    """Register Eigent's API error envelope on a FastAPI application."""
+    """Register Undisclosed's API error envelope on a FastAPI application."""
     app.add_exception_handler(RequestValidationError, request_exception)
     app.add_exception_handler(TokenException, token_exception)
     app.add_exception_handler(UserException, user_exception)

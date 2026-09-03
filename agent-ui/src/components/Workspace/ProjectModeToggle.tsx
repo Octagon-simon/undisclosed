@@ -128,9 +128,7 @@ export function ProjectModeToggle({
             strokeWidth={2}
             aria-hidden
           />
-          {!compact && (
-            <span className="!text-label-xs font-semibold">{label}</span>
-          )}
+          <span className="!text-label-xs font-semibold">{label}</span>
         </span>
       </div>
     );
@@ -166,11 +164,9 @@ export function ProjectModeToggle({
               strokeWidth={2}
               aria-hidden
             />
-            {!compact && (
-              <span className="whitespace-nowrap !text-label-xs font-semibold">
-                {label}
-              </span>
-            )}
+            <span className="whitespace-nowrap !text-label-xs font-semibold">
+              {label}
+            </span>
           </motion.span>
         </AnimatePresence>
       </span>

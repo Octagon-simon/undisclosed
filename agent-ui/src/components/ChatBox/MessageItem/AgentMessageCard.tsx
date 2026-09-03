@@ -14,6 +14,7 @@
 
 import { fileInfoFromPath } from '@/lib/fileInfo';
 import { usePageTabStore } from '@/store/pageTabStore';
+import { useHost } from '@/host';
 import { Check, Copy, FileText, ThumbsDown, ThumbsUp } from 'lucide-react';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -51,6 +52,7 @@ export function AgentMessageCard({
   deferredFooter,
 }: AgentMessageCardProps) {
   const openFilePreview = usePageTabStore((s) => s.openFilePreview);
+  const host = useHost();
   const [markdownAndTypingComplete, setMarkdownAndTypingComplete] = useState(
     () => completedTypewriterByMessageId.has(id)
   );
@@ -129,9 +131,18 @@ export function AgentMessageCard({
               <div
                 onClick={(e) => {
                   e.stopPropagation();
-                  openFilePreview(
-                    fileInfoFromPath(file.filePath, file.fileName)
-                  );
+                  // In the Theia embed, open the file in the editor via the
+                  // host bridge; only fall back to the desktop page-tab preview
+                  // when there is no host. Previously this used openFilePreview
+                  // unconditionally, so clicking an agent file chip did nothing
+                  // in the editor build.
+                  if (host?.openFile && file.filePath) {
+                    void host.openFile(file.filePath);
+                  } else {
+                    openFilePreview(
+                      fileInfoFromPath(file.filePath, file.fileName)
+                    );
+                  }
                 }}
                 key={'attache-' + file.fileName}
                 className="gap-2 rounded-2xl border-ds-border-neutral-subtle-default bg-ds-bg-neutral-default-default py-1 pl-2 flex w-full cursor-pointer items-center border border-solid"

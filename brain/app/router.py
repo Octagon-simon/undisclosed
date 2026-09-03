@@ -13,7 +13,7 @@
 # limitations under the License.
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
 """
-Centralized router registration for the Eigent API.
+Centralized router registration for the Undisclosed API.
 All routers are explicitly registered here
 for better visibility and maintainability.
 """

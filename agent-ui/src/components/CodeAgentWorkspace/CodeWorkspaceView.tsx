@@ -14,12 +14,12 @@
 
 /**
  * Editor-first "Editor view" (Antigravity-style): the code editor is the
- * primary canvas with Eigent's rich agent panel (`RightAgentPanel`) docked on
+ * primary canvas with Undisclosed's rich agent panel (`RightAgentPanel`) docked on
  * the right.
  *
  * The inversion vs Antigravity: Antigravity embeds its agent panel inside the
  * VS Code fork; here we embed VS Code (code-server, in `CodeAgentWorkspace`)
- * and dock Eigent's OWN chat/agent UI to the right — native React, so it can be
+ * and dock Undisclosed's OWN chat/agent UI to the right — native React, so it can be
  * richer and fully under our control.
  */
 

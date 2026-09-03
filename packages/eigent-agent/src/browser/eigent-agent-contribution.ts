@@ -42,7 +42,7 @@ function asAgent(arg: unknown): EigentAgentWidget | undefined {
 }
 
 /**
- * The Eigent Agent view: opens the panel (right dock, Cmd/Ctrl+Shift+A) and
+ * The Undisclosed Agent view: opens the panel (right dock, Cmd/Ctrl+Shift+A) and
  * contributes its actions to Theia's NATIVE title-bar toolbar — `+ New`,
  * `History` (toggle), `⋯` (governance), and `✕` (close) — rather than a React
  * header, so the actions sit beside the title (the Antigravity layout).

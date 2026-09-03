@@ -911,7 +911,7 @@ async def open_browser_login():
 
         # IMPORTANT: Use dedicated profile for tool_controller browser
         # This is the SOURCE OF TRUTH for login data
-        # On Eigent startup, this data will be copied
+        # On Undisclosed startup, this data will be copied
         # to WebView partition (one-way sync)
         browser_profiles_base = os.path.expanduser(
             "~/.undisclosed/browser_profiles"

@@ -344,7 +344,7 @@ interface PageTabState {
   ) => void;
   /**
    * Optional absolute path override for the agent folder (per project).
-   * When unset for a project, the default Eigent project folder is used.
+   * When unset for a project, the default Undisclosed project folder is used.
    */
   customAgentFolderPathByProjectId: Record<string, string>;
   setProjectCustomAgentFolderPath: (

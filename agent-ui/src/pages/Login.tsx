@@ -358,7 +358,7 @@ export default function Login() {
     prepareCallbackUrl();
   }, [host, isDesktopHost]);
 
-  // Render local mode: "Start Eigent" button only
+  // Render local mode: "Start Undisclosed" button only
   const renderLocalMode = () => (
     <div className="relative flex w-80 flex-1 flex-col items-center justify-center pt-8">
       <img
@@ -366,7 +366,7 @@ export default function Login() {
         className="absolute left-1/2 top-10 h-16 w-16 -translate-x-1/2"
       />
       <div className="mb-8 text-heading-lg font-bold text-ds-text-neutral-default-default">
-        Eigent
+        Undisclosed
       </div>
       {generalError && (
         <p className="mb-4 mt-1 text-label-md text-ds-text-status-error-strong-default">
@@ -381,7 +381,7 @@ export default function Login() {
         disabled={isLoading}
       >
         <span className="flex-1">
-          {isLoading ? t('layout.logging-in') : 'Start Eigent'}
+          {isLoading ? t('layout.logging-in') : 'Start Undisclosed'}
         </span>
       </Button>
     </div>

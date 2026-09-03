@@ -4930,15 +4930,24 @@ const chatStore = (initial?: Partial<ChatStore>) =>
             if (chatId && queryId) {
               (async () => {
                 const { enqueueTurnPost } = await import('@/lib/turns');
-                enqueueTurnPost(chatId, queryId, 'user', {
-                  id: message.id,
-                  step: (message as any)?.step,
-                  content: String((message as any)?.content ?? ''),
-                  createdAt: new Date().toISOString(),
-                  attaches: (message as any)?.attaches || [],
-                  fileList: (message as any)?.fileList || [],
-                  agent_name: (message as any)?.agent_name || null,
-                });
+                // Persist the conversation's session mode alongside the user
+                // turn so a reload can restore the correct mode chip.
+                const turnSessionMode = get().tasks[taskId]?.sessionMode;
+                enqueueTurnPost(
+                  chatId,
+                  queryId,
+                  'user',
+                  {
+                    id: message.id,
+                    step: (message as any)?.step,
+                    content: String((message as any)?.content ?? ''),
+                    createdAt: new Date().toISOString(),
+                    attaches: (message as any)?.attaches || [],
+                    fileList: (message as any)?.fileList || [],
+                    agent_name: (message as any)?.agent_name || null,
+                  },
+                  turnSessionMode
+                );
               })().catch((e) => console.warn('Failed to enqueue user turn persist:', e));
             }
           } else {
