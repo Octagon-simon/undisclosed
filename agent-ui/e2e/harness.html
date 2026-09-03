@@ -1,0 +1,40 @@
+<!doctype html>
+<!--
+  Copyright 2026 Simon Ugorji. All Rights Reserved.
+  Licensed under the Apache License, Version 2.0 (the "License").
+  http://www.apache.org/licenses/LICENSE-2.0
+-->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Agent Panel Render Harness</title>
+    <link rel="stylesheet" href="./style.css" />
+    <style>
+      html, body { margin: 0; height: 100%; }
+      #agent-root { height: 100vh; width: 480px; border-right: 1px solid #333; }
+    </style>
+  </head>
+  <body>
+    <div id="agent-root"></div>
+    <script src="./agent-embed.umd.js"></script>
+    <script>
+      // Mount the real agent panel against the real local brain (:5001), scoped
+      // to the eigent-theia folder — exactly like the Theia widget does. The
+      // panel bootstraps the folder space, auto-loads the most recent
+      // conversation (the seeded one), and renders it via the SAME reload path
+      // (loadProjectFromHistory + ProjectSection). Reloading this page re-runs
+      // that path, which is what we assert against.
+      const mod = window.EigentAgentEmbed;
+      const mount = mod.mountAgentPanel || (mod.default && mod.default.mountAgentPanel);
+      mount(document.getElementById('agent-root'), {
+        baseUrl: 'http://localhost:5001',
+        proxyBaseUrl: window.location.origin,
+        workspaceRoot: '/Users/octagon/Documents/github/eigent-theia',
+        token: 'local-session-token',
+        userId: 0,
+        email: 'local@undisclosed.local',
+        host: { electronAPI: null, ipcRenderer: null, openFile: () => {} },
+      });
+    </script>
+  </body>
+</html>

@@ -4,3 +4,9 @@ dist-agent-embed
 dist-web
 *.log
 .DS_Store
+
+# E2E render harness: keep the harness/test/config, ignore generated output
+# and the throwaway debug scratch script.
+test-results/
+playwright-report/
+e2e/_debug.mjs
