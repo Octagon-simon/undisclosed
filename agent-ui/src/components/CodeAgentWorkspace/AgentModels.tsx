@@ -130,6 +130,9 @@ interface ProviderRow {
   endpoint_url?: string;
   api_key?: string;
   prefer?: boolean;
+  // Stored provider config JSON. For Anthropic identity-linked keys it may
+  // carry `default_headers['anthropic-workspace-id']`.
+  encrypted_config?: Record<string, any> | null;
 }
 
 const labelFor = (name: string) =>
@@ -140,6 +143,9 @@ const emptyForm = {
   api_key: '',
   model_type: '',
   endpoint_url: '',
+  // Anthropic only: required when the key is an identity-linked API key
+  // (sent as the `anthropic-workspace-id` request header).
+  workspace_id: '',
 };
 
 export default function AgentModels() {
@@ -154,6 +160,24 @@ export default function AgentModels() {
 
   const preset = PROVIDERS.find((p) => p.id === form.provider_name);
   const isLocal = !!preset?.local;
+  const isAnthropic = form.provider_name === 'anthropic';
+  // Anthropic identity-linked keys require an `anthropic-workspace-id` header on
+  // EVERY request. We set it two ways for full coverage:
+  //  - `default_headers` (extra_params) is applied on the Anthropic SDK *client*,
+  //    so it rides on every call including the tool-use continuation call that
+  //    per-request headers miss (this is what actually fixes validation).
+  //  - `extra_headers` (model_config_dict) is camel's official per-request field,
+  //    kept as a redundant fallback.
+  const anthropicWorkspaceId = isAnthropic ? form.workspace_id.trim() : '';
+  const anthropicHeaders = anthropicWorkspaceId
+    ? { 'anthropic-workspace-id': anthropicWorkspaceId }
+    : null;
+  const anthropicModelConfig = anthropicHeaders
+    ? { extra_headers: anthropicHeaders }
+    : {};
+  const anthropicExtraParams = anthropicHeaders
+    ? { default_headers: anthropicHeaders }
+    : {};
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -186,6 +210,14 @@ export default function AgentModels() {
       api_key: row.api_key || '',
       model_type: row.model_type || '',
       endpoint_url: row.endpoint_url || '',
+      workspace_id:
+        (row.encrypted_config?.default_headers?.[
+          'anthropic-workspace-id'
+        ] as string) ||
+        (row.encrypted_config?.model_config_dict?.extra_headers?.[
+          'anthropic-workspace-id'
+        ] as string) ||
+        '',
     });
     setShowKey(false);
     setShowForm(true);
@@ -214,8 +246,8 @@ export default function AgentModels() {
           model_type: form.model_type,
           api_key: isLocal ? null : form.api_key || null,
           url: form.endpoint_url || undefined,
-          model_config_dict: {},
-          extra_params: {},
+          model_config_dict: anthropicModelConfig,
+          extra_params: anthropicExtraParams,
         });
         if (v && v.is_valid === false) {
           toast.error('That key/model failed validation. Check and retry.');
@@ -240,6 +272,17 @@ export default function AgentModels() {
         encrypted_config: {
           model_platform: form.provider_name,
           model_type: form.model_type,
+          // Persist the Anthropic workspace header (if set) for the runtime:
+          //  - model_config_dict.extra_headers (per-request), and
+          //  - default_headers at top level -> splitProviderConfig surfaces it as
+          //    extra_params.default_headers -> applied on the SDK client (every
+          //    request). Both mirror what validation sends.
+          ...(anthropicHeaders
+            ? {
+                model_config_dict: anthropicModelConfig,
+                default_headers: anthropicHeaders,
+              }
+            : {}),
         },
       };
       if (editingId) {
@@ -412,6 +455,28 @@ export default function AgentModels() {
               className="rounded-md border border-solid border-ds-border-neutral-subtle-default bg-ds-bg-neutral-subtle-default px-2 py-1.5 font-mono text-label-xs text-ds-text-neutral-default-default outline-none"
             />
           </label>
+
+          {isAnthropic && (
+            <label className="flex flex-col gap-1">
+              <span className="text-label-xs text-ds-text-neutral-subtle-default">
+                Workspace ID <span>(optional)</span>
+              </span>
+              <input
+                value={form.workspace_id}
+                spellCheck={false}
+                autoComplete="off"
+                placeholder="Required only for identity-linked API keys"
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, workspace_id: e.target.value }))
+                }
+                className="rounded-md border border-solid border-ds-border-neutral-subtle-default bg-ds-bg-neutral-subtle-default px-2 py-1.5 font-mono text-label-xs text-ds-text-neutral-default-default outline-none"
+              />
+              <span className="text-label-xs text-ds-text-neutral-subtle-default">
+                Sent as the <code>anthropic-workspace-id</code> header. Find it in
+                the Anthropic Console under your workspace settings.
+              </span>
+            </label>
+          )}
 
           <div className="mt-1 flex items-center justify-end gap-2">
             <button

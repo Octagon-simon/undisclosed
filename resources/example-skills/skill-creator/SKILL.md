@@ -4,6 +4,11 @@ description: Guide for creating effective skills. Use when creating a new skill 
 license: Proprietary. LICENSE.txt has complete terms
 ---
 
+<!--
+Portions Copyright 2026 Simon Ugorji. All Rights Reserved.
+Licensed under the Apache License, Version 2.0 (see LICENSE.txt in this skill).
+-->
+
 # Skill Creator
 
 This skill provides guidance for creating effective skills.

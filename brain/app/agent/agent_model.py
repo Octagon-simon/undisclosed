@@ -294,6 +294,19 @@ def agent_model(
             if isinstance(stream_options, dict):
                 stream_options.setdefault("include_usage", True)
 
+        # Anthropic identity-linked keys: ensure the (separate) token counter
+        # client also carries the workspace header, else its count_tokens
+        # pre-flight call 400s before any chat request.
+        from app.utils.anthropic_workspace import maybe_inject_token_counter
+
+        maybe_inject_token_counter(
+            effective_config["model_platform"],
+            effective_config["model_type"],
+            effective_config["api_key"],
+            effective_config["api_url"],
+            init_params,
+            model_config,
+        )
         return ModelFactory.create(
             model_platform=effective_config["model_platform"],
             model_type=effective_config["model_type"],
