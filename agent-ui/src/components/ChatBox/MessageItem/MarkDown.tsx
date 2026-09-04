@@ -183,10 +183,18 @@ export const MarkDown = memo(
           'line-height:1;padding:3px 8px;border-radius:6px;cursor:pointer;' +
           'opacity:0.75;border:none;background:var(--theia-button-secondaryBackground,rgba(127,127,127,0.22));' +
           'color:var(--theia-button-secondaryForeground,var(--theia-foreground));">Copy</button>';
-        rawHtml = rawHtml.replace(
-          /<pre(\s[^>]*)?>/gi,
-          (_full, attrs) => `<pre${attrs || ''} style="position:relative">${copyBtnHtml}`
-        );
+        // Wrap each <pre> in a non-scrolling relative container and put the
+        // copy button on the CONTAINER, not inside the scrollable <pre>. Placed
+        // inside, `right:6px` pins to the content's right edge (off-screen for
+        // long lines) and scrolls with the text; on the wrapper it stays pinned
+        // to the visible top-right while the code scrolls underneath.
+        rawHtml = rawHtml
+          .replace(
+            /<pre(\s[^>]*)?>/gi,
+            (_full, attrs) =>
+              `<div class="md-code-wrap" style="position:relative">${copyBtnHtml}<pre${attrs || ''}>`
+          )
+          .replace(/<\/pre>/gi, '</pre></div>');
 
         // Process images: replace relative paths with data URLs
         if (contentBasePath) {
@@ -330,7 +338,12 @@ export const MarkDown = memo(
         const copyBtn = target.closest('[data-copy-btn]') as HTMLElement | null;
         if (copyBtn) {
           e.preventDefault();
-          const pre = copyBtn.closest('pre');
+          // The button is a sibling of <pre> inside the .md-code-wrap wrapper
+          // (so it can stay pinned over a horizontally-scrolling block).
+          const pre =
+            copyBtn.closest('.md-code-wrap')?.querySelector('pre') ??
+            copyBtn.parentElement?.querySelector('pre') ??
+            null;
           const code =
             pre?.querySelector('code')?.textContent ??
             pre?.textContent ??
