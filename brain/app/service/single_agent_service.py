@@ -53,6 +53,7 @@ from app.service.task import (
     Action,
     ActionData,
     ActionImproveData,
+    ActionReasoningData,
     ImprovePayload,
     TaskLock,
     delete_task_lock,
@@ -522,7 +523,19 @@ def _load_attach_images(attaches: list[str]) -> list[Any]:
 
 async def _response_content(
     response: ChatAgentResponse | AsyncStreamingChatAgentResponse,
-) -> tuple[str, int, str]:
+    *,
+    task_lock: Any = None,
+    task_id: str = "",
+    stream_reasoning: bool = False,
+) -> tuple[str, int, str, bool]:
+    """Returns (content, tokens, reasoning, reasoning_was_streamed).
+
+    When ``stream_reasoning`` is on and the model emits reasoning, each reasoning
+    delta is pushed live onto the task queue as an `Action.reasoning` event so
+    the UI can render the thinking as it happens. Non-reasoning models emit no
+    reasoning_content, so nothing streams for them (and the "Hii"-echo problem
+    never applies — that was only ever from non-reasoning models)."""
+
     def extract_tokens(response_chunk: Any) -> int:
         if response_chunk is None:
             return 0
@@ -531,25 +544,46 @@ async def _response_content(
         return int(usage_info.get("total_tokens", 0) or 0)
 
     def reasoning_of(msg: Any) -> str:
-        return str(getattr(msg, "reasoning_content", "") or "") if msg else ""
+        if not msg:
+            return ""
+        r = getattr(msg, "reasoning_content", "")
+        if isinstance(r, list):
+            return "".join(str(x) for x in r)
+        return str(r or "")
 
     if isinstance(response, AsyncStreamingChatAgentResponse):
         content = ""
         reasoning = ""
+        streamed = False
         last_chunk = None
         async for chunk in response:
             last_chunk = chunk
             if chunk.msg and chunk.msg.content:
                 content += chunk.msg.content
-        if last_chunk is not None:
-            reasoning = reasoning_of(getattr(last_chunk, "msg", None))
-        return content, extract_tokens(last_chunk), reasoning
+            # reasoning_content is an incremental DELTA (agent uses
+            # stream_accumulate=False), so accumulate it AND stream it live.
+            r_delta = reasoning_of(getattr(chunk, "msg", None))
+            if r_delta:
+                reasoning += r_delta
+                if stream_reasoning and task_lock is not None:
+                    try:
+                        await task_lock.put_queue(
+                            ActionReasoningData(
+                                process_task_id=task_id, data=r_delta
+                            )
+                        )
+                        streamed = True
+                    except Exception:  # pragma: no cover - defensive
+                        logger.debug(
+                            "reasoning delta enqueue failed", exc_info=True
+                        )
+        return content, extract_tokens(last_chunk), reasoning, streamed
 
     msg = getattr(response, "msg", None)
     usage_tokens = extract_tokens(response)
     reasoning = reasoning_of(msg)
     if msg is not None and getattr(msg, "content", None):
-        return msg.content, usage_tokens, reasoning
+        return msg.content, usage_tokens, reasoning, False
 
     msgs = getattr(response, "msgs", None)
     if msgs:
@@ -558,9 +592,10 @@ async def _response_content(
             getattr(last, "content", "") or "",
             usage_tokens,
             reasoning or reasoning_of(last),
+            False,
         )
 
-    return "", usage_tokens, reasoning
+    return "", usage_tokens, reasoning, False
 
 
 def _action_to_sse(item: ActionData) -> str | None:
@@ -593,6 +628,14 @@ def _action_to_sse(item: ActionData) -> str | None:
             "notice",
             {
                 "notice": item.data,
+                "process_task_id": item.process_task_id,
+            },
+        )
+    if item.action == Action.reasoning:
+        return sse_json(
+            "reasoning",
+            {
+                "reasoning": item.data,
                 "process_task_id": item.process_task_id,
             },
         )
@@ -836,10 +879,19 @@ async def single_agent_solve(
         else:
             step_input = prompt
         response = await turn_agent.astep(step_input)
-        content, total_tokens, reasoning = await _response_content(response)
+        content, total_tokens, reasoning, reasoning_streamed = (
+            await _response_content(
+                response,
+                task_lock=task_lock,
+                task_id=task_id,
+                stream_reasoning=_thinking_enabled(options),
+            )
+        )
         # Stash the model's reasoning so the 'end' emitter can surface it in a
-        # collapsible "thinking" block (only for reasoning models + when enabled).
-        task_lock.last_reasoning = reasoning
+        # collapsible "thinking" block — UNLESS it was already streamed live
+        # (deltas), in which case the UI already has it and re-emitting at the
+        # end would duplicate the whole block.
+        task_lock.last_reasoning = "" if reasoning_streamed else reasoning
         record_agent_memory_snapshot(
             task_lock,
             turn_agent,

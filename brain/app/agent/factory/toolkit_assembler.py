@@ -53,6 +53,7 @@ from app.agent.toolkit.code_query_toolkit import CodeQueryToolkit
 from app.agent.toolkit.hybrid_browser_toolkit import HybridBrowserToolkit
 from app.agent.toolkit.observable_todo_toolkit import ObservableTodoToolkit
 from app.agent.toolkit.screenshot_toolkit import ScreenshotToolkit
+from app.agent.toolkit.figma_toolkit import FigmaToolkit
 from app.agent.toolkit.search_toolkit import SearchToolkit
 from app.agent.toolkit.skill_toolkit import SkillToolkit
 from app.agent.toolkit.terminal_toolkit import TerminalToolkit
@@ -456,6 +457,13 @@ async def assemble_single_agent_toolkits(
         if search_tools:
             search_tools = message_integration.register_functions(search_tools)
             assembly.add_tools(search_tools, SearchToolkit.toolkit_name())
+
+    # Figma: read components/nodes via the REST API. No-op unless a
+    # FIGMA_ACCESS_TOKEN is configured (get_can_use_tools returns []).
+    figma_tools = FigmaToolkit.get_can_use_tools(options.project_id)
+    if figma_tools:
+        figma_tools = message_integration.register_functions(figma_tools)
+        assembly.add_tools(figma_tools, FigmaToolkit.toolkit_name())
 
     if _enabled(config, "browser") and (
         hands is None or hands.can_use_browser()

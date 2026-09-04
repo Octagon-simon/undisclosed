@@ -59,6 +59,7 @@ class Action(str, Enum):
     write_file = "write_file"  # backend -> user
     ask = "ask"  # backend -> user
     notice = "notice"  # backend -> user
+    reasoning = "reasoning"  # backend -> user (streaming thinking deltas)
     search_mcp = "search_mcp"  # backend -> user
     install_mcp = "install_mcp"  # backend -> user
     terminal = "terminal"  # backend -> user
@@ -233,6 +234,14 @@ class ActionNoticeData(BaseModel):
     action: Literal[Action.notice] = Action.notice
     process_task_id: str
     data: str
+
+
+class ActionReasoningData(BaseModel):
+    """A live chunk of the model's reasoning ("thinking") for streaming."""
+
+    action: Literal[Action.reasoning] = Action.reasoning
+    process_task_id: str
+    data: str  # the incremental reasoning text (delta)
 
 
 class ActionSearchMcpData(BaseModel):

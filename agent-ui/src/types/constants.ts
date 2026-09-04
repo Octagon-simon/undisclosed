@@ -39,6 +39,7 @@ export const AgentStep = {
   ADD_TASK: 'add_task',
   REMOVE_TASK: 'remove_task',
   NOTICE: 'notice',
+  REASONING: 'reasoning',
   ASK: 'ask',
   HUMAN_REPLY: 'human_reply',
   APPROVAL_REQUEST: 'approval_request',

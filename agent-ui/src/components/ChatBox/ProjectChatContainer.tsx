@@ -13,6 +13,7 @@
 // ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
 
 import useChatStoreAdapter from '@/hooks/useChatStoreAdapter';
+import { LiveReasoning } from './LiveReasoning';
 import { usePageTabStore } from '@/store/pageTabStore';
 import { AnimatePresence } from 'framer-motion';
 import React, {
@@ -388,6 +389,7 @@ export const ProjectChatContainer: React.FC<ProjectChatContainerProps> = ({
             );
           })}
         </AnimatePresence>
+        <LiveReasoning />
       </div>
     </div>
   );
