@@ -856,10 +856,11 @@ export default function ChatBox(): JSX.Element {
           (hasMessages &&
             chatStore.tasks[_taskId as string].status ===
               ChatTaskStatus.PENDING) ||
-          (canSendWhileBusy &&
-            hasMessages &&
-            chatStore.tasks[_taskId as string].status ===
-              ChatTaskStatus.RUNNING);
+          // Queue a follow-up during ANY busy phase (running, pausing,
+          // splitting, computing), not only exact status===RUNNING — otherwise
+          // the send silently no-ops whenever the task is busy but not in the
+          // narrow RUNNING state.
+          (canSendWhileBusy && hasMessages && isTaskBusy);
 
         if (shouldContinueConversation) {
           // Check if this is the very first message and task hasn't started

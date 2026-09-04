@@ -42,6 +42,7 @@
     "@theia/vsx-registry": "1.60.0",
     "@theia/workspace": "1.60.0",
     "undisclosed-agent": "file:packages/undisclosed-agent",
+    "undisclosed-import": "file:packages/undisclosed-import",
     "undisclosed-languages": "file:packages/undisclosed-languages",
     "lodash": "^4.18.1"
   },

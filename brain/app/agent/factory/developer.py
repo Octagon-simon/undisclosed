@@ -26,6 +26,7 @@ from app.agent.prompt import (
     DEVELOPER_SYS_PROMPT,
     append_connected_app_mcp_notice,
 )
+from app.agent.tool_rag import attach_load_capability, prepare_tool_rag
 from app.agent.toolkit.code_execution_toolkit import CodeExecutionToolkit
 from app.agent.toolkit.diff_toolkit import DiffToolkit
 from app.agent.toolkit.github_toolkit import GithubToolkit
@@ -184,16 +185,26 @@ async def developer_agent(
         message_integration=message_integration,
     )
 
-    return agent_model(
+    # Tool-RAG: start the worker LEAN (core tools + a load_capability meta-tool)
+    # instead of shipping every toolkit schema on each step. This is the same
+    # token-saving mechanism the single agent uses. FAIL-SOFT: on any error it
+    # returns the full tool set, so the worker is never worse off than before.
+    initial_tools, system_message, tool_rag_selector = prepare_tool_rag(
+        tools, system_message
+    )
+
+    agent = agent_model(
         Agents.developer_agent,
         BaseMessage.make_assistant_message(
             role_name="Developer Agent",
             content=system_message,
         ),
         options,
-        tools,
+        initial_tools,
         tool_names=tool_names,
         toolkits_to_register_agent=[
             screenshot_toolkit_for_agent_registration,
         ],
     )
+    attach_load_capability(agent, tool_rag_selector, options.question)
+    return agent

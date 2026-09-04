@@ -585,13 +585,12 @@ export const Inputbox = ({
           )}
         </div>
 
-        {/* Right: send — or Stop while a task runs and the input is empty. This
-            replaces the disabled send button (and the separate floating "Stop
-            Task" pill) with an inline stop control. When the user types a
-            follow-up, it flips back to Send so mid-run messages still work
-            (single-agent mode). */}
+        {/* Right: Stop is shown WHENEVER a task is running, so it's always
+            reachable — even while typing a follow-up to queue. Send shows when
+            idle, or alongside Stop when there's text to queue mid-run. This way
+            you can both stop the current task AND queue a new message. */}
         <div className="flex shrink-0 items-center gap-2">
-          {isRunning && value.trim().length === 0 ? (
+          {isRunning && (
             <TooltipSimple content="Stop task" side="top">
               <Button
                 type="button"
@@ -612,7 +611,8 @@ export const Inputbox = ({
                 />
               </Button>
             </TooltipSimple>
-          ) : (
+          )}
+          {(!isRunning || value.trim().length > 0) && (
             <Button
               size="xs"
               buttonContent="icon-only"

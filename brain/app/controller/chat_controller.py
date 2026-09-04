@@ -845,6 +845,35 @@ async def human_reply(id: str, data: HumanReply, request: Request):
     return Response(status_code=201)
 
 
+@router.post("/chat/{id}/soft-reset")
+async def soft_reset(id: str):
+    """Clear the live agent's CHAT memory (keeping its system prompt) to break a
+    context-lock loop, WITHOUT touching the browser session, tools, or files.
+
+    Safe by construction: CAMEL's `reset()` only re-initializes the message
+    memory; the browser is a separate CDP process and stays logged in. Returns
+    whether a live agent was actually reset."""
+    task_lock = get_task_lock_if_exists(id)
+    agent = getattr(task_lock, "single_agent", None) if task_lock else None
+    if agent is None:
+        chat_logger.info(
+            "Soft-reset: no live agent for task", extra={"task_id": id}
+        )
+        return {"reset": False, "reason": "no active agent"}
+    try:
+        agent.reset()
+        chat_logger.info(
+            "Soft-reset: cleared agent chat memory (browser preserved)",
+            extra={"task_id": id},
+        )
+        return {"reset": True}
+    except Exception as exc:  # noqa: BLE001
+        chat_logger.warning(
+            "Soft-reset failed", extra={"task_id": id}, exc_info=True
+        )
+        return {"reset": False, "reason": str(exc)}
+
+
 @router.post("/chat/{id}/approval")
 async def approval(id: str, data: ApprovalDecision, request: Request):
     """Resolve a pending approval surfaced as an `approval_request` SSE

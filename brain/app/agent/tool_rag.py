@@ -457,3 +457,100 @@ async def reconcile_agent_tools_routed(
         logger.warning(
             "Routed reconcile failed; leaving tools", exc_info=True
         )
+
+
+# --------------------------------------------------------------------------
+# Reusable factory helpers (shared by single-agent + workforce workers)
+# --------------------------------------------------------------------------
+
+_LOADABLE_CAPS_TEMPLATE = (
+    "\n\n<loadable_capabilities>\n"
+    "These tool capabilities are NOT loaded by default. The moment a task "
+    "needs one, call load_capability([...]) with the name(s) below, then use "
+    "the tools it returns:\n{items}\n</loadable_capabilities>"
+)
+
+
+def prepare_tool_rag(
+    tools: list[Any],
+    system_message: str,
+) -> tuple[list[Any], str, "ToolRAGSelector | None"]:
+    """Build a lean initial tool set for an agent + the loadable-capabilities
+    prompt section. FAIL-SOFT: on any error (or when tool-RAG is disabled) it
+    returns the tools + system_message unchanged and a None selector, so a
+    caller can never end up WORSE than shipping every tool.
+
+    Returns ``(initial_tools, system_message, selector)``.
+    """
+    if not tool_rag_enabled():
+        return tools, system_message, None
+    try:
+        selector = ToolRAGSelector(tools)
+        if not selector.total_tools:
+            return tools, system_message, None
+        initial_tools = selector.select_tools("")
+        catalog = selector.capability_catalog()
+        if catalog:
+            items = "\n".join(f"- {name}" for name in catalog)
+            system_message = system_message + _LOADABLE_CAPS_TEMPLATE.format(
+                items=items
+            )
+        logger.info(
+            "Tool-RAG: agent starts with %d core tools (of %d)",
+            len(initial_tools),
+            selector.total_tools,
+        )
+        return initial_tools, system_message, selector
+    except Exception:
+        logger.warning("prepare_tool_rag failed; using all tools", exc_info=True)
+        return tools, system_message, None
+
+
+def attach_load_capability(
+    agent: Any,
+    selector: "ToolRAGSelector | None",
+    question: str,
+) -> None:
+    """Stash the selector on the agent and wire the ``load_capability`` meta-tool
+    so the agent can pull whole toolkits in mid-task. Best-effort / no-op when
+    there's no selector."""
+    if selector is None:
+        return
+    agent._tool_rag_selector = selector
+    try:
+        from camel.toolkits import FunctionTool
+
+        _selector = selector
+        _agent_ref = agent
+
+        def load_capability(capabilities: list[str]) -> str:
+            """Attach additional tool capabilities (toolkits) when the current
+            task needs them and they are not already available.
+
+            Args:
+                capabilities: Names of the capabilities to load, taken from the
+                    <loadable_capabilities> list in your context
+                    (e.g. ["Browser Toolkit"]).
+
+            Returns:
+                A short status describing what was loaded.
+            """
+            try:
+                tools = _selector.tools_for_capabilities(capabilities, question)
+                if not tools:
+                    available = ", ".join(_selector.capability_catalog())
+                    return (
+                        f"No capability matched {capabilities}. "
+                        f"Available: {available}"
+                    )
+                _agent_ref.add_tools(tools)
+                return (
+                    f"Loaded {capabilities}. Their tools are now available — "
+                    "call them on your next step."
+                )
+            except Exception as exc:  # noqa: BLE001
+                return f"Failed to load {capabilities}: {exc}"
+
+        agent.add_tools([FunctionTool(load_capability)])
+    except Exception:
+        logger.warning("load_capability meta-tool wiring failed", exc_info=True)

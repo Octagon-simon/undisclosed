@@ -225,6 +225,8 @@ export function mountAgentPanel(
     setGovernance: (mode) => apiRef.current?.setGovernance(mode),
     getShowThinking: () => apiRef.current?.getShowThinking() ?? true,
     setShowThinking: (value) => apiRef.current?.setShowThinking(value),
+    exportChat: () => apiRef.current?.exportChat(),
+    clearAgentContext: () => apiRef.current?.clearAgentContext(),
   };
 }
 

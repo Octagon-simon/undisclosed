@@ -1,0 +1,28 @@
+{
+  "name": "undisclosed-import",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Import settings and extensions from a local VS Code install into Undisclosed (settings via PreferenceService, extensions from Open VSX).",
+  "license": "Apache-2.0",
+  "theiaExtensions": [
+    {
+      "frontend": "lib/browser/undisclosed-import-frontend-module",
+      "backend": "lib/node/undisclosed-import-backend-module"
+    }
+  ],
+  "dependencies": {
+    "@theia/core": "1.60.0",
+    "@theia/vsx-registry": "1.60.0"
+  },
+  "devDependencies": {
+    "typescript": "~5.4.5"
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "watch": "tsc -w -p ."
+  },
+  "files": [
+    "lib",
+    "src"
+  ]
+}

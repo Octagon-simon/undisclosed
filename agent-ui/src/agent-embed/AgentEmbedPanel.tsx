@@ -106,6 +106,11 @@ export interface AgentPanelApi {
   /** Reasoning "thinking" block visibility (persisted flag). */
   getShowThinking(): boolean;
   setShowThinking(value: boolean): void;
+  /** Export the active conversation to a Markdown file (download). */
+  exportChat(): void;
+  /** Clear the agent's chat memory (soft reset) to break a context loop,
+   *  keeping the system prompt + live browser session. */
+  clearAgentContext(): void;
 }
 
 const AgentEmbedPanel = forwardRef<AgentPanelApi>((_props, ref) => {
@@ -158,6 +163,37 @@ const AgentEmbedPanel = forwardRef<AgentPanelApi>((_props, ref) => {
       getShowThinking: () => useAuthStore.getState().showThinking,
       setShowThinking: (value) =>
         useAuthStore.getState().setShowThinking(value),
+      exportChat: () => {
+        void import('@/lib/exportChat').then(
+          ({ exportActiveConversationToMarkdown }) => {
+            exportActiveConversationToMarkdown();
+          }
+        );
+      },
+      clearAgentContext: () => {
+        void (async () => {
+          const projectId = useProjectStore.getState().activeProjectId;
+          if (!projectId) return;
+          try {
+            const { fetchPost } = await import('@/api/http');
+            const res = (await fetchPost(
+              `/chat/${projectId}/soft-reset`,
+              {}
+            )) as { reset?: boolean } | undefined;
+            const { toast } = await import('sonner');
+            if (res?.reset) {
+              toast.success(
+                'Agent context cleared. Your browser session is preserved.'
+              );
+            } else {
+              toast.info('No active agent to clear right now.');
+            }
+          } catch {
+            const { toast } = await import('sonner');
+            toast.error('Failed to clear agent context.');
+          }
+        })();
+      },
     }),
     [newConversation, setGovernanceMode, body]
   );

@@ -42,6 +42,8 @@ export interface AgentPanelHandle {
   setGovernance(mode: GovernanceMode): void;
   getShowThinking(): boolean;
   setShowThinking(value: boolean): void;
+  exportChat(): void;
+  clearAgentContext(): void;
 }
 
 /** Signature exposed by the prebuilt agent bundle (Undisclosed's mountAgentPanel). */
@@ -262,6 +264,12 @@ export class UndisclosedAgentWidget extends BaseWidget {
   }
   showStats(): void {
     this.handle?.showStats();
+  }
+  exportChat(): void {
+    this.handle?.exportChat();
+  }
+  clearAgentContext(): void {
+    this.handle?.clearAgentContext();
   }
   showMemory(): void {
     this.handle?.showMemory();

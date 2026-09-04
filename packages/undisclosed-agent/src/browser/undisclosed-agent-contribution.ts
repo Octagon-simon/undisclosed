@@ -34,6 +34,11 @@ const MODELS: Command = { id: 'undisclosed-agent.models', label: 'Models' };
 const SETTINGS: Command = { id: 'undisclosed-agent.settings', label: 'Settings' };
 const BROWSER: Command = { id: 'undisclosed-agent.browser', label: 'Agent browser' };
 const THINKING: Command = { id: 'undisclosed-agent.thinking', label: 'Show thinking' };
+const EXPORT: Command = { id: 'undisclosed-agent.export', label: 'Export chat' };
+const CLEAR_CONTEXT: Command = {
+  id: 'undisclosed-agent.clear-context',
+  label: 'Clear agent context',
+};
 /** The `⋯` toolbar item opens this menu. */
 const MORE_MENU: MenuPath = ['undisclosed-agent-more-menu'];
 
@@ -92,6 +97,14 @@ export class UndisclosedAgentContribution
       isVisible: (w) => !!asAgent(w),
       execute: (w) => asAgent(w)?.showModels(),
     });
+    commands.registerCommand(EXPORT, {
+      isEnabled: (w) => asAgent(w) !== undefined,
+      execute: (w) => asAgent(w)?.exportChat(),
+    });
+    commands.registerCommand(CLEAR_CONTEXT, {
+      isEnabled: (w) => asAgent(w) !== undefined,
+      execute: (w) => asAgent(w)?.clearAgentContext(),
+    });
     commands.registerCommand(SETTINGS, {
       isVisible: (w) => !!asAgent(w),
       execute: (w) => asAgent(w)?.showSettings(),
@@ -140,6 +153,13 @@ export class UndisclosedAgentContribution
       label: 'Settings',
       order: '1.7',
     });
+    menus.registerMenuAction(MORE_MENU, {
+      commandId: EXPORT.id,
+      label: 'Export chat',
+      order: '1.8',
+    });
+    // "Clear agent context" removed from the UI: the stateless-per-turn memory
+    // architecture (below) makes manual clearing unnecessary.
     menus.registerMenuAction(MORE_MENU, {
       commandId: THINKING.id,
       label: 'Show thinking',
@@ -209,12 +229,16 @@ export class UndisclosedAgentContribution
   }
 
   async onStart(): Promise<void> {
+    // Open the agent panel on EVERY launch (user preference), not just the
+    // first run. Previously this was gated behind INTRODUCED_KEY, so once the
+    // flag was set the panel never auto-opened again. We still record the
+    // first-run flag for any one-time intro UX that depends on it.
+    await this.openView({ activate: false, reveal: true });
     const introduced = await this.storageService.getData<boolean>(
       INTRODUCED_KEY,
       false
     );
     if (!introduced) {
-      await this.openView({ activate: false, reveal: true });
       await this.storageService.setData(INTRODUCED_KEY, true);
     }
   }

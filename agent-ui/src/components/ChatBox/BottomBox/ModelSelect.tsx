@@ -83,7 +83,7 @@ export interface ModelSelectProps {
 }
 
 const modelTriggerShellClass = cn(
-  'rounded-xl px-2 py-1 inline-flex max-w-[min(100%,320px)] shrink-0 items-center gap-1.5',
+  'rounded-xl px-2 py-1 inline-flex min-w-0 max-w-[min(100%,320px)] shrink items-center gap-1.5',
   'bg-ds-bg-neutral-default-default text-ds-text-neutral-default-default'
 );
 
@@ -572,50 +572,8 @@ export function ModelSelect({
         avoidCollisions
         className="w-[180px]"
       >
-        {import.meta.env.VITE_USE_LOCAL_PROXY !== 'true' && (
-          <DropdownMenuSub>
-            <DropdownMenuSubTrigger
-              className="flex w-full min-w-0 items-center justify-start gap-2 [&>svg:first-child]:!h-4 [&>svg:first-child]:!min-h-4 [&>svg:first-child]:!w-4 [&>svg:first-child]:!min-w-4"
-              onPointerEnter={(e) => {
-                activeSubTriggerRef.current = e.currentTarget;
-              }}
-            >
-              <img
-                src={folderIcon}
-                alt=""
-                className="mt-0.5 h-4 w-4 shrink-0"
-                aria-hidden
-              />
-              <span className="min-w-0 flex-1 text-left text-body-sm">
-                {t('setting.eigent-cloud')}
-              </span>
-            </DropdownMenuSubTrigger>
-            <DropdownMenuSubContent
-              ref={subContentCallbackRef}
-              className="max-h-[300px] w-[200px] overflow-y-auto"
-            >
-              {cloudModelOptions.map((model) => (
-                <DropdownMenuItem
-                  key={model.id}
-                  onSelect={() => {
-                    void handleDefaultModelSelect('cloud', model.id);
-                  }}
-                  className="flex items-center justify-between"
-                >
-                  <span className="text-body-sm">{model.name}</span>
-                  {(pinnedSelection
-                    ? pinnedSelection.modelType === 'cloud' &&
-                      (pinnedSelection.cloud_model_type ||
-                        effectiveCloudModelId) === model.id
-                    : cloudPrefer && effectiveCloudModelId === model.id) && (
-                    <Check className="h-4 w-4 text-ds-text-success-default-default" />
-                  )}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuSubContent>
-          </DropdownMenuSub>
-        )}
-
+        {/* No hosted "Cloud" offering: this build runs on BYOK + local models
+            only. The cloud model section was removed intentionally. */}
         <DropdownMenuSub>
           <DropdownMenuSubTrigger
             className="flex w-full min-w-0 items-center justify-start gap-2 [&>svg:first-child]:!h-5 [&>svg:first-child]:!min-h-4 [&>svg:first-child]:!w-4 [&>svg:first-child]:!min-w-4"

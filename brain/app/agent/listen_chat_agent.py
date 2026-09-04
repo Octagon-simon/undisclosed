@@ -64,18 +64,26 @@ class _MalformedToolCallArgs(Exception):
     back to empty-arg sanitization. Never surfaces outside this module."""
 
 
-# Default 30 minutes; long agent turns (e.g. writing many chapters in one
-# run) can legitimately exceed it, so allow tuning without a rebuild.
-# A non-positive value disables the per-step timeout entirely.
+# Default 10 minutes. This wraps a WHOLE step, including a tool that blocks on
+# human input (ask_human_via_gui) — so it can't be tiny — but 30 min meant a
+# hung tool (e.g. a stuck browser call) silently burned half an hour before
+# failing. 10 min fails a stuck step far faster while still leaving generous
+# headroom for a reply on an active task. Tune with AGENT_STEP_TIMEOUT_SECONDS
+# (raise it for very long autonomous runs); a non-positive value disables it.
+_DEFAULT_STEP_TIMEOUT_SECONDS = 600.0
+
+
 def default_step_timeout() -> float | None:
-    raw = env("AGENT_STEP_TIMEOUT_SECONDS", "1800")
+    raw = env("AGENT_STEP_TIMEOUT_SECONDS", str(int(_DEFAULT_STEP_TIMEOUT_SECONDS)))
     try:
         value = float(raw)
     except (TypeError, ValueError):
         logger.warning(
-            "Invalid AGENT_STEP_TIMEOUT_SECONDS value %r; using 1800", raw
+            "Invalid AGENT_STEP_TIMEOUT_SECONDS value %r; using %s",
+            raw,
+            _DEFAULT_STEP_TIMEOUT_SECONDS,
         )
-        return 1800.0
+        return _DEFAULT_STEP_TIMEOUT_SECONDS
     return value if value > 0 else None
 
 

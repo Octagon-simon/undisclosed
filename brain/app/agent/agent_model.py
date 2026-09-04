@@ -32,8 +32,25 @@ from app.model.subscription_runtime import (
     apply_subscription_runtime,
     is_subscription_auth,
 )
+from app.component.environment import env
 from app.service.task import ActionCreateAgentData, Agents, get_task_lock
 from app.utils.event_loop_utils import _schedule_async_task
+
+
+def _memory_window_size() -> int | None:
+    """Sliding memory window (message count) for agents. DISABLED by default:
+    CAMEL's window is a naive slice of the last N messages, which can cut
+    BETWEEN an assistant `tool_calls` message and its `tool` result — the model
+    API then 400s ("tool must follow tool_calls") and the whole task dies. So a
+    message-COUNT window is unsafe whenever tools are used. Opt in only with
+    UNDISCLOSED_AGENT_MEMORY_WINDOW if you understand that risk; the loop fix is
+    handled by the recency directive + the on-demand soft-reset instead."""
+    raw = env("UNDISCLOSED_AGENT_MEMORY_WINDOW", "0")
+    try:
+        value = int(float(raw))
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
 
 # OpenAI chat-completions streaming only returns token usage when
 # `stream_options.include_usage` is requested. Without it the request-level
@@ -331,6 +348,7 @@ def agent_model(
         model=model,
         tools=tools,
         agent_id=agent_id,
+        message_window_size=_memory_window_size(),
         prune_tool_calls_from_memory=prune_tool_calls_from_memory,
         toolkits_to_register_agent=toolkits_to_register_agent,
         enable_snapshot_clean=enable_snapshot_clean,

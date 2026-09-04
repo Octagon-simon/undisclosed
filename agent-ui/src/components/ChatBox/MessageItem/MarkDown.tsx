@@ -173,6 +173,21 @@ export const MarkDown = memo(
         // Parse markdown to HTML
         let rawHtml = await marked.parse(displayedContent);
 
+        // Copy button on every code / terminal block. Injected as the first
+        // child of each <pre> (positioned top-right); the click handler below
+        // copies the sibling <code>'s text. Inline styles + theme vars so it
+        // renders correctly inside the Theia embed regardless of CSS scoping.
+        const copyBtnHtml =
+          '<button type="button" data-copy-btn aria-label="Copy" ' +
+          'style="position:absolute;top:6px;right:6px;z-index:2;font-size:11px;' +
+          'line-height:1;padding:3px 8px;border-radius:6px;cursor:pointer;' +
+          'opacity:0.75;border:none;background:var(--theia-button-secondaryBackground,rgba(127,127,127,0.22));' +
+          'color:var(--theia-button-secondaryForeground,var(--theia-foreground));">Copy</button>';
+        rawHtml = rawHtml.replace(
+          /<pre(\s[^>]*)?>/gi,
+          (_full, attrs) => `<pre${attrs || ''} style="position:relative">${copyBtnHtml}`
+        );
+
         // Process images: replace relative paths with data URLs
         if (contentBasePath) {
           const imgRegex = /<img([^>]*?)src=["']([^"']+)["']([^>]*?)>/gi;
@@ -294,7 +309,7 @@ export const MarkDown = memo(
         // blocks keep their language-* className after sanitization, and
         // data-file-path so the clickable path spans above survive.
         const sanitized = DOMPurify.sanitize(rawHtml, {
-          ADD_ATTR: ['class', 'data-file-path'],
+          ADD_ATTR: ['class', 'data-file-path', 'data-copy-btn'],
         });
         setHtml(sanitized);
         if (displayedContent === content && renderCompleteRef.current) {
@@ -311,6 +326,24 @@ export const MarkDown = memo(
 
       const handleContentClick = (e: MouseEvent) => {
         const target = e.target as HTMLElement;
+        // Copy button on a code/terminal block: copy the block's text.
+        const copyBtn = target.closest('[data-copy-btn]') as HTMLElement | null;
+        if (copyBtn) {
+          e.preventDefault();
+          const pre = copyBtn.closest('pre');
+          const code =
+            pre?.querySelector('code')?.textContent ??
+            pre?.textContent ??
+            '';
+          void navigator.clipboard?.writeText(code).then(() => {
+            const prev = copyBtn.textContent;
+            copyBtn.textContent = 'Copied';
+            window.setTimeout(() => {
+              copyBtn.textContent = prev || 'Copy';
+            }, 1500);
+          });
+          return;
+        }
         if (
           target.tagName === 'IMG' &&
           target.getAttribute('data-clickable') === 'true'

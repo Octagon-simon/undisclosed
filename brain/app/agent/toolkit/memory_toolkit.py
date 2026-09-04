@@ -104,10 +104,69 @@ class MemoryToolkit(AbstractToolkit):
             return "No relevant remembered facts."
         return "\n".join(f"- {f}" for f in facts)
 
+    def recall_conversation(self, query: str) -> str:
+        """Retrieve earlier messages from THIS conversation that match a query.
+
+        Your working memory is kept intentionally lean, so do NOT assume you
+        remember everything said earlier. When you need a specific earlier
+        detail (a decision, a value, a file/URL, prior code, what the user
+        already told you), call this to pull it back instead of guessing or
+        re-asking.
+
+        Args:
+            query (str): Words or a short phrase describing what to find.
+
+        Returns:
+            str: The most relevant earlier messages, or a note that none
+            matched.
+        """
+        import json
+        from pathlib import Path
+
+        root = (
+            Path.home()
+            / ".undisclosed"
+            / "turns"
+            / str(self.api_task_id).replace("/", "_")
+        )
+        if not root.is_dir():
+            return "No earlier messages found for this conversation."
+        terms = [t for t in query.lower().split() if len(t) > 2]
+        scored: list[tuple[int, str, str]] = []
+        for p in sorted(root.glob("turn_*.json")):
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            msgs: list[tuple[str, str]] = []
+            um = data.get("userMessage") or {}
+            if um.get("content"):
+                msgs.append(("User", str(um["content"])))
+            for m in data.get("otherMessages") or []:
+                c = m.get("content")
+                if c:
+                    msgs.append(("Assistant", str(c)))
+            for who, text in msgs:
+                low = text.lower()
+                score = sum(low.count(t) for t in terms) if terms else 0
+                if score > 0:
+                    scored.append((score, who, text))
+        if not scored:
+            return "No earlier messages matched that query."
+        scored.sort(key=lambda x: x[0], reverse=True)
+        out: list[str] = []
+        for _score, who, text in scored[:5]:
+            snippet = text.strip()
+            if len(snippet) > 600:
+                snippet = snippet[:599] + "…"
+            out.append(f"[{who}] {snippet}")
+        return "\n\n".join(out)
+
     def get_tools(self) -> list[FunctionTool]:
         return [
             FunctionTool(self.remember_fact),
             FunctionTool(self.recall_facts),
+            FunctionTool(self.recall_conversation),
         ]
 
     @classmethod

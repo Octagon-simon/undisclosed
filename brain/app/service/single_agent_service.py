@@ -222,13 +222,17 @@ def _build_single_agent_context(
     if durable:
         return durable + "\n\n"
 
-    # 2. In-process conversation history (hot follow-up turns).
+    # 2. In-process conversation history (hot follow-up turns). Only the MOST
+    #    RECENT turns are injected — dumping the whole history would re-saturate
+    #    the freshly-reset memory and re-trigger the verbatim-repeat loop. Older
+    #    details are retrievable on demand via the recall_conversation tool.
     if getattr(task_lock, "conversation_history", None):
+        _recent_history = list(task_lock.conversation_history)[-6:]
         lines = [
-            "=== Earlier in this conversation (ALREADY COMPLETED — background "
-            "for reference only, NOT the current request) ==="
+            "=== Recent messages in this conversation (background only, NOT the "
+            "current request; for anything older call recall_conversation) ==="
         ]
-        for entry in task_lock.conversation_history:
+        for entry in _recent_history:
             role = entry.get("role", "")
             content = entry.get("content", "")
             if role == "task_result" and isinstance(content, dict):
@@ -681,6 +685,13 @@ async def single_agent_solve(
                 hands=hands,
                 pause_event=pause_event,
             )
+        # Expose the live agent on the task lock so the "Clear agent context"
+        # (soft-reset) endpoint can reach it. Safe: reset() only clears the
+        # CAMEL message memory; the browser is a separate CDP process.
+        try:
+            task_lock.single_agent = agent
+        except Exception:  # pragma: no cover - defensive
+            pass
         observable_todo = getattr(agent, "_observable_todo_toolkit", None)
         if observable_todo is not None:
             observable_todo.task_id = task_id
@@ -694,9 +705,26 @@ async def single_agent_solve(
         task_id: str,
         project_context: str | None = None,
     ) -> tuple[str, int]:
-        is_fresh_agent = (agent is None)
+        was_reused = agent is not None
         turn_agent = await ensure_agent(task_id)
         turn_agent.process_task_id = task_id
+        # STATELESS-PER-TURN MEMORY (the fix for the verbatim-repeat loop):
+        # reset a REUSED agent's message history at the start of each turn,
+        # keeping its system prompt, tools, and the EXTERNAL browser session
+        # (reset() only clears CAMEL's message list — the CDP browser is a
+        # separate process). Without this, memory accumulated every prior turn
+        # (including the agent's own replies) and a low-temp model regurgitated
+        # them instead of answering the new message. A COMPACT context is
+        # rebuilt below; the agent pulls back specifics on demand via
+        # recall_conversation.
+        if was_reused:
+            try:
+                turn_agent.reset()
+            except Exception:  # pragma: no cover - defensive
+                logger.warning("per-turn agent reset failed", exc_info=True)
+        # Every turn is now effectively fresh, so the compact background context
+        # is rebuilt and injected as a system record each time.
+        is_fresh_agent = True
         # Tool RAG: re-select the tools exposed to the model for THIS turn's
         # message (core + top-K relevant), so a topic shift on a follow-up gets
         # the right tools and we never carry the whole catalog on every step.
@@ -743,34 +771,55 @@ async def single_agent_solve(
         # stays BACKGROUND: it never leaks into the UI (the user message is just
         # the question) and it stops competing with the current message, which is
         # what made the agent re-answer old, completed tasks on a fresh session.
-        if bg_context.strip():
-            try:
-                from camel.types import OpenAIBackendRole
+        # Anti-repetition focus directive, placed in the RECENCY slot (the last
+        # system message before the user's message). This fires on EVERY turn,
+        # not just fresh ones: follow-ups reuse a persistent agent whose own
+        # `memory` fills with its prior summaries, and a low-temp model then
+        # mirrors that history instead of acting on a terse new message. The
+        # directive right before the current message is what breaks that loop —
+        # so it matters MOST on follow-ups (where bg_context is empty).
+        _focus_directive = (
+            "Now respond to the user's CURRENT message ONLY. If it is a short "
+            "instruction or continuation (e.g. \"yes\", \"skip\", \"take "
+            "control\", \"I clicked X\", \"continue\"), treat it as a directive "
+            "and TAKE THE NEXT CONCRETE ACTION toward it — call the needed "
+            "tools. Do NOT restate, re-summarize, or repeat any earlier "
+            "response; everything before this is COMPLETED background only."
+        )
+        try:
+            from camel.types import OpenAIBackendRole
 
-                turn_agent.update_memory(
-                    BaseMessage.make_system_message(
-                        role_name="System",
-                        content=(
-                            "Background for this conversation (prior or related "
-                            "work, for reference only). Do NOT answer, repeat, or "
-                            "redo it. Respond only to the user's next message.\n\n"
-                            + bg_context.strip()
-                        ),
-                    ),
-                    OpenAIBackendRole.SYSTEM,
+            if bg_context.strip():
+                system_note = (
+                    "Background for this conversation (prior or related work, "
+                    "for reference only). Do NOT answer, repeat, or redo it.\n\n"
+                    + bg_context.strip()
+                    + "\n\n=== END BACKGROUND ===\n"
+                    + _focus_directive
                 )
-            except Exception:
-                logger.warning(
-                    "Failed to inject background context as system memory; "
-                    "prepending to the prompt instead.",
-                    exc_info=True,
-                )
-                prompt = (
+            else:
+                system_note = _focus_directive
+            turn_agent.update_memory(
+                BaseMessage.make_system_message(
+                    role_name="System", content=system_note
+                ),
+                OpenAIBackendRole.SYSTEM,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to inject focus directive as system memory; "
+                "prepending to the prompt instead.",
+                exc_info=True,
+            )
+            prefix = _focus_directive
+            if bg_context.strip():
+                prefix = (
                     "[Background, reference only — do NOT answer this]\n"
                     + bg_context.strip()
                     + "\n\n"
-                    + prompt
+                    + prefix
                 )
+            prompt = prefix + "\n\n" + prompt
         # Attach image files as vision content ONLY for models that can see them.
         # For text-only models (e.g. deepseek-chat) image_list is useless (or
         # rejected); the resolved paths in the prompt let the agent OCR them via
