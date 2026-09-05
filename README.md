@@ -1,54 +1,135 @@
-# Eigent Editor (Theia product)
+# Undisclosed
 
-Eigent's editor-first shell, built as a **custom Eclipse Theia product** — not a
-fork. The code editor is the primary surface; Eigent's agent panel and features
-are added as **native Theia contributions** (the Antigravity model: the agent
-lives *inside* the editor, one integrated surface — not an external dock beside
-an embedded iframe, which is what code-server forces).
+An **on-device AI coding editor**. A custom [Eclipse Theia](https://theia-ide.org/)
+editor with an agent built in as a native panel — the agent lives *inside* the
+editor, not in a separate window. Everything runs locally: your code, the editor,
+and the agent "brain" all stay on your machine (bring your own model keys).
 
-## Why Theia (not code-server)
+Built as a decoupled fork of [Eigent](https://eigent.ai) — the agent capability
+is Eigent's; the editor shell and on-device packaging are ours.
 
-code-server is stock VS Code: it ships its own chat/Copilot chrome and can't be
-stripped or extended enough to host our agent as a first-class panel. Theia is a
-**framework** — you compose `@theia/*` packages + your own extensions, disable
-built-in views, and register your own **`ReactWidget`** as a native panel. That
-is the only path to "the editor's agent section *is* Eigent's agent."
+---
 
-## Architecture (how it plugs into Eigent)
+## What's in the box
 
-- **Browser target.** `theia build` + `theia start` produce a local Node server
-  (`node lib/backend/main.js`, bound to `127.0.0.1:{port}`), opened on a folder.
-  This matches exactly how the main Eigent app already spawns an editor engine:
-  `CodeEditorManager` reads `~/.eigent/editor/launch.json` (`{ "cmd": "…{port}…
-  {dir}…" }`) and spawns it. So swapping code-server → this Theia build is a
-  `launch.json` change — the engine seam is already there (`UNDISCLOSED_THEIA_*`).
-- **Backend untouched.** Eigent's FastAPI agent backend (models, toolkits, SSE)
-  stays as-is. "Bring your own models" and existing features are preserved
-  because they live server-side; the editor is just the skin.
+Two local processes:
 
-## Roadmap
+| Process | What it is | Port |
+| --- | --- | --- |
+| **Editor** | Theia + our `undisclosed-*` extensions + the embedded agent UI | 3000 |
+| **Brain** | FastAPI/uvicorn agent backend (models, toolkits, SSE) | 5001 |
 
-1. **Stand up Theia** (this repo): a minimal, working browser editor. ← current
-2. **Rebrand + strip chrome**: app name, disable Theia's built-in AI, trim the
-   layout so it reads as Eigent, not stock Theia.
-3. **Native agent widget**: a custom Theia extension contributing a `ReactWidget`
-   in the right panel — later hosts Eigent's (decoupled) agent UI, driven by the
-   Eigent backend over REST/SSE.
-4. **Eigent features as contributions**: Context / Scheduled / Dispatch, spaces,
-   history — as Theia views / a custom area.
-5. **Package per-OS** and wire into the main app via `launch.json`
-   (`UNDISCLOSED_THEIA_BUNDLE_URL` / download-on-first-use, mirroring the current
-   provisioner).
+The agent UI (`agent-ui/`) is built into a self-contained bundle that the
+`undisclosed-agent` Theia extension serves and mounts as a right-side panel. The
+brain runs separately in dev (`scripts/brain.sh`) and is bundled + auto-launched
+in the packaged desktop app.
 
-> Agent decoupling (extracting Eigent's agent UI + its store/SSE layer into a
-> self-contained package) is deliberately **deferred** until Theia itself is
-> standing and rebranded. Get the editor working first.
+---
 
-## Develop
+## Prerequisites
+
+| Tool | Version | Why |
+| --- | --- | --- |
+| **Node** | **18–20** (use `nvm use 20`) | Theia + its native modules don't build on Node 22/24 |
+| **Python** | **3.11** | The brain; also node-gyp needs `distutils` (removed in 3.12) when packaging |
+| **uv** | latest | Provisions the brain's venv from `pyproject.toml` |
+
+An `.nvmrc` pins Node 20. Copy `.env.sample` → `.env` for any model keys /
+tuning (all optional — see the file).
+
+---
+
+## Run locally (development)
+
+Three terminals, or run the brain in the background.
+
+**1. Brain** (agent backend, `:5001`):
+```bash
+./scripts/brain.sh setup      # once — provisions brain/.venv via uv
+./scripts/brain.sh start      # start (or: restart | stop | logs | status)
+```
+
+**2. Agent UI bundle** (build + sync into the editor extension):
+```bash
+npm run build:agent-ui
+```
+
+**3. Editor** (Theia, `:3000`):
+```bash
+nvm use 20
+npm install
+npm run build                 # webpack the frontend + generate the backend
+npm start                     # → http://127.0.0.1:3000
+```
+
+### Faster inner loop for the agent UI
+Rebuilding the whole bundle to see a UI change is slow. For component work, use
+**Storybook** (hot reload, no rebuild):
+```bash
+cd agent-ui && npm run storybook   # → http://localhost:6006
+```
+
+### Debugging
+Set `UNDISCLOSED_DEBUG=1` (in `.env`) to dump each turn's prompt, tool calls,
+model response, and streaming chunks to the brain log and
+`~/.undisclosed/debug/<task>.log`. In the browser devtools console,
+`localStorage.setItem('undisclosed_debug','1')` mirrors this on the frontend.
+
+---
+
+## Build a desktop app (installable)
+
+The desktop app (`apps/desktop/`) is an Electron Theia shell that bundles the
+editor **and** the brain (frozen with PyInstaller) and auto-launches it. One
+command freezes the brain, builds the frontend, and packages an installer:
 
 ```bash
-nvm use            # Node 20 (Theia targets 18/20; newer Node breaks native deps)
-npm install        # heavy (~Theia is large); native deps use prebuilt binaries
-npm run build      # webpack the frontend + generate the backend server
-npm start          # serve at http://127.0.0.1:3000
+nvm use 20
+export npm_config_python="$PWD/brain/.venv/bin/python"   # node-gyp needs Python 3.11
+npm run desktop:install                                  # once
+npm --prefix apps/desktop run rebuild                    # native modules → Electron ABI
+npm run dist:mac       # → apps/desktop/dist/Undisclosed-*.dmg  (also dist:win / dist:linux)
 ```
+
+The `.dmg` is **unsigned** (self-install). On first open: right-click → Open, or
+`xattr -cr /Applications/Undisclosed.app`. Full details + troubleshooting:
+**[docs/PACKAGING.md](docs/PACKAGING.md)**.
+
+---
+
+## Cut a release
+
+Releases are tag-driven — CI builds installers on native runners and attaches
+them to a GitHub Release.
+
+```bash
+npm run release [patch|minor|major]
+```
+
+This gates (build), bumps the version, commits, tags `vX.Y.Z`, and pushes. The
+workflow (`.github/workflows/release.yml`) does the rest. macOS is disabled in
+CI until code-signing is set up (build it locally instead — see above). See
+[docs/PACKAGING.md](docs/PACKAGING.md) for the signing/notarization path.
+
+---
+
+## Repo layout
+
+```
+agent-ui/            The agent UI (React + Vite) → built to a self-contained bundle
+brain/               FastAPI agent backend ("the brain"); uv + pyproject.toml
+packages/
+  undisclosed-agent/       Theia extension: serves + mounts the agent panel; brain launcher
+  undisclosed-languages/   Monaco/Monarch language support (see its add-language.cjs)
+  undisclosed-import/       VS Code settings/extensions import
+apps/desktop/        Electron Theia app (packaging target)
+scripts/             brain.sh, build-brain.sh, release.sh
+docs/                PACKAGING.md and design notes
+```
+
+---
+
+## License
+
+Apache-2.0. Portions © Eigent.ai (preserved per Apache-2.0); on-device editor,
+packaging, and new features © Simon Ugorji. See per-file headers.
