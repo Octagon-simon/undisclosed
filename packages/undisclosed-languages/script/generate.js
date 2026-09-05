@@ -74,6 +74,7 @@ const LANGUAGES = [
   'ini',
   'hcl',
   'protobuf',
+  // <ADD-LANGUAGE:vendored> new monaco basic-languages ids go above this line
 ];
 
 function readModule(lang) {

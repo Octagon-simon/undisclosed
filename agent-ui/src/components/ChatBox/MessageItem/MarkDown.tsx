@@ -22,6 +22,8 @@ import { usePageTabStore } from '@/store/pageTabStore';
 import '@/style/markdown-styles.css';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
+import markedKatex from 'marked-katex-extension';
+import 'katex/dist/katex.min.css';
 import { memo, useEffect, useRef, useState } from 'react';
 
 // Helper functions for path resolution
@@ -57,6 +59,13 @@ marked.setOptions({
   gfm: true,
   breaks: true,
 });
+
+// Render LaTeX math ($…$ inline, $$…$$ block) via KaTeX. `nonStandard` lets
+// `$x$` work without requiring surrounding whitespace; `output: 'html'` avoids
+// emitting MathML so DOMPurify keeps the rendered markup intact.
+marked.use(
+  markedKatex({ throwOnError: false, nonStandard: true, output: 'html' })
+);
 
 export const MarkDown = memo(
   ({
@@ -317,7 +326,14 @@ export const MarkDown = memo(
         // blocks keep their language-* className after sanitization, and
         // data-file-path so the clickable path spans above survive.
         const sanitized = DOMPurify.sanitize(rawHtml, {
-          ADD_ATTR: ['class', 'data-file-path', 'data-copy-btn'],
+          // `style`/`aria-hidden` keep KaTeX's rendered math markup intact.
+          ADD_ATTR: [
+            'class',
+            'data-file-path',
+            'data-copy-btn',
+            'style',
+            'aria-hidden',
+          ],
         });
         setHtml(sanitized);
         if (displayedContent === content && renderCompleteRef.current) {

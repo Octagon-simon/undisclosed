@@ -1,0 +1,91 @@
+# Build installers on each OS's native runner and attach them to a GitHub
+# Release. Cross-compiling desktop installers is painful, so each is built on its
+# own runner (mirrors the pulpit-ai release flow).
+#
+# Trigger: push a version tag (see scripts/release.sh):
+#   npm run release [patch|minor|major]
+# Or run manually from the Actions tab (build-only, no Release).
+#
+# PREREQUISITE: the Electron app at apps/desktop (docs/PACKAGING.md, Step 1) must
+# exist with dist:* scripts + electron-builder.yml. Until then the "Package
+# installers" step no-ops — the pipeline is committed so the path is ready.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write # create the Release + upload assets
+
+jobs:
+  package:
+    name: package (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # macOS disabled until Developer ID signing/notarization is set up
+        # (unsigned mac builds hit a Gatekeeper block). Swap it back in — and add
+        # CSC_LINK / APPLE_* secrets — once that's done.
+        os: [ubuntu-latest, windows-latest]
+        # os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # 1) Freeze the Python brain into a self-contained binary (no Python on the
+      #    user's machine). Consumed by electron-builder via extraResources.
+      - name: Build brain binary
+        run: npm run dist:brain
+
+      # 2) Install + build the Theia frontend and agent embed.
+      - run: npm ci
+      - name: Build frontend
+        run: npm run dist:prepare
+
+      # 3) Package installers (needs apps/desktop — see PACKAGING.md).
+      - name: Package installers
+        run: npm --prefix apps/desktop run dist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ matrix.os }}
+          path: |
+            apps/desktop/dist/*.AppImage
+            apps/desktop/dist/*.deb
+            apps/desktop/dist/*.exe
+            apps/desktop/dist/*.dmg
+            apps/desktop/dist/*.zip
+            apps/desktop/dist/*.yml
+            apps/desktop/dist/*.blockmap
+          if-no-files-found: ignore
+          # Same-run hand-off to the release job, not a kept artifact — short
+          # retention so builds don't pile up against the Actions storage quota.
+          retention-days: 1
+
+  release:
+    name: publish Release
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Publish installers to the Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          fail_on_unmatched_files: false

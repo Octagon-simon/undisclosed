@@ -1,4 +1,5 @@
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+# Portions Copyright 2026 Simon Ugorji. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -107,11 +108,12 @@ class MemoryToolkit(AbstractToolkit):
     def recall_conversation(self, query: str) -> str:
         """Retrieve earlier messages from THIS conversation that match a query.
 
-        Your working memory is kept intentionally lean, so do NOT assume you
-        remember everything said earlier. When you need a specific earlier
-        detail (a decision, a value, a file/URL, prior code, what the user
-        already told you), call this to pull it back instead of guessing or
-        re-asking.
+        Use this ONLY for a FOLLOW-UP whose current message refers to or builds
+        on something said earlier (e.g. "the value you computed", "that file",
+        "as we discussed", "continue") that you no longer have in working
+        memory. Do NOT call it for a self-contained new task or a first message
+        — there is nothing earlier to recall and it just wastes a step. If you
+        can act on the message as written, do the work instead.
 
         Args:
             query (str): Words or a short phrase describing what to find.

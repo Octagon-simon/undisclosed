@@ -45,6 +45,7 @@ from app.agent.tool_rag import (
     reconcile_agent_tools_routed,
 )
 from app.component.environment import env
+from app.component.debug import debug_dump, debug_enabled
 from app.utils.file_utils import resolve_attach_refs, resolve_upload_ref
 from app.utils.model_capabilities import model_supports_vision
 from app.model.enums import Status
@@ -544,7 +545,11 @@ async def _response_content(
         return int(usage_info.get("total_tokens", 0) or 0)
 
     def reasoning_of(msg: Any) -> str:
-        if not msg:
+        # NOTE: `if not msg` is WRONG here — CAMEL's BaseMessage.__len__ returns
+        # len(content), so a reasoning-ONLY chunk (empty content, which is how
+        # reasoning streams BEFORE the answer) is falsy and would be dropped,
+        # discarding all live reasoning. Check for None explicitly instead.
+        if msg is None:
             return ""
         r = getattr(msg, "reasoning_content", "")
         if isinstance(r, list):
@@ -552,18 +557,62 @@ async def _response_content(
         return str(r or "")
 
     if isinstance(response, AsyncStreamingChatAgentResponse):
+        logger.info(
+            "[thinking] stream start: stream_reasoning=%s task=%s",
+            stream_reasoning,
+            task_id,
+        )
         content = ""
         reasoning = ""
         streamed = False
         last_chunk = None
+        _logged_first_reasoning = False
+        _dbg_chunk_no = 0
         async for chunk in response:
             last_chunk = chunk
+            # DEBUG: dump the structure of the first handful of chunks so we can
+            # see exactly where (if anywhere) reasoning lands.
+            if debug_enabled() and _dbg_chunk_no < 12:
+                _dbg_chunk_no += 1
+                _m = getattr(chunk, "msg", None)
+                debug_dump(
+                    "chunk",
+                    {
+                        "n": _dbg_chunk_no,
+                        "content": (getattr(_m, "content", "") or "")[:60],
+                        "reasoning_content": (
+                            getattr(_m, "reasoning_content", "") or ""
+                        )[:60],
+                        "meta": getattr(_m, "meta_dict", None),
+                        "info_keys": list((getattr(chunk, "info", None) or {}).keys()),
+                    },
+                    task_id=task_id,
+                )
             if chunk.msg and chunk.msg.content:
                 content += chunk.msg.content
             # reasoning_content is an incremental DELTA (agent uses
             # stream_accumulate=False), so accumulate it AND stream it live.
             r_delta = reasoning_of(getattr(chunk, "msg", None))
             if r_delta:
+                if not _logged_first_reasoning:
+                    _logged_first_reasoning = True
+                    logger.info(
+                        "[thinking] first reasoning delta received (%d chars): %r",
+                        len(r_delta),
+                        r_delta[:80],
+                    )
+                    debug_dump(
+                        "reasoning-enqueue",
+                        {
+                            "r_delta_len": len(r_delta),
+                            "stream_reasoning": stream_reasoning,
+                            "task_lock_is_none": task_lock is None,
+                            "will_enqueue": bool(
+                                stream_reasoning and task_lock is not None
+                            ),
+                        },
+                        task_id=task_id,
+                    )
                 reasoning += r_delta
                 if stream_reasoning and task_lock is not None:
                     try:
@@ -577,6 +626,26 @@ async def _response_content(
                         logger.debug(
                             "reasoning delta enqueue failed", exc_info=True
                         )
+        if stream_reasoning:
+            logger.info(
+                "[thinking] stream done: reasoning_chars=%d streamed=%s "
+                "content_chars=%d",
+                len(reasoning),
+                streamed,
+                len(content),
+            )
+        debug_dump(
+            "response",
+            {
+                "chunks": _dbg_chunk_no,
+                "content_chars": len(content),
+                "reasoning_chars": len(reasoning),
+                "reasoning_streamed": streamed,
+                "content_preview": content[:300],
+                "reasoning_preview": reasoning[:300],
+            },
+            task_id=task_id,
+        )
         return content, extract_tokens(last_chunk), reasoning, streamed
 
     msg = getattr(response, "msg", None)

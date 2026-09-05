@@ -18,6 +18,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
+# Anthropic rejects a final assistant message ending with trailing whitespace;
+# patch CAMEL's converter to rstrip assistant content. Applied at import so it
+# is in place before any model request. Best-effort (never raises).
+try:
+    from app.utils.anthropic_whitespace_patch import apply as _apply_ws_patch
+
+    _apply_ws_patch()
+except Exception:  # pragma: no cover - defensive
+    pass
+
 # Initialize FastAPI with title
 api = FastAPI(title="Undisclosed Multi-Agent System API")
 

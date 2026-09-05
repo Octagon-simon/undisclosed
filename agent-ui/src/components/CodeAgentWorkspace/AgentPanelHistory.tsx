@@ -1,4 +1,5 @@
 // ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+// Portions Copyright 2026 Simon Ugorji. All Rights Reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -31,7 +32,8 @@ import {
   getVisibleProjectMetasForSpace,
   useSpaceStore,
 } from '@/store/spaceStore';
-import { useEffect, useMemo } from 'react';
+import { Loader2 } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 export default function AgentPanelHistory({
@@ -71,6 +73,19 @@ export default function AgentPanelHistory({
     if (!activeSpaceId) return;
     void useSpaceStore.getState().syncProjectsFromServer(activeSpaceId);
   }, [activeSpaceId]);
+
+  // Manual refresh: same server pull as on-open, for when a title/new run
+  // landed after History was already open (mirrors the Usage overview button).
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const handleRefresh = useCallback(async () => {
+    if (!activeSpaceId || isRefreshing) return;
+    setIsRefreshing(true);
+    try {
+      await useSpaceStore.getState().syncProjectsFromServer(activeSpaceId);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [activeSpaceId, isRefreshing]);
 
   const projectMetas = useMemo(
     () => getVisibleProjectMetasForSpace(projectsBySpaceId, activeSpaceId),
@@ -113,6 +128,22 @@ export default function AgentPanelHistory({
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      <div className="mb-2 flex items-center justify-between px-3 pt-3">
+        <h2 className="text-body-sm font-bold text-ds-text-neutral-default-default">
+          {t('layout.history', 'History')}
+        </h2>
+        <button
+          type="button"
+          onClick={handleRefresh}
+          disabled={isRefreshing || !activeSpaceId}
+          className="flex items-center gap-1 rounded-md px-2 py-1 text-label-xs text-[var(--theia-descriptionForeground,var(--theia-foreground))] outline-none transition-colors hover:bg-[var(--theia-list-hoverBackground)] disabled:opacity-50"
+        >
+          {isRefreshing ? (
+            <Loader2 size={12} className="animate-spin" aria-hidden />
+          ) : null}
+          {t('layout.refresh', 'Refresh')}
+        </button>
+      </div>
       {navProjects.length === 0 ? (
         <div className="flex flex-1 items-center justify-center p-6 text-center">
           <div className="text-label-xs text-ds-text-neutral-subtle-default">

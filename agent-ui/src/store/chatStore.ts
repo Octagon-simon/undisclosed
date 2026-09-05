@@ -29,6 +29,7 @@ import { showCreditsToast } from '@/components/Toast/creditsToast';
 import { showStorageToast } from '@/components/Toast/storageToast';
 import type { AppHost } from '@/host/types';
 import { generateUniqueId, uploadLog } from '@/lib';
+import { feDebug } from '@/lib/debug';
 import { getConnectionConfig } from '@/store/connectionStore';
 import {
   classifyError,
@@ -419,6 +420,8 @@ interface Task {
   planDirty: boolean;
   autoConfirmDeadline: number | null;
   isContextExceeded?: boolean;
+  /** Live streamed reasoning ("thinking") deltas for the current turn. */
+  liveReasoning?: string;
   // Streaming decompose text - stored separately to avoid frequent re-renders
   streamingDecomposeText: string;
   // Trigger execution ID for tracking trigger task completion
@@ -870,6 +873,8 @@ export interface ChatStore {
   savePlan: (taskId: string) => Promise<void>;
   clearTasks: () => void;
   setIsContextExceeded: (taskId: string, isContextExceeded: boolean) => void;
+  appendLiveReasoning: (taskId: string, delta: string) => void;
+  clearLiveReasoning: (taskId: string) => void;
   setNextTaskId: (taskId: string | null) => void;
   setStreamingDecomposeText: (taskId: string, text: string) => void;
   clearStreamingDecomposeText: (taskId: string) => void;
@@ -2638,12 +2643,29 @@ const chatStore = (initial?: Partial<ChatStore>) =>
                   lastMessage?.role === 'user' && lastMessage?.id
                     ? lastMessage.id
                     : generateUniqueId();
+                // Fresh turn: clear any stale live reasoning from a prior
+                // stalled/stopped turn so this thinking block starts clean.
+                newChatStore.getState().clearLiveReasoning(newTaskId);
                 newChatStore.getState().addMessages(newTaskId, {
                   id: carriedUserId,
                   role: 'user',
                   content: userMessageContent,
                   attaches: attachesForNewMessage,
                 });
+                // This queued follow-up's turn has started and it's now in the
+                // stream — drop its pending QueuedBox pill (display-only entries
+                // have no executionId), matched by content.
+                try {
+                  const ps = useProjectStore.getState();
+                  const pending = ps.projects[project_id]?.queuedMessages?.find(
+                    (m) => !m.executionId && m.content === userMessageContent
+                  );
+                  if (pending) {
+                    ps.removeQueuedMessage(project_id, pending.task_id);
+                  }
+                } catch (err) {
+                  console.warn('[queue] failed to clear pending pill:', err);
+                }
                 console.log('[NEW CHATSTORE] Created for ', project_id);
 
                 //Create a new history point
@@ -2771,6 +2793,8 @@ const chatStore = (initial?: Partial<ChatStore>) =>
             setActiveAsk,
             setActiveAskList,
             setActiveApproval,
+            appendLiveReasoning,
+            clearLiveReasoning,
             tasks,
             create: _create,
             setTaskTime,
@@ -3291,6 +3315,20 @@ const chatStore = (initial?: Partial<ChatStore>) =>
             console.log(
               `Received new task: ${task_id} with content: ${content}`
             );
+            return;
+          }
+
+          // Live streamed reasoning ("thinking") deltas — accumulate into the
+          // task's liveReasoning so the UI shows the model thinking in real time.
+          if (agentMessages.step === AgentStep.REASONING) {
+            const delta =
+              (agentMessages.data as { reasoning?: string })?.reasoning ?? '';
+            feDebug('sse-reasoning', {
+              taskId: currentTaskId,
+              len: delta.length,
+              sample: delta.slice(0, 40),
+            });
+            if (delta) appendLiveReasoning(currentTaskId, delta);
             return;
           }
 
@@ -4183,6 +4221,13 @@ const chatStore = (initial?: Partial<ChatStore>) =>
               typeof (endData as { reasoning?: unknown }).reasoning === 'string'
                 ? (endData as { reasoning: string }).reasoning
                 : undefined;
+            // If reasoning was streamed live this turn, the end event carries no
+            // reasoning (to avoid duplication) — fold the accumulated live
+            // reasoning onto the final message so its thinking block persists,
+            // then clear the live buffer.
+            const liveReasoning = tasks[currentTaskId]?.liveReasoning;
+            const finalReasoning = endReasoning || liveReasoning || undefined;
+            if (liveReasoning) clearLiveReasoning(currentTaskId);
             const endMessageId = generateUniqueId();
             const endUiMessage: Message = {
               id: endMessageId,
@@ -4191,7 +4236,7 @@ const chatStore = (initial?: Partial<ChatStore>) =>
               step: agentMessages.step,
               isConfirm: false,
               fileList: [],
-              reasoning: endReasoning,
+              reasoning: finalReasoning,
             };
 
             addMessages(currentTaskId, endUiMessage);
@@ -5804,6 +5849,46 @@ const chatStore = (initial?: Partial<ChatStore>) =>
           },
         },
       }));
+    },
+    appendLiveReasoning: (taskId, delta) => {
+      set((state) => {
+        const task = state.tasks[taskId];
+        if (!task) {
+          feDebug('appendLiveReasoning: TASK NOT IN THIS STORE', {
+            taskId,
+            knownTasks: Object.keys(state.tasks),
+          });
+          return state;
+        }
+        const next = (task.liveReasoning || '') + delta;
+        feDebug('appendLiveReasoning: ok', {
+          taskId,
+          totalLen: next.length,
+        });
+        return {
+          ...state,
+          tasks: {
+            ...state.tasks,
+            [taskId]: {
+              ...task,
+              liveReasoning: next,
+            },
+          },
+        };
+      });
+    },
+    clearLiveReasoning: (taskId) => {
+      set((state) => {
+        const task = state.tasks[taskId];
+        if (!task || !task.liveReasoning) return state;
+        return {
+          ...state,
+          tasks: {
+            ...state.tasks,
+            [taskId]: { ...task, liveReasoning: '' },
+          },
+        };
+      });
     },
     setNextTaskId: (taskId) => {
       set((state) => ({

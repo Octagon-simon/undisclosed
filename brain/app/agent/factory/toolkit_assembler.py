@@ -106,6 +106,11 @@ class ToolkitAssembly:
     browser_cdp_url: str | None = None
     browser_session_id: str | None = None
     browser_owned_by_hands: bool = False
+    # Capabilities NOT built at assembly time — the agent constructs them on
+    # demand via load_capability (e.g. the Browser Toolkit, so a pure reasoning
+    # turn never launches Chromium). Maps a capability name to an async factory
+    # `async def(agent) -> list[FunctionTool]` that builds + registers it.
+    deferred_capabilities: dict[str, Any] = field(default_factory=dict)
 
     def add_tools(
         self,
@@ -244,6 +249,162 @@ def _browser_enabled_tools() -> list[str]:
     ]
 
 
+def _lazy_single_agent_extras() -> bool:
+    """Whether to DEFER the Browser + Screenshot toolkits for the single agent —
+    i.e. not build/register them at assembly (so a pure reasoning turn never
+    launches Chromium), exposing them via load_capability instead.
+
+    Requires tool-RAG (which provides the load_capability meta-tool the agent
+    uses to pull them in). Disable with UNDISCLOSED_SINGLE_AGENT_LAZY_BROWSER=0.
+    """
+    try:
+        from app.agent.tool_rag import tool_rag_enabled
+
+        if not tool_rag_enabled():
+            return False
+    except Exception:
+        return False
+    raw = (env("UNDISCLOSED_SINGLE_AGENT_LAZY_BROWSER", "1") or "").strip().lower()
+    return raw not in {"0", "false", "no"}
+
+
+def _register_lazy_toolkit(agent: Any, toolkit: Any) -> None:
+    """Bind a lazily-built RegisteredAgentToolkit to an already-created agent,
+    mirroring what CAMEL does with toolkits_to_register_agent at construction
+    (it calls `toolkit.register_agent(self)`)."""
+    try:
+        register = getattr(toolkit, "register_agent", None)
+        if callable(register):
+            register(agent)
+    except Exception:
+        logger.warning("lazy toolkit register_agent failed", exc_info=True)
+
+
+async def _build_single_agent_screenshot(
+    options, config, working_directory, message_integration, assembly, agent
+):
+    """Build + register the ScreenshotToolkit. Eager when agent is None (added
+    to toolkits_to_register_agent), lazy otherwise (bound to the live agent)."""
+    screenshot_options = {
+        "working_directory": working_directory,
+        "agent_name": Agents.single_agent,
+        **_options(config, "screenshot"),
+    }
+    toolkit = ScreenshotToolkit(options.project_id, **screenshot_options)
+    registered = message_integration.register_toolkits(toolkit)
+    tools = registered.get_tools()
+    _tag_tools(tools, ScreenshotToolkit.toolkit_name())
+    if agent is None:
+        assembly.toolkits_to_register_agent.append(toolkit)
+        assembly.add_tools(tools, ScreenshotToolkit.toolkit_name())
+    else:
+        _register_lazy_toolkit(agent, toolkit)
+    return tools
+
+
+async def _build_single_agent_browser(
+    options, config, hands, message_integration, assembly, agent
+):
+    """Build + register the HybridBrowserToolkit, LAUNCHING the CDP browser as a
+    side effect. Eager when agent is None; lazy (from load_capability) otherwise.
+    This is the expensive path we defer so reasoning turns don't spawn Chromium.
+    """
+    toolkit_session_id = str(uuid.uuid4())[:8]
+    selected_port: int | None = None
+    cdp_url: str | None = None
+    cdp_owned_by_hands = False
+
+    if options.cdp_browsers:
+        from app.agent.factory.browser import _cdp_pool_manager
+
+        selected_browser = _cdp_pool_manager.acquire_browser(
+            options.cdp_browsers,
+            toolkit_session_id,
+            options.task_id,
+        )
+        if selected_browser is None:
+            selected_browser = options.cdp_browsers[0]
+            logger.warning(
+                "No available CDP browser in pool for Single Agent; "
+                "using first browser",
+                extra={
+                    "project_id": options.project_id,
+                    "task_id": options.task_id,
+                },
+            )
+        selected_port = _get_browser_port(selected_browser)
+        cdp_url = _get_browser_endpoint(selected_browser)
+    else:
+        existing_cdp_url = env("UNDISCLOSED_CDP_URL", "").strip()
+        selected_port = int(env("browser_port", "9222"))
+        cdp_url = f"http://localhost:{selected_port}"
+        if existing_cdp_url:
+            cdp_url = existing_cdp_url
+            try:
+                parsed = urlparse(existing_cdp_url)
+                if parsed.port is not None:
+                    selected_port = parsed.port
+            except Exception:
+                selected_port = int(env("browser_port", "9222"))
+        else:
+            acquired = False
+            if hands is not None:
+                try:
+                    cdp_url = hands.acquire_resource(
+                        "browser", toolkit_session_id, port=selected_port
+                    )
+                    cdp_owned_by_hands = True
+                    acquired = True
+                except (NotImplementedError, ValueError):
+                    acquired = False
+            if not acquired:
+                from app.utils.browser_launcher import (
+                    ensure_cdp_browser_endpoint,
+                )
+
+                launched = ensure_cdp_browser_endpoint(selected_port)
+                if launched:
+                    cdp_url = launched
+                    try:
+                        parsed_port = urlparse(launched).port
+                        if parsed_port:
+                            selected_port = parsed_port
+                    except Exception:
+                        pass
+                else:
+                    cdp_url = f"http://localhost:{selected_port}"
+
+    cdp_keep_current = bool(options.cdp_browsers)
+    default_start_url = None if cdp_keep_current else "about:blank"
+    browser_options = {
+        "cdp_keep_current_page": cdp_keep_current,
+        "default_start_url": default_start_url,
+        "headless": False,
+        "browser_log_to_file": True,
+        "stealth": True,
+        "session_id": toolkit_session_id,
+        "cdp_url": cdp_url,
+        "enabled_tools": _browser_enabled_tools(),
+        **_options(config, "browser"),
+    }
+    toolkit = HybridBrowserToolkit(options.project_id, **browser_options)
+    toolkit.agent_name = Agents.single_agent
+    assembly.browser_toolkit = toolkit
+    assembly.browser_port = selected_port
+    assembly.browser_cdp_url = cdp_url
+    assembly.browser_session_id = toolkit_session_id
+    assembly.browser_owned_by_hands = cdp_owned_by_hands
+    registered = message_integration.register_toolkits(toolkit)
+    tools = registered.get_tools()
+    _tag_tools(tools, HybridBrowserToolkit.toolkit_name())
+    if agent is None:
+        assembly.toolkits_to_register_agent.append(toolkit)
+        assembly.add_tools(tools, HybridBrowserToolkit.toolkit_name())
+    else:
+        _register_lazy_toolkit(agent, toolkit)
+    return tools
+
+
 def _mcp_config(options: Chat, hands: IHands | None) -> dict[str, Any] | None:
     servers = dict((options.installed_mcp or {}).get("mcpServers", {}))
     # Also include MCP servers the user installed locally (~/.undisclosed/mcp.json,
@@ -351,20 +512,18 @@ async def assemble_single_agent_toolkits(
         )
 
     if _enabled(config, "screenshot"):
-        screenshot_options = {
-            "working_directory": working_directory,
-            "agent_name": Agents.single_agent,
-            **_options(config, "screenshot"),
-        }
-        toolkit = ScreenshotToolkit(
-            options.project_id,
-            **screenshot_options,
-        )
-        assembly.toolkits_to_register_agent.append(toolkit)
-        registered = message_integration.register_toolkits(toolkit)
-        assembly.add_tools(
-            registered.get_tools(), ScreenshotToolkit.toolkit_name()
-        )
+        if _lazy_single_agent_extras():
+            assembly.deferred_capabilities[
+                ScreenshotToolkit.toolkit_name()
+            ] = lambda agent: _build_single_agent_screenshot(
+                options, config, working_directory, message_integration,
+                assembly, agent,
+            )
+        else:
+            await _build_single_agent_screenshot(
+                options, config, working_directory, message_integration,
+                assembly, None,
+            )
 
     if _enabled(config, "skill"):
         skill_options = {
@@ -468,102 +627,18 @@ async def assemble_single_agent_toolkits(
     if _enabled(config, "browser") and (
         hands is None or hands.can_use_browser()
     ):
-        toolkit_session_id = str(uuid.uuid4())[:8]
-        selected_port: int | None = None
-        cdp_url: str | None = None
-        cdp_owned_by_hands = False
-
-        if options.cdp_browsers:
-            # Reuse the same pool as the Browser Agent so concurrent projects
-            # do not accidentally claim the same CDP browser tab set.
-            from app.agent.factory.browser import _cdp_pool_manager
-
-            selected_browser = _cdp_pool_manager.acquire_browser(
-                options.cdp_browsers,
-                toolkit_session_id,
-                options.task_id,
+        if _lazy_single_agent_extras():
+            # Deferred: don't launch Chromium now. The agent load_capability()s
+            # the "Browser Toolkit" only when a task actually needs the web.
+            assembly.deferred_capabilities[
+                HybridBrowserToolkit.toolkit_name()
+            ] = lambda agent: _build_single_agent_browser(
+                options, config, hands, message_integration, assembly, agent,
             )
-            if selected_browser is None:
-                selected_browser = options.cdp_browsers[0]
-                logger.warning(
-                    "No available CDP browser in pool for Single Agent; "
-                    "using first browser",
-                    extra={
-                        "project_id": options.project_id,
-                        "task_id": options.task_id,
-                    },
-                )
-            selected_port = _get_browser_port(selected_browser)
-            cdp_url = _get_browser_endpoint(selected_browser)
         else:
-            existing_cdp_url = env("UNDISCLOSED_CDP_URL", "").strip()
-            selected_port = int(env("browser_port", "9222"))
-            cdp_url = f"http://localhost:{selected_port}"
-            if existing_cdp_url:
-                cdp_url = existing_cdp_url
-                try:
-                    parsed = urlparse(existing_cdp_url)
-                    if parsed.port is not None:
-                        selected_port = parsed.port
-                except Exception:
-                    selected_port = int(env("browser_port", "9222"))
-            else:
-                acquired = False
-                if hands is not None:
-                    try:
-                        cdp_url = hands.acquire_resource(
-                            "browser", toolkit_session_id, port=selected_port
-                        )
-                        cdp_owned_by_hands = True
-                        acquired = True
-                    except (NotImplementedError, ValueError):
-                        acquired = False
-                if not acquired:
-                    # No Electron/hands-provided browser (the standalone brain in
-                    # eigent-theia): the desktop app used to launch Chromium with
-                    # a remote-debugging port; nothing does now. Launch our OWN
-                    # CDP browser. Idempotent — reuses one already listening.
-                    from app.utils.browser_launcher import (
-                        ensure_cdp_browser_endpoint,
-                    )
-
-                    launched = ensure_cdp_browser_endpoint(selected_port)
-                    if launched:
-                        cdp_url = launched
-                        try:
-                            parsed_port = urlparse(launched).port
-                            if parsed_port:
-                                selected_port = parsed_port
-                        except Exception:
-                            pass
-                    else:
-                        cdp_url = f"http://localhost:{selected_port}"
-
-        cdp_keep_current = bool(options.cdp_browsers)
-        default_start_url = None if cdp_keep_current else "about:blank"
-        browser_options = {
-            "cdp_keep_current_page": cdp_keep_current,
-            "default_start_url": default_start_url,
-            "headless": False,
-            "browser_log_to_file": True,
-            "stealth": True,
-            "session_id": toolkit_session_id,
-            "cdp_url": cdp_url,
-            "enabled_tools": _browser_enabled_tools(),
-            **_options(config, "browser"),
-        }
-        toolkit = HybridBrowserToolkit(options.project_id, **browser_options)
-        toolkit.agent_name = Agents.single_agent
-        assembly.browser_toolkit = toolkit
-        assembly.browser_port = selected_port
-        assembly.browser_cdp_url = cdp_url
-        assembly.browser_session_id = toolkit_session_id
-        assembly.browser_owned_by_hands = cdp_owned_by_hands
-        assembly.toolkits_to_register_agent.append(toolkit)
-        registered = message_integration.register_toolkits(toolkit)
-        assembly.add_tools(
-            registered.get_tools(), HybridBrowserToolkit.toolkit_name()
-        )
+            await _build_single_agent_browser(
+                options, config, hands, message_integration, assembly, None,
+            )
 
     if _enabled(config, "terminal") and (
         hands is None or hands.can_execute_terminal()

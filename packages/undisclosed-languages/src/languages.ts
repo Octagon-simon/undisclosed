@@ -15,7 +15,10 @@ export interface LanguageDescriptor extends monaco.languages.ILanguageExtensionP
 // The "start string" of the .ts source that will be used for the generated language metadata.
 export const LANGUAGE_DESCRIPTORS: LanguageDescriptor[] = [
     { module: 'javascript', id: 'javascript', aliases: ['JavaScript', 'js', 'node'], extensions: ['.js', '.es6', '.mjs', '.cjs'], mimetypes: ['text/javascript'] },
-    { module: 'typescript', id: 'typescript', aliases: ['TypeScript', 'ts', 'tsx'], extensions: ['.ts', '.tsx', '.mts', '.cts'] },
+    { module: 'typescript', id: 'typescript', aliases: ['TypeScript', 'ts'], extensions: ['.ts', '.mts', '.cts'] },
+    // TSX reuses the vendored TypeScript tokenizer (no separate monaco module),
+    // but gets its own language id + `.tsx` association (VS Code parity).
+    { module: 'typescript', id: 'typescriptreact', aliases: ['TypeScript React', 'tsx'], extensions: ['.tsx'] },
     { module: 'python', id: 'python', aliases: ['Python', 'py'], extensions: ['.py', '.pyw', '.rpy', '.cpy', '.gyp', '.gypi'], firstLine: '^#!/.*\\bpython[0-9.-]*\\b' },
     { module: 'java', id: 'java', aliases: ['Java'], extensions: ['.java', '.jav'], firstLine: '^package' },
     { module: 'cpp', id: 'cpp', aliases: ['C++'], extensions: ['.cpp', '.hh', '.cc', '.cxx', '.hpp', '.hxx', '.h', '.inl', '.ino'] },
@@ -45,4 +48,5 @@ export const LANGUAGE_DESCRIPTORS: LanguageDescriptor[] = [
     { module: 'ini', id: 'ini', aliases: ['Ini'], extensions: ['.ini', '.properties', '.gitconfig'] },
     { module: 'hcl', id: 'hcl', aliases: ['HCL', 'Terraform', 'tf'], extensions: ['.tf', '.tfvars', '.hcl'] },
     { module: 'protobuf', id: 'protobuf', aliases: ['Protocol Buffers', 'proto'], extensions: ['.proto'] },
+    // <ADD-LANGUAGE:descriptors> new language descriptors go above this line
 ];

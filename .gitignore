@@ -36,3 +36,11 @@ todo.md
 
 # Local backups
 .tmp/
+
+# Local env files (secrets) — keep the committable template
+.env
+.env.*
+!.env.sample
+!.env.example
+agent-ui/.env
+agent-ui/.env.*

@@ -1,4 +1,5 @@
 // ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+// Portions Copyright 2026 Simon Ugorji. All Rights Reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -437,25 +438,16 @@ export default function ChatBox(): JSX.Element {
     return () => clearInterval(interval);
   }, [chatStore?.activeTaskId, chatStore]);
 
+  // Ask-human is a genuine "wait for the user" moment: the backend blocks
+  // indefinitely on the reply (no tool/step timeout on this path) and keeps the
+  // browser/session state alive. We used to auto-send "skip" after 30s, which
+  // silently abandoned the question when the user simply hadn't looked yet.
+  // That's removed — the prompt now stays until the user actually answers.
   useEffect(() => {
     if (!activeHumanReplyKey || !activeTaskId) {
       autoReplyAttemptRef.current = null;
-      return;
     }
-    if (message.trim() || autoReplyAttemptRef.current === activeHumanReplyKey) {
-      return;
-    }
-
-    const timer = window.setTimeout(() => {
-      // A failed request must not create an endless 30-second retry loop for
-      // the same question. The prompt remains visible so the user can retry.
-      if (autoReplyAttemptRef.current === activeHumanReplyKey) return;
-      autoReplyAttemptRef.current = activeHumanReplyKey;
-      void handleSendRef.current?.('skip', activeTaskId);
-    }, 30000);
-
-    return () => window.clearTimeout(timer);
-  }, [activeHumanReplyKey, activeTaskId, message]);
+  }, [activeHumanReplyKey, activeTaskId]);
 
   const getAllChatStoresMemoized = useMemo(() => {
     if (!projectStore.activeProjectId) return [];
@@ -962,12 +954,36 @@ export default function ChatBox(): JSX.Element {
                 : {}),
             });
             chatStore.setIsPending(_taskId, true);
-            chatStore.addMessages(_taskId, {
-              id: generateUniqueId(),
-              role: 'user',
-              content: displayContent,
-              attaches: attachesForThisTurn,
-            });
+            // Only insert the user message inline when the task is IDLE (its
+            // turn starts now). For a QUEUED follow-up (task still busy), adding
+            // it here would render it BEFORE the current turn's response —
+            // stacking two user messages. Instead we surface it in the pending
+            // QueuedBox (a distinct "queued" section below the chat) and let the
+            // backend's deferred "confirmed" event insert it into the stream in
+            // order when its turn actually runs.
+            if (!isTaskBusy) {
+              // Fresh turn: wipe any stale live reasoning left over from a
+              // previous turn that stalled/was stopped and never fired its
+              // "end" event — otherwise the new thinking block would append to
+              // the old thoughts.
+              chatStore.clearLiveReasoning(_taskId);
+              chatStore.addMessages(_taskId, {
+                id: generateUniqueId(),
+                role: 'user',
+                content: displayContent,
+                attaches: attachesForThisTurn,
+              });
+            } else {
+              // Display-only queue entry (no executionId, so the background
+              // processor ignores it — the direct POST above does the send).
+              // Keyed by nextTaskId so we can drop it when its turn starts.
+              projectStore.addQueuedMessage(
+                targetProjectId,
+                displayContent,
+                [],
+                nextTaskId
+              );
+            }
             chatStore.setAttaches(_taskId, []);
             setMessage('');
           }

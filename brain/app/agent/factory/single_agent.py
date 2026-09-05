@@ -125,20 +125,24 @@ async def single_agent(
     # `load_capability([...])`. This is the "agent decides when to attach a tool"
     # mechanism for needs that its opening message didn't imply (per-turn RAG
     # handles the rest). Best-effort; skipped if there's nothing loadable.
+    # Deferred capabilities (e.g. the Browser/Screenshot toolkits) are NOT built
+    # at assembly — they're constructed on demand so a reasoning turn never
+    # launches Chromium. Surface them as loadable alongside the tool-RAG catalog.
+    loadable_names: list[str] = list(assembly.deferred_capabilities.keys())
     if tool_rag_selector is not None:
         try:
-            catalog = tool_rag_selector.capability_catalog()
-            if catalog:
-                system_message += (
-                    "\n\n<loadable_capabilities>\n"
-                    "These tool capabilities are NOT loaded by default. The "
-                    "moment a task needs one, call load_capability([...]) with "
-                    "the name(s) below, then use the tools it returns:\n"
-                    + "\n".join(f"- {name}" for name in catalog)
-                    + "\n</loadable_capabilities>"
-                )
+            loadable_names.extend(tool_rag_selector.capability_catalog())
         except Exception:
             logger.warning("capability catalog build failed", exc_info=True)
+    if loadable_names:
+        system_message += (
+            "\n\n<loadable_capabilities>\n"
+            "These tool capabilities are NOT loaded by default. The moment a "
+            "task needs one, call load_capability([...]) with the name(s) "
+            "below, then use the tools it returns:\n"
+            + "\n".join(f"- {name}" for name in loadable_names)
+            + "\n</loadable_capabilities>"
+        )
 
     agent = agent_model(
         Agents.single_agent,
@@ -157,14 +161,15 @@ async def single_agent(
     # on demand mid-task (CAMEL rebuilds tool schemas each iteration, so newly
     # added tools are usable on the next model call). Additive — per-turn RAG
     # still runs; this just covers mid-task needs.
-    if tool_rag_selector is not None:
+    if tool_rag_selector is not None or assembly.deferred_capabilities:
         try:
             from camel.toolkits import FunctionTool
 
             _selector = tool_rag_selector
             _agent_ref = agent
+            _deferred = assembly.deferred_capabilities
 
-            def load_capability(capabilities: list[str]) -> str:
+            async def load_capability(capabilities: list[str]) -> str:
                 """Attach additional tool capabilities (toolkits) when the
                 current task needs them and they are not already available.
 
@@ -176,23 +181,50 @@ async def single_agent(
                 Returns:
                     A short status describing what was loaded.
                 """
-                try:
-                    tools = _selector.tools_for_capabilities(
-                        capabilities, options.question
-                    )
-                    if not tools:
-                        available = ", ".join(_selector.capability_catalog())
-                        return (
-                            f"No capability matched {capabilities}. "
-                            f"Available: {available}"
+                loaded: list[str] = []
+                # 1) Deferred toolkits are BUILT on demand here (e.g. the browser
+                #    toolkit launches Chromium only at this point).
+                rag_wanted: list[str] = []
+                for cap in capabilities:
+                    factory = _deferred.get(cap)
+                    if factory is None:
+                        rag_wanted.append(cap)
+                        continue
+                    try:
+                        tools = await factory(_agent_ref)
+                        if tools:
+                            _agent_ref.add_tools(tools)
+                            loaded.append(cap)
+                    except Exception as exc:  # noqa: BLE001
+                        return f"Failed to load {cap}: {exc}"
+                # 2) Everything else comes from the tool-RAG catalog.
+                if rag_wanted and _selector is not None:
+                    try:
+                        tools = _selector.tools_for_capabilities(
+                            rag_wanted, options.question
                         )
-                    _agent_ref.add_tools(tools)
+                        if tools:
+                            _agent_ref.add_tools(tools)
+                            loaded.extend(rag_wanted)
+                    except Exception as exc:  # noqa: BLE001
+                        return f"Failed to load {rag_wanted}: {exc}"
+                if loaded:
                     return (
-                        f"Loaded {capabilities}. Their tools are now available "
-                        "— call them on your next step."
+                        f"Loaded {loaded}. Their tools are now available — call "
+                        "them on your next step."
                     )
-                except Exception as exc:  # noqa: BLE001
-                    return f"Failed to load {capabilities}: {exc}"
+                available = ", ".join(
+                    list(_deferred.keys())
+                    + (
+                        _selector.capability_catalog()
+                        if _selector is not None
+                        else []
+                    )
+                )
+                return (
+                    f"No capability matched {capabilities}. "
+                    f"Available: {available}"
+                )
 
             agent.add_tools([FunctionTool(load_capability)])
         except Exception:

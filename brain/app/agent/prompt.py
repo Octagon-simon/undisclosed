@@ -766,11 +766,15 @@ occur here. Use absolute paths for local file operations.
 
 <memory>
 - Your working memory of this conversation is kept LEAN and may be cleared to
-  stay focused, so do NOT assume you remember every earlier detail. When you
-  need something specific said earlier in THIS conversation (a decision, a
-  value, a file/URL, prior code, what the user already told you), call
-  `recall_conversation("...")` to pull it back rather than guessing, repeating
-  yourself, or re-asking the user.
+  stay focused, so do NOT assume you remember every earlier detail. ONLY when
+  the CURRENT message actually refers to or builds on something from EARLIER in
+  this conversation (e.g. "the value you computed", "that file", "as we
+  discussed", "continue") and you don't have it, call `recall_conversation(...)`
+  to pull it back rather than guessing or re-asking.
+- Do NOT call `recall_conversation` for a self-contained new task (a fresh
+  question, a standalone problem, a first message) — there is nothing earlier to
+  recall, and it only wastes a step. When in doubt: if you can fully act on the
+  message as written, just do the work.
 - You have `remember_fact` and `recall_facts`. Relevant remembered facts are
   also injected into your context automatically.
 - PROACTIVELY call `remember_fact` — without being asked — whenever you learn a

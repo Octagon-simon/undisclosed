@@ -1,4 +1,5 @@
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+# Portions Copyright 2026 Simon Ugorji. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -51,6 +52,33 @@ def _memory_window_size() -> int | None:
     except (TypeError, ValueError):
         return None
     return value if value > 0 else None
+
+
+def _wants_thinking(options: Chat) -> bool:
+    """True only when the user EXPLICITLY enabled thinking for this turn.
+
+    Unlike the surfacing check in single_agent_service (which defaults on),
+    requesting extended thinking costs real tokens, so here it must be an
+    explicit opt-in (the frontend sends toolkit_config.thinking.enabled)."""
+    cfg = (options.toolkit_config or {}).get("thinking")
+    return isinstance(cfg, dict) and bool(cfg.get("enabled"))
+
+
+def _thinking_budget() -> int:
+    """Extended-thinking token budget for the legacy `enabled` API.
+    Anthropic requires >= 1024."""
+    raw = env("UNDISCLOSED_THINKING_BUDGET", "4096")
+    try:
+        value = int(float(raw))
+    except (TypeError, ValueError):
+        value = 4096
+    return max(1024, value)
+
+
+def _thinking_effort() -> str:
+    """Effort level for the adaptive thinking API (Claude 5 / newer)."""
+    val = (env("UNDISCLOSED_THINKING_EFFORT", "high") or "").strip().lower()
+    return val if val in {"low", "medium", "high"} else "high"
 
 # OpenAI chat-completions streaming only returns token usage when
 # `stream_options.include_usage` is requested. Without it the request-level
@@ -263,6 +291,56 @@ def agent_model(
                 exc_info=True,
             )
 
+        # Extended thinking: when the user turned "show thinking" on, actually
+        # REQUEST reasoning from the model. Without this Claude emits no
+        # reasoning_content, so the thinking block never streams anything.
+        # Anthropic-only for now (its config accepts a `thinking` budget);
+        # other providers are left untouched until their param is wired.
+        if _wants_thinking(options):
+            try:
+                _mp = ModelPlatformType(
+                    str(effective_config.get("model_platform", "")).lower()
+                )
+            except (ValueError, AttributeError):
+                _mp = None
+            # Strictly Anthropic platform only: the `thinking` key lives on
+            # AnthropicConfig. Injecting it for an OpenAI-compatible gateway
+            # (even one serving a claude-* model) would be rejected by that
+            # provider's config and break the request.
+            if _mp == ModelPlatformType.ANTHROPIC and "thinking" not in model_config:
+                # Two Anthropic thinking APIs:
+                #   - Claude 5 / newer: {"type": "adaptive"} + output_config.effort
+                #   - older models:     {"type": "enabled", "budget_tokens": N}
+                # Default to adaptive (sonnet-5 rejects "enabled"); override with
+                # UNDISCLOSED_THINKING_TYPE=enabled for older Claude models.
+                ttype = (
+                    env("UNDISCLOSED_THINKING_TYPE", "adaptive") or ""
+                ).strip().lower()
+                if ttype == "enabled":
+                    budget = _thinking_budget()
+                    model_config["thinking"] = {
+                        "type": "enabled",
+                        "budget_tokens": budget,
+                    }
+                    # max_tokens must exceed the thinking budget.
+                    _mt = model_config.get("max_tokens")
+                    if not isinstance(_mt, int) or _mt <= budget:
+                        model_config["max_tokens"] = budget + 4096
+                else:
+                    model_config["thinking"] = {"type": "adaptive"}
+                    model_config["output_config"] = {"effort": _thinking_effort()}
+                logger.info(
+                    "[thinking] requesting %s (output_config=%s) for %s",
+                    model_config.get("thinking"),
+                    model_config.get("output_config"),
+                    effective_config.get("model_type"),
+                )
+                # Extended thinking (either form) requires temperature = 1 and no
+                # top_p / top_k.
+                model_config["temperature"] = 1.0
+                model_config.pop("top_p", None)
+                model_config.pop("top_k", None)
+
         # Runtime-owned values are applied after user configuration.
         if is_effective_cloud:
             model_config["user"] = str(options.project_id)
@@ -270,6 +348,12 @@ def agent_model(
             model_config["stream"] = True
             model_config["store"] = False
         if agent_name == Agents.task_agent:
+            model_config["stream"] = True
+        # The single agent is built with stream_accumulate=False (streaming
+        # intent), but nothing enabled streaming — so responses arrived whole
+        # and the live reasoning branch never ran (no "Thinking…" stream). Turn
+        # streaming on so content AND reasoning deltas flow live.
+        if agent_name == Agents.single_agent:
             model_config["stream"] = True
         if agent_name == Agents.browser_agent:
             try:

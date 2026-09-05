@@ -7,6 +7,7 @@ import express from '@theia/core/shared/express';
 import * as fs from 'fs';
 import * as http from 'http';
 import * as path from 'path';
+import { BrainLauncher } from './brain-launcher';
 
 // http-proxy ships as a transitive dep (no @types); minimal typing.
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -46,6 +47,10 @@ function resolveAssetsDir(): string {
  * an upstream body (GETs are unaffected).
  */
 export default new ContainerModule((bind) => {
+  // Spawn the frozen Python brain in a packaged desktop app (no-op in dev).
+  bind(BrainLauncher).toSelf().inSingletonScope();
+  bind(BackendApplicationContribution).toService(BrainLauncher);
+
   bind(BackendApplicationContribution)
     .toDynamicValue(() => ({
       configure(app: express.Application): void {

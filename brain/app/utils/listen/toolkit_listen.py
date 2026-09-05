@@ -325,6 +325,22 @@ def listen_toolkit(
                     error = e
 
                 res_msg = _format_result(res, error, return_msg)
+                try:
+                    from app.component.debug import debug_dump
+
+                    debug_dump(
+                        "tool",
+                        {
+                            "toolkit": toolkit_name,
+                            "method": method_name,
+                            "args": (args_str or "")[:600],
+                            "result": (res_msg or "")[:600],
+                            "error": str(error) if error else None,
+                        },
+                        task_id=str(process_task_id or ""),
+                    )
+                except Exception:
+                    pass
                 _log_deactivate(
                     toolkit_name,
                     method_name,
@@ -397,6 +413,22 @@ def listen_toolkit(
                     error = e
 
                 res_msg = _format_result(res, error, return_msg)
+                try:
+                    from app.component.debug import debug_dump
+
+                    debug_dump(
+                        "tool",
+                        {
+                            "toolkit": toolkit_name,
+                            "method": method_name,
+                            "args": (args_str or "")[:600],
+                            "result": (res_msg or "")[:600],
+                            "error": str(error) if error else None,
+                        },
+                        task_id=str(process_task_id or ""),
+                    )
+                except Exception:
+                    pass
                 _log_deactivate(
                     toolkit_name,
                     method_name,

@@ -30,12 +30,12 @@ export function ThinkingBlock({ reasoning }: { reasoning?: string }) {
   if (!text) return null;
 
   return (
-    <div className="mb-2 rounded-xl border border-solid border-ds-border-neutral-subtle-default bg-ds-bg-neutral-muted-default">
+    <div className="mb-2 rounded-xl border border-solid border-ds-border-neutral-subtle-default bg-ds-bg-neutral-muted-default py-2 px-1">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="flex w-full items-center gap-1.5 px-3 py-2 text-left outline-none"
+        className="flex w-full items-center gap-1.5 px-3 py-2 text-left !outline-none mb-2"
       >
         <Brain
           size={13}
