@@ -10,3 +10,4 @@ dist-web
 test-results/
 playwright-report/
 e2e/_debug.mjs
+storybook-static/

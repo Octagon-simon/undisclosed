@@ -228,22 +228,31 @@ export class UndisclosedAgentContribution
     });
   }
 
-  async onStart(): Promise<void> {
-    // Open the agent panel on EVERY launch (user preference), not just the
-    // first run. Previously this was gated behind INTRODUCED_KEY, so once the
-    // flag was set the panel never auto-opened again. We still record the
-    // first-run flag for any one-time intro UX that depends on it.
-    await this.openView({ activate: false, reveal: true });
-    const introduced = await this.storageService.getData<boolean>(
-      INTRODUCED_KEY,
-      false
-    );
-    if (!introduced) {
-      await this.storageService.setData(INTRODUCED_KEY, true);
-    }
+  onStart(): void {
+    // Auto-open the agent panel on launch — but NEVER block the editor's
+    // startup on it. Theia awaits every FrontendApplicationContribution.onStart
+    // (and initializeLayout) before revealing the workbench, so awaiting the
+    // agent view here — which loads a bundle and talks to the brain (:5001) —
+    // would spin the WHOLE editor whenever the brain is slow or down (e.g. the
+    // packaged app's frozen brain takes seconds to boot). The editor must come
+    // up independently; the agent panel loads + connects in the background and
+    // shows its own state. So: fire-and-forget, never awaited.
+    void this.openView({ activate: false, reveal: true }).catch(() => {
+      /* panel opens later / shows its own error — must not block startup */
+    });
+    void this.storageService
+      .getData<boolean>(INTRODUCED_KEY, false)
+      .then((introduced) => {
+        if (!introduced) {
+          void this.storageService.setData(INTRODUCED_KEY, true);
+        }
+      });
   }
 
-  async initializeLayout(): Promise<void> {
-    await this.openView({ activate: false, reveal: true });
+  initializeLayout(): void {
+    // Non-blocking (see onStart): reveal the panel without awaiting it.
+    void this.openView({ activate: false, reveal: true }).catch(() => {
+      /* non-blocking */
+    });
   }
 }

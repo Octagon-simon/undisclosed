@@ -242,7 +242,15 @@ def run_standalone():
 
     port = int(env("UNDISCLOSED_BRAIN_PORT", "5001"))
     host = env("UNDISCLOSED_BRAIN_HOST", "0.0.0.0")  # nosec B104 - bind all for Docker/dev
-    reload = os.environ.get("UNDISCLOSED_DEBUG", "").lower() in ("1", "true", "yes")
+    # Auto-reload is a DEV-only convenience and is IMPOSSIBLE in a PyInstaller
+    # binary (the reloader re-imports "main:api" from source + forks a worker,
+    # which double-binds the port -> "Address already in use" -> the packaged
+    # app hangs). Force it off when frozen; otherwise gate on an explicit flag
+    # (NOT UNDISCLOSED_DEBUG — debug dumps must not turn on the reloader).
+    frozen = getattr(sys, "frozen", False)
+    reload = (not frozen) and env(
+        "UNDISCLOSED_BRAIN_RELOAD", "0"
+    ).strip().lower() in ("1", "true", "yes")
 
     app_logger.info(
         f"Starting Brain in standalone mode: {host}:{port} (reload={reload})"
@@ -257,8 +265,13 @@ def run_standalone():
         )
         return
 
+    # Pass the app OBJECT, not the import string "main:api": in a PyInstaller
+    # binary there is no importable `main` module (the entry runs as __main__),
+    # so `uvicorn.Config("main:api", ...)` fails with "Could not import module
+    # 'main'" and the server never starts. The object works everywhere. (The
+    # reload path above still needs the string, but reload is off when frozen.)
     config = uvicorn.Config(
-        "main:api",
+        api,
         host=host,
         port=port,
         reload=False,

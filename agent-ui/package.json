@@ -54,8 +54,8 @@
     "lint:fix": "eslint . --fix --no-warn-ignored",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,css,md}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,css,md}\"",
-    "storybook": "storybook dev -p 6006",
-    "build-storybook": "storybook build -o storybook-static"
+    "storybook": "STORYBOOK=1 storybook dev -p 6006",
+    "build-storybook": "STORYBOOK=1 storybook build -o storybook-static"
   },
   "dependencies": {
     "@electron/notarize": "^2.5.0",

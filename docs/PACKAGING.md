@@ -13,6 +13,37 @@ Actions on every release tag.
 
 ---
 
+## 0. Build & install locally (macOS self-install)
+
+CI does **not** release macOS (unsigned builds hit Gatekeeper), but you can build
+an installable `.dmg` on your own Mac. Two toolchain requirements — Theia's
+native modules are picky:
+
+- **Node 18–20** (not 22/24). `nvm use 20` (an `.nvmrc` pins 20).
+- **Python ≤3.11 for node-gyp** — Python 3.12+ removed `distutils` and node-gyp
+  9.x needs it. Easiest: reuse the brain's 3.11 venv:
+  `export npm_config_python="$PWD/brain/.venv/bin/python"` (or `pip install
+  setuptools` for your python3).
+
+Then, from the repo root:
+
+```bash
+nvm use 20
+export npm_config_python="$PWD/brain/.venv/bin/python"
+npm run desktop:install                       # install apps/desktop deps
+npm --prefix apps/desktop run rebuild         # rebuild native modules for Electron
+npm run dist:mac                              # freeze brain + build + package .dmg
+```
+
+The `.dmg` lands in `apps/desktop/dist/`. It's **unsigned** (`identity: null`), so
+on first open: right-click → Open, or `xattr -cr /Applications/Undisclosed.app`.
+
+`npm run dist:mac` runs `dist:brain` (PyInstaller freeze) → `build:agent-ui` →
+the Electron build + electron-builder, so the `.dmg` is self-contained (the brain
+binary is bundled under `resources/brain/` and auto-launched by `BrainLauncher`).
+
+---
+
 ## 1. What has to ship together
 
 Undisclosed is **two processes**:

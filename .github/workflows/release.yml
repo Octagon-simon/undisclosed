@@ -44,17 +44,29 @@ jobs:
 
       # 1) Freeze the Python brain into a self-contained binary (no Python on the
       #    user's machine). Consumed by electron-builder via extraResources.
+      - name: Install uv (provisions the brain venv from pyproject.toml)
+        uses: astral-sh/setup-uv@v5
       - name: Build brain binary
         run: npm run dist:brain
 
-      # 2) Install + build the Theia frontend and agent embed.
+      # 2) Build the agent embed + sync it into the agent extension's assets.
       - run: npm ci
-      - name: Build frontend
+      - name: Build agent embed
         run: npm run dist:prepare
 
-      # 3) Package installers (needs apps/desktop — see PACKAGING.md).
+      # 3) Install the desktop app's own deps (Electron, @theia/electron, the
+      #    extensions) and rebuild native modules for Electron.
+      - name: Install desktop app
+        run: npm install
+        working-directory: apps/desktop
+      - name: Rebuild native modules for Electron
+        run: npm run rebuild
+        working-directory: apps/desktop
+
+      # 4) Build the Electron Theia app + package installers.
       - name: Package installers
-        run: npm --prefix apps/desktop run dist
+        run: npm run dist
+        working-directory: apps/desktop
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

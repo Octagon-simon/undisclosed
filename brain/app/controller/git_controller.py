@@ -74,7 +74,20 @@ async def git_commit_message(body: dict) -> dict:
         )
         message = ""
         try:
-            message = (response.msg.content or "").strip()
+            # get_last_model() reuses whatever the chat is on — which may be a
+            # STREAMING model (single-agent runs with stream=True) and/or carry a
+            # `thinking` config. A streaming response has no `.msg` until drained,
+            # so handle both: drain content chunks if streaming, else read .msg.
+            from camel.agents.chat_agent import AsyncStreamingChatAgentResponse
+
+            if isinstance(response, AsyncStreamingChatAgentResponse):
+                async for chunk in response:
+                    c = getattr(getattr(chunk, "msg", None), "content", "")
+                    if c:
+                        message += c
+            else:
+                message = getattr(response.msg, "content", "") or ""
+            message = message.strip()
         except Exception:
             message = ""
         # Strip accidental code fences / surrounding quotes.

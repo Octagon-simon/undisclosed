@@ -62,11 +62,12 @@
     "build:agent-ui": "npm --prefix agent-ui run build:agent-embed && npm run sync:agent-bundle",
     "sync:agent-bundle": "cp agent-ui/dist-agent-embed/agent-embed.umd.js agent-ui/dist-agent-embed/style.css packages/undisclosed-agent/assets/agent-embed/ && echo synced",
     "dist:brain": "bash scripts/build-brain.sh",
-    "dist:prepare": "npm run build:agent-ui && npm run build:prod",
-    "dist": "npm run dist:prepare && npm --prefix apps/desktop run dist",
-    "dist:mac": "npm run dist:prepare && npm --prefix apps/desktop run dist:mac",
-    "dist:win": "npm run dist:prepare && npm --prefix apps/desktop run dist:win",
-    "dist:linux": "npm run dist:prepare && npm --prefix apps/desktop run dist:linux",
+    "dist:prepare": "npm run build:agent-ui",
+    "desktop:install": "npm --prefix apps/desktop install",
+    "dist": "npm run dist:brain && npm run dist:prepare && npm --prefix apps/desktop run dist",
+    "dist:mac": "npm run dist:brain && npm run dist:prepare && npm --prefix apps/desktop run dist:mac",
+    "dist:win": "npm run dist:brain && npm run dist:prepare && npm --prefix apps/desktop run dist:win",
+    "dist:linux": "npm run dist:brain && npm run dist:prepare && npm --prefix apps/desktop run dist:linux",
     "release": "bash scripts/release.sh"
   }
 }

@@ -23,13 +23,41 @@ const httpProxy = require('http-proxy') as {
   };
 };
 
-/** Cloud proxy target (the local Undisclosed proxy service). Overridable. */
-const PROXY_TARGET = process.env.UNDISCLOSED_PROXY_TARGET || 'http://localhost:3001';
+/**
+ * `/api` proxy target. In STANDALONE eigent-theia (dev + the packaged desktop
+ * app) the brain itself serves the `/api/v1/*` surface (providers, spaces,
+ * history, chat-platform), so `/api` must go to the BRAIN — not the legacy
+ * `:3001` cloud proxy, which doesn't exist here (hitting it gives "agent proxy
+ * error" when e.g. adding a model). Default to the brain's port; override with
+ * UNDISCLOSED_PROXY_TARGET for a real cloud proxy. (scripts/dev.sh already sets
+ * this to :5001; the packaged app relies on this default.)
+ */
+const BRAIN_PORT = process.env.UNDISCLOSED_BRAIN_PORT || '5001';
+const PROXY_TARGET =
+  process.env.UNDISCLOSED_PROXY_TARGET || `http://localhost:${BRAIN_PORT}`;
 
 function resolveAssetsDir(): string {
   const rel = path.join('packages', 'undisclosed-agent', 'assets', 'agent-embed');
+  const nm = path.join(
+    'node_modules',
+    'undisclosed-agent',
+    'assets',
+    'agent-embed'
+  );
+  const resourcesPath = (
+    process as NodeJS.Process & { resourcesPath?: string }
+  ).resourcesPath;
   const candidates = [
+    // dev (repo checkout)
     path.resolve(process.cwd(), rel),
+    // packaged Electron app: the extension is webpacked into lib/backend, so
+    // __dirname is <app>/Resources/app/lib/backend — assets live under the
+    // sibling node_modules, and under <resourcesPath>/app/node_modules.
+    path.join(__dirname, '..', '..', nm),
+    resourcesPath
+      ? path.join(resourcesPath, 'app', nm)
+      : path.join(__dirname, '..', '..', '..', nm),
+    // older layouts
     path.join(__dirname, '..', '..', 'assets', 'agent-embed'),
     path.join(__dirname, 'assets', 'agent-embed'),
   ];

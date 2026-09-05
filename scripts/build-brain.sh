@@ -3,18 +3,25 @@
 # don't require Python on the user's machine. Output: brain/dist/undisclosed-brain
 # (electron-builder picks it up via extraResources — see docs/PACKAGING.md).
 #
-# Used by CI (release.yml) and can be run locally to test the freeze.
+# Uses the brain's own venv (provisioned by uv from pyproject.toml). Used by CI
+# (release.yml) and runnable locally to test the freeze.
 set -e
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+VENV="$ROOT/brain/.venv"
+
+# Provision the venv if it's missing (fresh checkout / CI). scripts/brain.sh
+# setup runs `uv sync` from brain/pyproject.toml.
+if [ ! -x "$VENV/bin/python" ]; then
+  echo "==> brain/.venv missing — provisioning (scripts/brain.sh setup)…"
+  bash "$ROOT/scripts/brain.sh" setup
+fi
+
+PY="$VENV/bin/python"
 cd "$ROOT/brain"
 
-PY="${PYTHON:-python3}"
-
-echo "==> Installing brain deps + PyInstaller…"
-"$PY" -m pip install --upgrade pip
-[ -f requirements.txt ] && "$PY" -m pip install -r requirements.txt
-"$PY" -m pip install pyinstaller
+echo "==> Installing PyInstaller into the brain venv…"
+"$PY" -m pip install --quiet pyinstaller
 
 echo "==> Freezing brain → dist/undisclosed-brain…"
 # --collect-all pulls in CAMEL + our app package data. Add --hidden-import as
@@ -24,4 +31,4 @@ echo "==> Freezing brain → dist/undisclosed-brain…"
   --collect-all app \
   main.py
 
-echo "==> Done: $(ls -lh dist/undisclosed-brain 2>/dev/null | awk '{print $5, $NF}')"
+echo "==> Done: $(ls -lh dist/undisclosed-brain* 2>/dev/null | awk '{print $5, $NF}')"

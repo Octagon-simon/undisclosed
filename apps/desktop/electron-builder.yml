@@ -1,0 +1,62 @@
+# electron-builder config for the Undisclosed desktop app.
+# Built after `theia build` (see the dist* scripts). Produces installers under
+# apps/desktop/dist. May need per-OS tuning on the first real packaging run —
+# see docs/PACKAGING.md.
+appId: ai.undisclosed.app
+productName: Undisclosed
+copyright: Copyright © 2026 Simon Ugorji
+
+# Native modules are already rebuilt for Electron by `theia rebuild:electron`
+# (npm run rebuild). Don't let electron-builder rebuild them again — it runs in a
+# subprocess without our node-gyp Python and chokes on optional native deps
+# (e.g. cpu-features) on Python 3.12+ (no distutils).
+npmRebuild: false
+
+directories:
+  output: dist
+  buildResources: build
+
+# Theia's build emits the frontend/backend bundles under lib/ and generated
+# sources under src-gen/. The electron entry is lib/backend/electron-main.js
+# (package.json "main").
+files:
+  - lib/**
+  - src-gen/**
+  - package.json
+  - "!**/*.ts"
+  - "!**/*.map"
+
+# The frozen Python brain (scripts/build-brain.sh → brain/dist/undisclosed-brain
+# or .exe). BrainLauncher resolves it at <resources>/brain/ in the packaged app.
+extraResources:
+  - from: "../../brain/dist"
+    to: "brain"
+    filter:
+      - "undisclosed-brain*"
+
+# asar disabled: Theia's plugin host + our agent backend serve files with
+# express.static (which can't read from inside an asar archive), and several
+# native modules (node-pty, ripgrep) also dislike asar. Larger/slower to unpack
+# but reliable — revisit with asarUnpack once a build is green.
+asar: false
+
+mac:
+  target:
+    - dmg
+    - zip
+  category: public.app-category.developer-tools
+  # Local unsigned build (no Apple cert): produce an installable .dmg without
+  # signing. Gatekeeper will warn on first open — right-click → Open, or run
+  #   xattr -cr /Applications/Undisclosed.app
+  # Set an identity + hardenedRuntime:true later when notarizing for release.
+  identity: null
+
+win:
+  target:
+    - nsis
+
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Development

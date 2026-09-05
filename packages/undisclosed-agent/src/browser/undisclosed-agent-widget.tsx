@@ -13,6 +13,7 @@ import {
   open,
 } from '@theia/core/lib/browser';
 import URI from '@theia/core/lib/common/uri';
+import { Endpoint } from '@theia/core/lib/browser/endpoint';
 import { WorkspaceService } from '@theia/workspace/lib/browser';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import { EditorManager } from '@theia/editor/lib/browser';
@@ -69,12 +70,25 @@ type MountFn = (
   }
 ) => AgentPanelHandle;
 
-const BUNDLE_JS = '/undisclosed-agent/agent-embed.umd.js';
-const BUNDLE_CSS = '/undisclosed-agent/style.css';
+// Backend PATHS (served by the undisclosed-agent backend module). These must be
+// resolved against the Theia BACKEND SERVER, not used as bare root-relative
+// URLs: in the browser app the frontend origin IS the backend, but in the
+// packaged Electron app the frontend is a `file://` page, so `/undisclosed-agent
+// /x` would resolve to `file:///undisclosed-agent/x` (not found) — which is why
+// the agent bundle "failed to load" in the desktop app. `serverUrl()` (via
+// Theia's Endpoint) always targets the backend server (host:port).
+const BUNDLE_JS_PATH = '/undisclosed-agent/agent-embed.umd.js';
+const BUNDLE_CSS_PATH = '/undisclosed-agent/style.css';
 // Remaps --ds-* tokens to Theia's --theia-* theme vars; loaded AFTER the bundle
 // CSS so it wins, theming the panel to match the active editor theme.
-const THEME_CSS = '/undisclosed-agent/theme.css';
+const THEME_CSS_PATH = '/undisclosed-agent/theme.css';
 const GLOBAL = 'UndisclosedAgentEmbed';
+
+/** Resolve a backend path to a full URL on the Theia backend server (works in
+ * both the browser app and the packaged Electron app's file:// frontend). */
+function serverUrl(path: string): string {
+  return new Endpoint({ path }).getRestUrl().toString();
+}
 
 /** Best-effort image MIME from a file name, for building a `data:` URL. */
 function mimeFromPath(name: string): string {
@@ -121,15 +135,15 @@ function loadAgentBundle(): Promise<MountFn> {
   if (bundlePromise) return bundlePromise;
   bundlePromise = new Promise<MountFn>((resolve, reject) => {
     // Order matters: bundle CSS first, then the Theia theme override.
-    injectStylesheet('undisclosed-agent-css', BUNDLE_CSS);
-    injectStylesheet('undisclosed-agent-theme-css', THEME_CSS);
+    injectStylesheet('undisclosed-agent-css', serverUrl(BUNDLE_CSS_PATH));
+    injectStylesheet('undisclosed-agent-theme-css', serverUrl(THEME_CSS_PATH));
     const existing = (window as unknown as Record<string, { mountAgentPanel?: MountFn }>)[GLOBAL];
     if (existing?.mountAgentPanel) {
       resolve(existing.mountAgentPanel);
       return;
     }
     const script = document.createElement('script');
-    script.src = BUNDLE_JS;
+    script.src = serverUrl(BUNDLE_JS_PATH);
     script.async = true;
     script.onload = () => {
       const mod = (window as unknown as Record<string, { mountAgentPanel?: MountFn }>)[GLOBAL];
@@ -353,9 +367,10 @@ export class UndisclosedAgentWidget extends BaseWidget {
       ]);
       this.handle = mountAgentPanel(this.host, {
         baseUrl: BRAIN_BASE_URL,
-        // Cloud-proxy calls go same-origin (this app); the backend forwards
-        // /api -> the Undisclosed proxy, avoiding CORS.
-        proxyBaseUrl: window.location.origin,
+        // Cloud-proxy calls (/api) go to the Theia BACKEND server, which forwards
+        // them to the Undisclosed proxy. Must be the backend origin — NOT
+        // window.location.origin, which is `file://` in the packaged Electron app.
+        proxyBaseUrl: serverUrl('').replace(/\/$/, ''),
         workspaceRoot,
         token: 'local-session-token',
         userId: 0,

@@ -52,7 +52,11 @@ export default defineConfig(({ command, mode }) => {
     },
     plugins: [
       react(),
-      electron({
+      // Skip the Electron build under Storybook (STORYBOOK=1) — Storybook is a
+      // plain web app and must not build electron/main + preload.
+      ...(process.env.STORYBOOK
+        ? []
+        : [electron({
         main: {
           // Shortcut of `build.lib.entry`
           entry: 'electron/main/index.ts',
@@ -99,7 +103,7 @@ export default defineConfig(({ command, mode }) => {
         // If you want use Node.js in Renderer process, the `nodeIntegration` needs to be enabled in the Main process.
         // See 👉 https://github.com/electron-vite/vite-plugin-electron-renderer
         renderer: {},
-      }),
+      })]),
     ],
     server: {
       open: false,

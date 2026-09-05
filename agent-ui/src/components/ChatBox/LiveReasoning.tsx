@@ -1,27 +1,23 @@
 // Copyright (c) 2026 Simon Ugorji
 
 import useChatStoreAdapter from '@/hooks/useChatStoreAdapter';
-import { useAuthStore } from '@/store/authStore';
 import { Brain } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 
 /**
- * Live "thinking" surface. Two modes:
+ * Live "thinking" block: renders the model's reasoning as it streams in
+ * (Action.reasoning deltas accumulated into the task's `liveReasoning`).
  *
- *  1. If the model streams readable reasoning (Action.reasoning deltas
- *     accumulated into the task's `liveReasoning`), render the thoughts as they
- *     arrive.
- *  2. Otherwise, when "show thinking" is on and the model is actively working
- *     but hasn't produced an answer yet, show a lightweight "Thinking…"
- *     indicator. This covers models (e.g. claude-sonnet-5) whose extended
- *     thinking is REDACTED by the provider — the model reasons, but the API
- *     returns no thought text, so there is nothing to print, only to indicate.
- *
- * Cleared once the answer starts streaming or the turn ends.
+ * Shown ONLY while real reasoning is actually arriving — i.e. a reasoning model
+ * (e.g. deepseek-reasoner) that returns readable thought text. It does NOT show
+ * a speculative "Thinking…" for ordinary turns / non-reasoning models (a plain
+ * "How are you" must not flash a thinking block). Providers that redact their
+ * thinking (e.g. claude-sonnet-5 returns empty thought text) simply show
+ * nothing here — there is nothing to display. Cleared once the turn ends (the
+ * reasoning is folded into the message's collapsible "Thought process").
  */
 export function LiveReasoning() {
   const { chatStore } = useChatStoreAdapter();
-  const showThinking = useAuthStore((s) => s.showThinking);
   const activeTaskId = chatStore?.activeTaskId as string | undefined;
   const task = activeTaskId ? chatStore?.tasks[activeTaskId] : undefined;
   const reasoning = task?.liveReasoning || '';
@@ -43,18 +39,8 @@ export function LiveReasoning() {
     if (el && stickToBottomRef.current) el.scrollTop = el.scrollHeight;
   }, [reasoning]);
 
-  // Is the model working but hasn't started answering? (last message is still
-  // the user's, or an agent message with no content yet.) Don't show while
-  // waiting on a human prompt.
-  const messages = task?.messages || [];
-  const last = messages[messages.length - 1];
-  const agentHasContent =
-    last?.role === 'agent' && !!(last.content && last.content.trim());
-  const awaitingHuman = !!task?.activeAsk;
-  const thinkingActive =
-    showThinking && !!task?.isPending && !agentHasContent && !awaitingHuman;
-
-  if (!reasoning && !thinkingActive) return null;
+  // Only render when the model is ACTUALLY thinking (reasoning text present).
+  if (!reasoning) return null;
 
   return (
     <div className="mx-auto mb-2 w-full max-w-[600px] px-2">
@@ -63,15 +49,13 @@ export function LiveReasoning() {
           <Brain size={13} className="animate-pulse" aria-hidden />
           Thinking…
         </div>
-        {reasoning ? (
-          <div
-            ref={bodyRef}
-            onScroll={handleScroll}
-            className="mt-1 max-h-40 overflow-y-auto overscroll-contain whitespace-pre-wrap text-label-xs leading-relaxed text-ds-text-neutral-subtle-default"
-          >
-            {reasoning}
-          </div>
-        ) : null}
+        <div
+          ref={bodyRef}
+          onScroll={handleScroll}
+          className="mt-1 max-h-40 overflow-y-auto overscroll-contain whitespace-pre-wrap text-label-xs leading-relaxed text-ds-text-neutral-subtle-default"
+        >
+          {reasoning}
+        </div>
       </div>
     </div>
   );

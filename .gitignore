@@ -6,6 +6,7 @@ lib/
 !agent-ui/src/lib/
 !agent-ui/src/lib/**
 src-gen/
+.browser_modules/
 gen-webpack*.js
 .theia/
 plugins/
@@ -44,3 +45,12 @@ todo.md
 !.env.example
 agent-ui/.env
 agent-ui/.env.*
+apps/desktop/node_modules/
+apps/desktop/lib/
+apps/desktop/src-gen/
+apps/desktop/dist/
+apps/desktop/.theia/
+apps/desktop/gen-webpack*.js
+brain/dist/
+brain/build/
+brain/*.spec
