@@ -30,7 +30,7 @@ from camel.tasks.task import Task, TaskState, is_task_result_insufficient
 from camel.utils.context_utils import ContextUtility
 from colorama import Fore
 
-from app.agent.listen_chat_agent import ListenChatAgent
+from app.agent.listen_chat_agent import ListenChatAgent, SegmentAccumulator
 from app.service.task import get_task_lock
 from app.utils.agent_memory import record_agent_memory_snapshot
 
@@ -152,8 +152,12 @@ class SingleAgentWorker(BaseSingleAgentWorker):
 
                 # Handle streaming response
                 if isinstance(response, AsyncStreamingChatAgentResponse):
-                    # With stream_accumulate=False, we need to accumulate delta content
-                    accumulated_content = ""
+                    # With stream_accumulate=False we accumulate delta content,
+                    # but a multi-step tool loop streams a "Let me…" preamble
+                    # before each tool call; keep only the final answer segment
+                    # (see SegmentAccumulator) so those preambles don't end up in
+                    # the structured TaskResult text and break its parsing.
+                    segment = SegmentAccumulator()
                     last_chunk = None
                     chunk_count = 0
                     async for chunk in response:
@@ -163,12 +167,11 @@ class SingleAgentWorker(BaseSingleAgentWorker):
                             maybe = stream_callback(chunk)
                             if asyncio.iscoroutine(maybe):
                                 await maybe
-                        if chunk.msg and chunk.msg.content:
-                            accumulated_content += chunk.msg.content
+                        segment.ingest(chunk)
+                    response_content = segment.answer()
                     logger.info(
-                        f"Streaming complete: {chunk_count} chunks, content_length={len(accumulated_content)}"
+                        f"Streaming complete: {chunk_count} chunks, content_length={len(response_content)}"
                     )
-                    response_content = accumulated_content
                     # Store usage info from last chunk for later use
                     response._last_chunk_info = (
                         last_chunk.info if last_chunk else {}
@@ -198,8 +201,9 @@ class SingleAgentWorker(BaseSingleAgentWorker):
                 # Handle streaming response for native output (shouldn't happen now but keep for safety)
                 if isinstance(response, AsyncStreamingChatAgentResponse):
                     task_result = None
-                    # With stream_accumulate=False, we need to accumulate delta content
-                    accumulated_content = ""
+                    # Keep only the final answer segment (drop per-tool-call
+                    # "Let me…" preambles); see SegmentAccumulator.
+                    segment = SegmentAccumulator()
                     last_chunk = None
                     async for chunk in response:
                         last_chunk = chunk
@@ -207,12 +211,10 @@ class SingleAgentWorker(BaseSingleAgentWorker):
                             maybe = stream_callback(chunk)
                             if asyncio.iscoroutine(maybe):
                                 await maybe
-                        if chunk.msg:
-                            if chunk.msg.content:
-                                accumulated_content += chunk.msg.content
-                            if chunk.msg.parsed:
-                                task_result = chunk.msg.parsed
-                    response_content = accumulated_content
+                        segment.ingest(chunk)
+                        if chunk.msg and chunk.msg.parsed:
+                            task_result = chunk.msg.parsed
+                    response_content = segment.answer()
                     # Store usage info from last chunk for later use
                     response._last_chunk_info = (
                         last_chunk.info if last_chunk else {}

@@ -562,14 +562,39 @@ async def _response_content(
             stream_reasoning,
             task_id,
         )
-        content = ""
-        reasoning = ""
+        # In a multi-step tool loop the delta stream yields the content of
+        # EVERY iteration: each tool call is preceded by a "Let me read X"
+        # preamble, and only the segment AFTER the last tool call is the real
+        # answer. Naively concatenating all deltas produced a final message
+        # that was a pile of "Let me…" narration — which also got stored as the
+        # turn's task_result and re-fed to the model on the next turn. So track
+        # segments: reset the buffer at each tool-call boundary and keep only
+        # the LAST non-empty segment (kept, not hard-dropped, so a model that
+        # writes its answer just before a final tool call isn't lost).
+        content = ""  # current segment
+        final_content = ""  # last completed non-empty segment
+        reasoning = ""  # reasoning for the current segment
+        final_reasoning = ""  # reasoning of the last completed non-empty segment
         streamed = False
         last_chunk = None
+        _seen_tool_calls = 0
         _logged_first_reasoning = False
         _dbg_chunk_no = 0
         async for chunk in response:
             last_chunk = chunk
+            _info = getattr(chunk, "info", None) or {}
+            _tc = _info.get("tool_calls") or []
+            _tc_count = len(_tc) if isinstance(_tc, (list, tuple)) else 0
+            if _tc_count > _seen_tool_calls:
+                # A tool-call round just completed: everything accumulated since
+                # the last boundary was a pre-tool-call preamble, not the
+                # answer. Close the segment and start a fresh one.
+                _seen_tool_calls = _tc_count
+                if content.strip():
+                    final_content = content
+                    final_reasoning = reasoning
+                content = ""
+                reasoning = ""
             # DEBUG: dump the structure of the first handful of chunks so we can
             # see exactly where (if anywhere) reasoning lands.
             if debug_enabled() and _dbg_chunk_no < 12:
@@ -584,7 +609,7 @@ async def _response_content(
                             getattr(_m, "reasoning_content", "") or ""
                         )[:60],
                         "meta": getattr(_m, "meta_dict", None),
-                        "info_keys": list((getattr(chunk, "info", None) or {}).keys()),
+                        "info_keys": list(_info.keys()),
                     },
                     task_id=task_id,
                 )
@@ -626,27 +651,37 @@ async def _response_content(
                         logger.debug(
                             "reasoning delta enqueue failed", exc_info=True
                         )
+        # The trailing segment (after the last tool call) is the answer when it
+        # has content; otherwise fall back to the last non-empty segment (e.g. a
+        # model that wrote its answer right before a final tool call).
+        if content.strip():
+            answer = content
+            answer_reasoning = reasoning
+        else:
+            answer = final_content
+            answer_reasoning = final_reasoning
         if stream_reasoning:
             logger.info(
                 "[thinking] stream done: reasoning_chars=%d streamed=%s "
-                "content_chars=%d",
-                len(reasoning),
+                "answer_chars=%d (segments dropped preambles)",
+                len(answer_reasoning),
                 streamed,
-                len(content),
+                len(answer),
             )
         debug_dump(
             "response",
             {
                 "chunks": _dbg_chunk_no,
-                "content_chars": len(content),
-                "reasoning_chars": len(reasoning),
+                "answer_chars": len(answer),
+                "reasoning_chars": len(answer_reasoning),
                 "reasoning_streamed": streamed,
-                "content_preview": content[:300],
-                "reasoning_preview": reasoning[:300],
+                "tool_call_rounds": _seen_tool_calls,
+                "answer_preview": answer[:300],
+                "reasoning_preview": answer_reasoning[:300],
             },
             task_id=task_id,
         )
-        return content, extract_tokens(last_chunk), reasoning, streamed
+        return answer, extract_tokens(last_chunk), answer_reasoning, streamed
 
     msg = getattr(response, "msg", None)
     usage_tokens = extract_tokens(response)

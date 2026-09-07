@@ -8,6 +8,7 @@
     {
       "frontend": "lib/browser/undisclosed-agent-frontend-module",
       "backend": "lib/node/undisclosed-agent-backend-module",
+      "electronMain": "lib/electron-main/brain-teardown",
       "style": "style/undisclosed-agent.css"
     }
   ],

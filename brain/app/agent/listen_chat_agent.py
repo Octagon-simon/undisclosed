@@ -65,6 +65,44 @@ class _MalformedToolCallArgs(Exception):
     back to empty-arg sanitization. Never surfaces outside this module."""
 
 
+class SegmentAccumulator:
+    """Accumulate streamed answer content one tool-loop segment at a time.
+
+    In a multi-step tool loop the delta stream yields the content of EVERY
+    iteration: each tool call is preceded by a "Let me read X" preamble, and
+    only the segment AFTER the last tool call is the real answer. Concatenating
+    all deltas produced a final message that was a pile of "Let me…" narration
+    (which also got persisted and re-fed to the model). This resets the buffer
+    at each tool-call boundary — detected via the cumulative ``info["tool_calls"]``
+    count growing — and keeps the LAST non-empty segment (kept, not hard-dropped,
+    so a model that writes its answer just before a final tool call isn't lost).
+    """
+
+    def __init__(self) -> None:
+        self._current = ""
+        self._final = ""
+        self._seen_tool_calls = 0
+
+    def ingest(self, chunk: Any) -> None:
+        info = getattr(chunk, "info", None) or {}
+        tool_calls = info.get("tool_calls") or []
+        count = len(tool_calls) if isinstance(tool_calls, (list, tuple)) else 0
+        if count > self._seen_tool_calls:
+            self._seen_tool_calls = count
+            if self._current.strip():
+                self._final = self._current
+            self._current = ""
+        msg = getattr(chunk, "msg", None)
+        if msg is not None and getattr(msg, "content", None):
+            self._current += msg.content
+
+    def is_empty(self) -> bool:
+        return not self._current and not self._final
+
+    def answer(self) -> str:
+        return self._current if self._current.strip() else self._final
+
+
 # Default 10 minutes. This wraps a WHOLE step, including a tool that blocks on
 # human input (ask_human_via_gui) — so it can't be tiny — but 30 min meant a
 # hung tool (e.g. a stuck browser call) silently burned half an hour before
@@ -406,21 +444,23 @@ class ListenChatAgent(ChatAgent):
             Tuple of (accumulated_content, total_tokens) via
             StopIteration value
         """
-        accumulated_content = ""
+        # Keep only the final answer segment (see SegmentAccumulator / the async
+        # twin _astream_chunks) so the deactivate message isn't every tool-call
+        # preamble concatenated together.
+        segment = SegmentAccumulator()
         last_chunk = None
 
         try:
             try:
                 for chunk in response_gen:
                     last_chunk = chunk
-                    if chunk.msg and chunk.msg.content:
-                        accumulated_content += chunk.msg.content
+                    segment.ingest(chunk)
                     yield chunk
             except ModelProcessingError as error:
                 can_retry = (
                     auth_retry_available
                     and input_message is not None
-                    and not accumulated_content
+                    and segment.is_empty()
                     and self._reload_model_after_auth_error(error)
                 )
                 if not can_retry:
@@ -432,17 +472,15 @@ class ListenChatAgent(ChatAgent):
                 if isinstance(retry_response, StreamingChatAgentResponse):
                     for chunk in retry_response:
                         last_chunk = chunk
-                        if chunk.msg and chunk.msg.content:
-                            accumulated_content += chunk.msg.content
+                        segment.ingest(chunk)
                         yield chunk
                 else:
                     last_chunk = retry_response
-                    if retry_response.msg and retry_response.msg.content:
-                        accumulated_content += retry_response.msg.content
+                    segment.ingest(retry_response)
                     yield retry_response
         finally:
             total_tokens = self._extract_tokens(last_chunk)
-            self._send_agent_deactivate(accumulated_content, total_tokens)
+            self._send_agent_deactivate(segment.answer(), total_tokens)
 
     async def _astream_chunks(
         self,
@@ -461,22 +499,26 @@ class ListenChatAgent(ChatAgent):
         Yields:
             Each chunk from the original generator
         """
-        accumulated_content = ""
+        # Segment-aware accumulation: a multi-step tool loop streams the content
+        # of EVERY iteration (each tool call is preceded by a "Let me read X"
+        # preamble). Only the segment after the LAST tool call is the real
+        # answer, so reset at each tool-call boundary and keep the last non-empty
+        # segment — otherwise the deactivate message is a pile of "Let me…"
+        # narration. Mirrors _response_content in single_agent_service.
+        segment = SegmentAccumulator()
         last_chunk = None
 
         try:
             try:
                 async for chunk in response_gen:
                     last_chunk = chunk
-                    if chunk.msg and chunk.msg.content:
-                        delta_content = chunk.msg.content
-                        accumulated_content += delta_content
+                    segment.ingest(chunk)
                     yield chunk
             except ModelProcessingError as error:
                 can_retry = (
                     auth_retry_available
                     and input_message is not None
-                    and not accumulated_content
+                    and segment.is_empty()
                     and await self._areload_model_after_auth_error(error)
                 )
                 if not can_retry:
@@ -488,18 +530,15 @@ class ListenChatAgent(ChatAgent):
                 if isinstance(retry_response, AsyncStreamingChatAgentResponse):
                     async for chunk in retry_response:
                         last_chunk = chunk
-                        if chunk.msg and chunk.msg.content:
-                            delta_content = chunk.msg.content
-                            accumulated_content += delta_content
+                        segment.ingest(chunk)
                         yield chunk
                 else:
                     last_chunk = retry_response
-                    if retry_response.msg and retry_response.msg.content:
-                        accumulated_content += retry_response.msg.content
+                    segment.ingest(retry_response)
                     yield retry_response
         finally:
             total_tokens = self._extract_tokens(last_chunk)
-            self._send_agent_deactivate(accumulated_content, total_tokens)
+            self._send_agent_deactivate(segment.answer(), total_tokens)
 
     def step(
         self,
