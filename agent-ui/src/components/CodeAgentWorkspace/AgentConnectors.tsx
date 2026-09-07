@@ -28,8 +28,17 @@ import {
   mcpList,
   mcpRemove,
 } from '@/api/brain';
-import { proxyFetchPost } from '@/api/http';
-import { Check, KeyRound, Loader2, Plug, Plus, Trash2 } from 'lucide-react';
+import { proxyFetchGet, proxyFetchPost } from '@/api/http';
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  KeyRound,
+  Loader2,
+  Plug,
+  Plus,
+  Trash2,
+} from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -40,6 +49,13 @@ interface McpRow {
   remote: boolean;
   /** True for an OAuth (mcp-remote command) server — needs a browser sign-in. */
   oauth: boolean;
+}
+
+interface BuiltInIntegration {
+  /** Display name / key from /config/info (e.g. "Figma"). */
+  key: string;
+  /** Env vars this integration needs (e.g. ["FIGMA_ACCESS_TOKEN"]). */
+  envVars: string[];
 }
 
 // Fixed callback port for OAuth (mcp-remote) sign-in, so the redirect URI the
@@ -88,6 +104,90 @@ export default function AgentConnectors() {
   const [gClientId, setGClientId] = useState('');
   const [gClientSecret, setGClientSecret] = useState('');
 
+  // Built-in integrations that take env-var tokens (Figma, GitHub, Search, …),
+  // driven by the Brain's /config/info map. Users set their own keys here;
+  // they're written to ~/.undisclosed/.env, which the agent reads live.
+  const [integrations, setIntegrations] = useState<BuiltInIntegration[]>([]);
+  // key -> is a value currently set (booleans only; secrets never leave Brain).
+  const [envStatus, setEnvStatus] = useState<Record<string, boolean>>({});
+  const [openIntegration, setOpenIntegration] = useState<string | null>(null);
+  // Unsaved field edits, keyed by env var name.
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [savingKey, setSavingKey] = useState<string | null>(null);
+
+  const loadIntegrations = useCallback(async () => {
+    try {
+      const [info, status] = await Promise.all([
+        proxyFetchGet('/api/v1/config/info'),
+        proxyFetchGet('/api/v1/config/env'),
+      ]);
+      const list: BuiltInIntegration[] = Object.entries(
+        (info || {}) as Record<string, { env_vars?: unknown }>
+      )
+        .map(([key, v]) => ({
+          key,
+          envVars: Array.isArray(v?.env_vars)
+            ? (v.env_vars as string[])
+            : [],
+        }))
+        .filter((i) => i.envVars.length > 0)
+        .sort((a, b) => a.key.localeCompare(b.key));
+      setIntegrations(list);
+      setEnvStatus((status || {}) as Record<string, boolean>);
+    } catch {
+      /* non-fatal — the MCP list still works without the token catalog */
+    }
+  }, []);
+
+  const saveIntegration = useCallback(
+    async (intg: BuiltInIntegration) => {
+      // Only send fields the user actually typed — a blank field means "leave
+      // as-is", never "clear" (clearing is an explicit action below).
+      const values: Record<string, string> = {};
+      for (const k of intg.envVars) {
+        const v = (draft[k] ?? '').trim();
+        if (v) values[k] = v;
+      }
+      if (Object.keys(values).length === 0) {
+        toast.error('Enter a value first.');
+        return;
+      }
+      setSavingKey(intg.key);
+      try {
+        await proxyFetchPost('/api/v1/config/env', { values });
+        toast.success(`${intg.key} saved. The agent can use it now.`);
+        setDraft((d) => {
+          const next = { ...d };
+          for (const k of intg.envVars) delete next[k];
+          return next;
+        });
+        setOpenIntegration(null);
+        await loadIntegrations();
+      } catch (e) {
+        toast.error((e as Error)?.message || 'Failed to save key.');
+      } finally {
+        setSavingKey(null);
+      }
+    },
+    [draft, loadIntegrations]
+  );
+
+  const clearKey = useCallback(
+    async (intg: BuiltInIntegration, key: string) => {
+      setSavingKey(intg.key);
+      try {
+        await proxyFetchPost('/api/v1/config/env', { values: { [key]: '' } });
+        toast.success(`${key} removed.`);
+        await loadIntegrations();
+      } catch (e) {
+        toast.error((e as Error)?.message || 'Failed to remove key.');
+      } finally {
+        setSavingKey(null);
+      }
+    },
+    [loadIntegrations]
+  );
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -129,7 +229,8 @@ export default function AgentConnectors() {
 
   useEffect(() => {
     void load();
-  }, [load]);
+    void loadIntegrations();
+  }, [load, loadIntegrations]);
 
   const resetForms = useCallback(() => {
     setShowForm(false);
@@ -290,6 +391,135 @@ export default function AgentConnectors() {
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto px-3 py-3">
+      {integrations.length > 0 ? (
+        <div className="mb-4">
+          <div className="mb-1 flex items-center gap-1.5">
+            <KeyRound
+              size={13}
+              aria-hidden
+              className="shrink-0 text-ds-icon-neutral-subtle-default"
+            />
+            <span className="text-body-sm font-bold text-ds-text-neutral-default-default">
+              API keys
+            </span>
+          </div>
+          <div className="mb-2 text-label-xs text-ds-text-neutral-subtle-default">
+            Set your own tokens for built-in tools. Stored locally; the agent
+            picks them up on its next task.
+          </div>
+          <ul className="m-0 flex list-none flex-col gap-1 p-0">
+            {integrations.map((intg) => {
+              const isOpen = openIntegration === intg.key;
+              const connected = intg.envVars.every((k) => envStatus[k]);
+              const partial =
+                !connected && intg.envVars.some((k) => envStatus[k]);
+              const busy = savingKey === intg.key;
+              return (
+                <li
+                  key={intg.key}
+                  className="rounded-lg transition-colors hover:bg-ds-bg-neutral-muted-default"
+                >
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setOpenIntegration(isOpen ? null : intg.key)
+                    }
+                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left outline-none"
+                  >
+                    {isOpen ? (
+                      <ChevronDown
+                        size={14}
+                        aria-hidden
+                        className="shrink-0 text-ds-icon-neutral-subtle-default"
+                      />
+                    ) : (
+                      <ChevronRight
+                        size={14}
+                        aria-hidden
+                        className="shrink-0 text-ds-icon-neutral-subtle-default"
+                      />
+                    )}
+                    <span className="min-w-0 flex-1 truncate text-label-sm text-ds-text-neutral-default-default">
+                      {intg.key}
+                    </span>
+                    <span
+                      className={
+                        'shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide ' +
+                        (connected
+                          ? 'bg-ds-bg-success-subtle-default text-ds-text-success-strong-default'
+                          : partial
+                            ? 'text-ds-text-warning-strong-default'
+                            : 'text-ds-text-neutral-subtle-default')
+                      }
+                    >
+                      {connected
+                        ? 'set'
+                        : partial
+                          ? 'partial'
+                          : 'not set'}
+                    </span>
+                  </button>
+                  {isOpen ? (
+                    <div className="flex flex-col gap-2 px-2.5 pb-2.5 pt-0.5">
+                      {intg.envVars.map((k) => (
+                        <label key={k} className="flex flex-col gap-1">
+                          <span className="flex items-center justify-between gap-2 text-label-xs text-ds-text-neutral-subtle-default">
+                            <span className="truncate font-mono">{k}</span>
+                            {envStatus[k] ? (
+                              <button
+                                type="button"
+                                onClick={() => clearKey(intg, k)}
+                                disabled={busy}
+                                className="flex shrink-0 items-center gap-1 rounded px-1 py-0.5 text-[10px] text-ds-text-neutral-subtle-default outline-none transition-colors hover:text-ds-icon-error-default-default disabled:opacity-50"
+                              >
+                                <Trash2 size={11} aria-hidden />
+                                remove
+                              </button>
+                            ) : null}
+                          </span>
+                          <input
+                            value={draft[k] ?? ''}
+                            onChange={(e) =>
+                              setDraft((d) => ({ ...d, [k]: e.target.value }))
+                            }
+                            placeholder={
+                              envStatus[k] ? '•••••••• (set)' : 'paste value'
+                            }
+                            spellCheck={false}
+                            type="password"
+                            autoComplete="off"
+                            className="rounded-md border border-solid border-ds-border-neutral-subtle-default bg-ds-bg-input px-2 py-1.5 font-mono text-label-xs text-ds-text-neutral-default-default outline-none"
+                          />
+                        </label>
+                      ))}
+                      <div className="flex items-center justify-end">
+                        <button
+                          type="button"
+                          onClick={() => saveIntegration(intg)}
+                          disabled={busy}
+                          className="flex items-center gap-1.5 rounded-md bg-ds-bg-brand-default-default px-3 py-1.5 text-label-xs font-medium text-ds-text-brand-inverse-default outline-none transition-colors hover:bg-ds-bg-brand-default-hover disabled:opacity-50"
+                        >
+                          {busy ? (
+                            <Loader2
+                              size={12}
+                              className="animate-spin"
+                              aria-hidden
+                            />
+                          ) : (
+                            <Check size={12} aria-hidden />
+                          )}
+                          Save
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ) : null}
+
       <div className="mb-2 flex items-center justify-between">
         <span className="text-body-sm font-bold text-ds-text-neutral-default-default">
           MCP connectors

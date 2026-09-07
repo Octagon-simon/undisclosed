@@ -38,6 +38,8 @@ from enum import IntEnum
 from fastapi import APIRouter, Body, Query, HTTPException, Response
 from pydantic import BaseModel, Field, AliasChoices, field_validator
 
+from app.component.environment import default_env_path, env
+
 logger = logging.getLogger("chat_platform_controller")
 router = APIRouter()
 
@@ -825,8 +827,10 @@ async def delete_config(config_id: int):
     return Response(status_code=204)
 
 
-@router.get("/config/info")
-async def get_config_info(show_all: bool = False):
+def _config_info_map() -> dict[str, dict]:
+    """Built-in integrations and the env vars each needs. Single source of
+    truth for the Connectors UI (which token fields to render) AND the
+    writable-key allowlist enforced by the /config/env endpoints below."""
     return {
         "Slack": {
             "env_vars": ["SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET", "SLACK_APP_TOKEN"],
@@ -899,12 +903,19 @@ async def get_config_info(show_all: bool = False):
             "env_vars": [],
             "toolkit": "excel_toolkit",
         },
+        "Figma": {
+            "env_vars": ["FIGMA_ACCESS_TOKEN"],
+            "toolkit": "figma_toolkit",
+        },
         "File Write": {
             "env_vars": [],
             "toolkit": "file_write_toolkit",
         },
         "Github": {
-            "env_vars": ["GITHUB_TOKEN"],
+            # Must match the key GithubToolkit.get_can_use_tools() gates on
+            # (GITHUB_ACCESS_TOKEN); GITHUB_TOKEN here left the tool disabled
+            # even after the user set a token via the Connectors UI.
+            "env_vars": ["GITHUB_ACCESS_TOKEN"],
             "toolkit": "github_toolkit",
         },
         "Google Calendar": {
@@ -947,6 +958,71 @@ async def get_config_info(show_all: bool = False):
             "toolkit": "rag_toolkit",
         },
     }
+
+
+@router.get("/config/info")
+async def get_config_info(show_all: bool = False):
+    return _config_info_map()
+
+
+class EnvValuesIn(BaseModel):
+    """A batch of env-var writes. An empty/blank value clears (unsets) the key."""
+
+    values: dict[str, str]
+
+
+def _allowed_env_keys() -> set[str]:
+    """Keys the /config/env endpoints may read or write — exactly the env vars
+    advertised by built-in integrations. Anything else is rejected so this can
+    never be used to set arbitrary process/env variables."""
+    keys: set[str] = set()
+    for meta in _config_info_map().values():
+        for key in meta.get("env_vars", []) or []:
+            keys.add(key)
+    return keys
+
+
+@router.get("/config/env")
+async def get_config_env():
+    """Report which built-in integration env keys currently hold a value.
+
+    Returns booleans only — never the secret values themselves — so the UI can
+    show connected/not-connected without ever shipping tokens back to the
+    client.
+    """
+    return {key: bool((env(key) or "").strip()) for key in _allowed_env_keys()}
+
+
+@router.post("/config/env")
+async def set_config_env(data: EnvValuesIn):
+    """Upsert integration tokens into ``~/.undisclosed/.env`` (the file
+    ``env()`` reads live), so a user can set their own keys from the app. Only
+    allowlisted keys are written; a blank value unsets the key.
+    """
+    from dotenv import set_key, unset_key
+
+    allowed = _allowed_env_keys()
+    env_path = default_env_path
+    Path(env_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(env_path).touch(exist_ok=True)
+
+    written: list[str] = []
+    cleared: list[str] = []
+    rejected: list[str] = []
+    for key, value in (data.values or {}).items():
+        if key not in allowed:
+            rejected.append(key)
+            continue
+        v = (value or "").strip()
+        if v:
+            set_key(env_path, key, v)
+            written.append(key)
+        else:
+            unset_key(env_path, key)
+            cleared.append(key)
+    if rejected:
+        logger.warning("Rejected non-allowlisted env keys: %s", rejected)
+    return {"written": written, "cleared": cleared, "rejected": rejected}
 
 
 # --------------------------------------------------------------------------

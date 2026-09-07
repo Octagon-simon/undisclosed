@@ -13,7 +13,9 @@ Enabled only when a FIGMA_ACCESS_TOKEN (a Figma personal access token) is set.
 
 from __future__ import annotations
 
+import logging
 import re
+import time
 from typing import Any
 
 import httpx
@@ -23,8 +25,59 @@ from camel.toolkits.function_tool import FunctionTool
 from app.agent.toolkit.abstract_toolkit import AbstractToolkit
 from app.component.environment import env
 
+logger = logging.getLogger("figma_toolkit")
+
 _FILE_KEY_RE = re.compile(r"figma\.com/(?:file|design)/([A-Za-z0-9]+)")
 _NODE_ID_RE = re.compile(r"[?&]node-id=([0-9A-Za-z:%-]+)")
+
+
+def _int_env(key: str, default: int) -> int:
+    try:
+        return int(float(env(key, str(default))))
+    except (TypeError, ValueError):
+        return default
+
+
+def _retry_after_seconds(resp: httpx.Response, fallback: float) -> float:
+    """Seconds to wait before retrying a 429, honoring the `Retry-After`
+    header when present (delta-seconds form), else the caller's backoff."""
+    header = resp.headers.get("Retry-After")
+    if header:
+        try:
+            return max(0.0, float(header.strip()))
+        except (TypeError, ValueError):
+            pass  # HTTP-date form is rare here; fall back to backoff.
+    return fallback
+
+
+def _get_with_retry(
+    url: str, headers: dict[str, str], timeout: float
+) -> httpx.Response:
+    """GET that transparently retries HTTP 429 (Figma rate limit) with capped
+    exponential backoff, so the agent no longer has to `sleep` between calls.
+
+    Bounds keep a rate-limited call from blocking the tool thread for long:
+    up to FIGMA_MAX_RETRIES attempts (default 3), each wait capped at
+    FIGMA_MAX_BACKOFF seconds (default 20). On the final 429 the response is
+    returned so the caller can surface a clear "try again shortly" message.
+    """
+    max_retries = max(0, _int_env("FIGMA_MAX_RETRIES", 3))
+    max_backoff = max(1, _int_env("FIGMA_MAX_BACKOFF", 20))
+    resp = httpx.get(url, headers=headers, timeout=timeout)
+    attempt = 0
+    while resp.status_code == 429 and attempt < max_retries:
+        backoff = min(max_backoff, 2 ** (attempt + 1))  # 2, 4, 8, … capped
+        wait = min(max_backoff, _retry_after_seconds(resp, backoff))
+        logger.info(
+            "Figma 429 (attempt %d/%d); backing off %.1fs",
+            attempt + 1,
+            max_retries,
+            wait,
+        )
+        time.sleep(wait)
+        attempt += 1
+        resp = httpx.get(url, headers=headers, timeout=timeout)
+    return resp
 
 
 def _rgba_to_hex(color: dict[str, Any]) -> str:
@@ -156,9 +209,18 @@ class FigmaToolkit(BaseToolkit, AbstractToolkit):
                 url = f"https://api.figma.com/v1/files/{file_key}/nodes?ids={node_id}"
             else:
                 url = f"https://api.figma.com/v1/files/{file_key}?depth=2"
-            resp = httpx.get(url, headers=headers, timeout=self.timeout or 30.0)
+            resp = _get_with_retry(url, headers, self.timeout or 30.0)
             if resp.status_code == 403:
                 return "Figma API returned 403 — the token can't access this file."
+            if resp.status_code == 429:
+                # Still rate-limited after ret/backoff. Tell the agent to move on
+                # to other work and come back — do NOT instruct it to sleep.
+                return (
+                    "Figma API is rate-limiting requests (HTTP 429) and is still "
+                    "limited after automatic retries. Do NOT wait or sleep for "
+                    "it — continue with other work (e.g. reading the local code) "
+                    "and read this node again in a minute."
+                )
             resp.raise_for_status()
             data = resp.json()
         except Exception as exc:  # noqa: BLE001

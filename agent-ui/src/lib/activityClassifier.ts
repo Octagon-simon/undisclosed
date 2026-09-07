@@ -170,6 +170,210 @@ function humanizeMcpMethod(method: string): string {
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
+/** Human-friendly duration for a `sleep`/wait, e.g. 240 -> "4 min", 30 -> "30s". */
+function formatDuration(totalSeconds: number): string {
+  if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) return 'a moment';
+  if (totalSeconds < 60) return `${Math.round(totalSeconds)}s`;
+  const minutes = Math.round(totalSeconds / 60);
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.round((totalSeconds / 3600) * 10) / 10;
+  return `${hours} hr`;
+}
+
+/** Parse a `sleep` argument (`240`, `1.5`, `2m`, `1h`) into seconds. */
+function parseSleepSeconds(arg: string | undefined): number {
+  if (!arg) return 0;
+  const match = arg.match(/^([\d.]+)\s*([smhd]?)/i);
+  if (!match) return 0;
+  const value = Number.parseFloat(match[1]);
+  if (!Number.isFinite(value)) return 0;
+  const unit = match[2].toLowerCase();
+  const factor =
+    unit === 'm' ? 60 : unit === 'h' ? 3600 : unit === 'd' ? 86400 : 1;
+  return value * factor;
+}
+
+/** Basename of a program path (`/usr/bin/python3` -> `python3`). */
+function programBasename(token: string): string {
+  return (token || '').replace(/^.*\//, '');
+}
+
+/** First token that looks like a file argument (has an extension), shortened. */
+function firstFileArg(tokens: string[]): string | null {
+  const file = tokens
+    .slice(1)
+    .find((t) => !t.startsWith('-') && /\.[A-Za-z0-9]+$/.test(t));
+  return file ? shorten(file) : null;
+}
+
+/**
+ * A segment that's just glue — `echo …`, `cd …`, `true`, or bare env
+ * assignments (`FOO=bar`) — carries no real action, so we skip it when picking
+ * the command to describe.
+ */
+function isTrivialSegment(seg: string): boolean {
+  const s = seg.trim();
+  if (!s) return true;
+  if (/^(echo|printf|true|:|exit)\b/.test(s)) return true;
+  if (/^cd\b/.test(s)) return true;
+  if (/^(\w+=(?:'[^']*'|"[^"]*"|\S*)\s*)+$/.test(s)) return true; // pure FOO=bar
+  return false;
+}
+
+/** Describe ONE command (already split off a pipeline) as verb + short object. */
+function describeSingleCommand(seg: string): { verb: string; object: string } {
+  // Strip leading env assignments (`FOO=bar cmd …`) so we read the real program.
+  const effective =
+    seg.replace(/^(?:\w+=(?:'[^']*'|"[^"]*"|\S+)\s+)+/, '').trim() || seg.trim();
+  const tokens = effective.split(/\s+/).filter(Boolean);
+  const prog = programBasename(tokens[0] || '');
+  const arg1 = tokens[1] || '';
+
+  switch (prog) {
+    case 'sleep':
+      return { verb: 'Waited', object: formatDuration(parseSleepSeconds(arg1)) };
+    case 'grep':
+    case 'egrep':
+    case 'fgrep':
+    case 'rg':
+    case 'ag':
+    case 'ack':
+      return { verb: 'Searched', object: 'files' };
+    case 'find':
+    case 'fd':
+      return { verb: 'Found', object: 'files' };
+    case 'ls':
+    case 'll':
+    case 'la':
+    case 'tree':
+    case 'dir':
+      return { verb: 'Listed', object: 'files' };
+    case 'cat':
+    case 'head':
+    case 'tail':
+    case 'less':
+    case 'more':
+    case 'bat':
+    case 'nl':
+      return { verb: 'Read', object: firstFileArg(tokens) || 'a file' };
+    case 'touch':
+      return { verb: 'Created', object: firstFileArg(tokens) || 'a file' };
+    case 'mkdir':
+      return { verb: 'Created', object: 'a folder' };
+    case 'rm':
+    case 'rmdir':
+      return { verb: 'Removed', object: firstFileArg(tokens) || 'files' };
+    case 'cp':
+      return { verb: 'Copied', object: 'files' };
+    case 'mv':
+      return { verb: 'Moved', object: 'files' };
+    case 'curl':
+    case 'wget':
+    case 'http':
+      return { verb: 'Fetched', object: extractUrl(effective) || 'a URL' };
+    case 'git':
+      return { verb: 'Ran', object: arg1 ? `git ${arg1}` : 'git' };
+    case 'npm':
+    case 'pnpm':
+    case 'yarn':
+    case 'bun':
+    case 'pip':
+    case 'pip3':
+    case 'uv':
+    case 'poetry':
+    case 'docker':
+    case 'kubectl':
+    case 'make':
+    case 'cargo':
+      return { verb: 'Ran', object: arg1 ? `${prog} ${arg1}` : prog };
+    case 'python':
+    case 'python3':
+    case 'node':
+    case 'ruby':
+    case 'go':
+    case 'bash':
+    case 'sh':
+    case 'zsh':
+      return { verb: 'Ran', object: firstFileArg(tokens) || `a ${prog} script` };
+    case 'chmod':
+    case 'chown':
+      return { verb: 'Changed', object: 'permissions' };
+    case 'kill':
+    case 'pkill':
+    case 'killall':
+      return { verb: 'Stopped', object: 'a process' };
+    case 'ps':
+    case 'top':
+    case 'htop':
+    case 'jobs':
+      return { verb: 'Checked', object: 'processes' };
+    case 'which':
+    case 'whereis':
+    case 'type':
+      return { verb: 'Located', object: arg1 ? shorten(arg1) : 'a program' };
+    case 'awk':
+    case 'sed':
+      return { verb: 'Processed', object: 'text' };
+    case 'wc':
+      return { verb: 'Counted', object: 'lines' };
+    case '':
+      return { verb: 'Ran', object: 'a command' };
+    default:
+      return { verb: 'Ran', object: prog };
+  }
+}
+
+/**
+ * Turn a raw shell command into a short, friendly label instead of dumping the
+ * command string. Splits pipelines/chains (`&&`, `||`, `|`, `;`), skips trivial
+ * glue (`cd`, `echo`, env assignments), describes the primary real step, and
+ * notes any extra steps as a badge. The raw command stays available via the
+ * item's `input` (click-to-inspect).
+ */
+function describeShellCommand(rawCommand: string): {
+  verb: string;
+  object: string;
+  badge?: string;
+} {
+  const command = (rawCommand || '').trim();
+  if (!command) return { verb: 'Ran', object: 'a command' };
+
+  const segments = command
+    .split(/\s*(?:&&|\|\||[;|])\s*/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const meaningful = segments.filter((s) => !isTrivialSegment(s));
+  const primary = meaningful[0] || segments[0] || command;
+
+  const described = describeSingleCommand(primary);
+  const extra = meaningful.length - 1;
+  return {
+    verb: described.verb,
+    object: truncate(described.object, 48),
+    badge: extra > 0 ? `+${extra} more` : undefined,
+  };
+}
+
+/**
+ * Tools are prompted to pass a human `message_title` / `message_description`
+ * describing each call (see brain `app/agent/prompt.py`). When present, that
+ * agent-authored summary is the friendliest label we can show — e.g. a Figma
+ * read carries "Read Figma dropdown node", far better than "Read file / file".
+ * Titles are written imperatively, so use the first word as the verb pill and
+ * the rest as the object so it reads like the other activity rows.
+ */
+function labelFromNarration(
+  input: string
+): { verb: string; object: string } | null {
+  const text = (
+    extractParam(input, ['message_title', 'message_description']) || ''
+  ).trim();
+  if (!text) return null;
+  const space = text.indexOf(' ');
+  if (space === -1) return { verb: text, object: '' };
+  return { verb: text.slice(0, space), object: text.slice(space + 1) };
+}
+
 function browserVerb(method: string): string {
   if (method.includes('visit') || method.includes('open')) return 'Visited';
   if (method.includes('click')) return 'Clicked';
@@ -229,11 +433,12 @@ export function classifyToolItem(item: ToolItem): ActivityItem {
     object = '';
   } else if (toolkit.includes('terminal') || method.includes('shell')) {
     category = 'shell';
-    verb = 'Ran';
-    object =
-      extractParam(item.input, ['command', 'cmd']) ||
-      truncate(item.input, 60) ||
-      'command';
+    const command =
+      extractParam(item.input, ['command', 'cmd']) || item.input || '';
+    const described = describeShellCommand(command);
+    verb = described.verb;
+    object = described.object;
+    badge = described.badge;
   } else if (
     toolkit.includes('search') ||
     method.includes('search') ||
@@ -368,11 +573,19 @@ export function classifyToolItem(item: ToolItem): ActivityItem {
   const diff =
     category === 'edit' ? extractDiffStats(item.input, method) : undefined;
 
+  // Prefer the agent's own message_title/description as the label — but not for
+  // file rows, whose object is a click-to-open filename we must keep.
+  const narrated = filePath ? null : labelFromNarration(item.input);
+  if (narrated) {
+    verb = narrated.verb;
+    object = narrated.object;
+  }
+
   return {
     id: item.id,
     category,
     verb,
-    object: shorten(object),
+    object: narrated ? truncate(object, 64) : shorten(object),
     badge,
     running,
     filePath,
@@ -457,13 +670,14 @@ const CATEGORY_NOUNS: Record<
 export function summarizeActivities(
   items: ActivityItem[]
 ): Record<Exclude<ActivityCategory, 'other'>, number> {
-  const counts = {
+  const counts: Record<Exclude<ActivityCategory, 'other'>, number> = {
     read: 0,
     edit: 0,
     search: 0,
     browser: 0,
     shell: 0,
     memory: 0,
+    mcp: 0,
   };
   for (const item of items) {
     if (item.category === 'other') continue;

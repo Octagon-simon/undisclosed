@@ -480,7 +480,20 @@ export default function ChatBox(): JSX.Element {
     if (!el) return;
 
     const measure = () => {
-      const raw = el.getBoundingClientRect().height;
+      // Reserve space for the WHOLE bottom cluster, not just the input row.
+      // The queued-messages box (and usage banner / picker panels) float
+      // above the input via `bottom-full` and are absolutely positioned, so
+      // they don't count toward `el`'s own bounding-rect height — measuring
+      // only `el` left them covering the latest commands. Span from the top
+      // of the floating cluster (when present) down to the input's bottom.
+      const wrapperRect = el.getBoundingClientRect();
+      const floating = el.querySelector(
+        '[data-bottom-floating]'
+      ) as HTMLElement | null;
+      const top = floating
+        ? floating.getBoundingClientRect().top
+        : wrapperRect.top;
+      const raw = wrapperRect.bottom - top;
       setScrollBottomInsetPx(
         Math.max(
           CHAT_SCROLL_BOTTOM_MIN_PX,
@@ -492,7 +505,29 @@ export default function ChatBox(): JSX.Element {
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);
-    return () => ro.disconnect();
+
+    // The floating cluster mounts/unmounts (queued box appears, banner shows)
+    // and resizes (queued box expand/collapse) without changing `el` itself.
+    // A MutationObserver picks up its mount/unmount; we (re)attach the
+    // ResizeObserver to it so those size changes re-trigger the measurement.
+    let observedFloating: Element | null = null;
+    const syncFloating = () => {
+      const floating = el.querySelector('[data-bottom-floating]');
+      if (floating !== observedFloating) {
+        if (observedFloating) ro.unobserve(observedFloating);
+        if (floating) ro.observe(floating);
+        observedFloating = floating;
+      }
+      measure();
+    };
+    syncFloating();
+    const mo = new MutationObserver(syncFloating);
+    mo.observe(el, { childList: true, subtree: true });
+
+    return () => {
+      ro.disconnect();
+      mo.disconnect();
+    };
   }, [chatStore?.activeTaskId, hasAnyMessages]);
 
   const isTaskBusy = useMemo(() => {
@@ -967,6 +1002,7 @@ export default function ChatBox(): JSX.Element {
               // "end" event — otherwise the new thinking block would append to
               // the old thoughts.
               chatStore.clearLiveReasoning(_taskId);
+              chatStore.clearAcknowledgement(_taskId);
               chatStore.addMessages(_taskId, {
                 id: generateUniqueId(),
                 role: 'user',

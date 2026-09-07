@@ -178,7 +178,10 @@ export default function BottomBox({
     <div className="relative z-50 flex w-full flex-col rounded-3xl bg-ds-bg-neutral-default-default">
       {/* Floating overlays: never affect BoxMain layout */}
       {hasOverlay && (
-        <div className="pointer-events-auto absolute inset-x-0 bottom-full z-[60] mb-1 flex flex-col gap-1">
+        <div
+          data-bottom-floating
+          className="pointer-events-auto absolute inset-x-0 bottom-full z-[60] mb-1 flex flex-col gap-1"
+        >
           {showQueuedBox && (
             <QueuedBox
               queuedMessages={queuedMessages}
