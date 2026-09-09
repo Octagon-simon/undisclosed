@@ -36,6 +36,7 @@ interface AgentMessageCardProps {
   deferredFooter?: ReactNode;
   onTyping?: () => void;
   onMarkdownRenderComplete?: () => void;
+  hideFeedbackAndCopyBtn?: boolean; //hide the feedback (thumb up/thumb down and copy btn from being actioned)
 }
 
 // Tracks agent messages that have already played the typewriter (by stable message id).
@@ -50,6 +51,7 @@ export function AgentMessageCard({
   className,
   attaches,
   deferredFooter,
+  hideFeedbackAndCopyBtn
 }: AgentMessageCardProps) {
   const openFilePreview = usePageTabStore((s) => s.openFilePreview);
   const host = useHost();
@@ -164,7 +166,7 @@ export function AgentMessageCard({
       {showDeferredFileUi && deferredFooter != null && (
         <div className="mt-[10px] w-full">{deferredFooter}</div>
       )}
-      {markdownAndTypingComplete && (
+      {markdownAndTypingComplete && !hideFeedbackAndCopyBtn && (
         <div className="mt-3 gap-1 flex shrink-0 justify-start">
           <Button
             onClick={handleCopy}

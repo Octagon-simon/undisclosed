@@ -535,6 +535,25 @@ export const UserQueryGroup: React.FC<UserQueryGroupProps> = ({
         </motion.div>
       )}
 
+      {/* Turn-start acknowledgement — the agent's opening line, rendered as a
+          normal agent message ABOVE the work log so it reads as "On it…" then
+          the work, then the answer. (Env-gated on the backend; empty when off.) */}
+      {task?.acknowledgement ? (
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.2 }}
+        >
+          <AgentMessageCard
+            id={`ack-${activeTaskId}`}
+            content={task.acknowledgement}
+            typewriter={false}
+            onTyping={() => {}}
+            hideFeedbackAndCopyBtn
+          />
+        </motion.div>
+      ) : null}
+
       {taskCardVisible && activeTaskId && (
         <motion.div
           initial={{ opacity: 0, y: 8 }}
@@ -583,6 +602,9 @@ export const UserQueryGroup: React.FC<UserQueryGroupProps> = ({
                   id={message.id}
                   content={message.content}
                   onTyping={() => {}}
+                  // A user-stopped turn (summary "Task stopped") isn't a real
+                  // answer — there's nothing to thumbs-up/down or copy.
+                  hideFeedbackAndCopyBtn={message.content === 'Task stopped'}
                   deferredFooter={
                     message.fileList?.length ? (
                       <div className="my-2 flex flex-wrap gap-2">
@@ -741,6 +763,11 @@ export const UserQueryGroup: React.FC<UserQueryGroupProps> = ({
                   content={cleanedContent}
                   onTyping={() => {}}
                   attaches={message.attaches}
+                  // The legacy-replay failure notice is a system message, not an
+                  // agent answer — no feedback/copy affordances.
+                  hideFeedbackAndCopyBtn={cleanedContent.includes(
+                    'Unable to replay this legacy task'
+                  )}
                 />
               </motion.div>
             );

@@ -52,6 +52,7 @@ from app.model.enums import Status
 from app.service.approval_manager import ApprovalManager
 from app.service.task import (
     Action,
+    ActionAcknowledgeData,
     ActionData,
     ActionImproveData,
     ActionReasoningData,
@@ -417,6 +418,83 @@ async def _caption_images(agent: Any, images: list[Any]) -> str | None:
     return None
 
 
+_ACK_INSTRUCTION = (
+    "You are the assistant about to start working on the user's request. Reply "
+    "with ONE short, warm, natural sentence (max ~16 words) that acknowledges "
+    "what they asked so they know you're on it. Do NOT answer the request, do "
+    "NOT list steps, do NOT ask questions, and add no preamble — just the one "
+    "sentence."
+)
+
+
+def _ack_enabled() -> bool:
+    """Turn-start acknowledgement is OFF unless AGENT_ACK_ENABLED is truthy, so
+    it can't surprise anyone or reintroduce narration by default."""
+    return str(env("AGENT_ACK_ENABLED", "")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+async def _emit_acknowledgement(
+    agent: Any, question: str, task_lock: "TaskLock | None", task_id: str
+) -> None:
+    """Generate a one-line, contextual acknowledgement and push it to the UI.
+
+    Runs on a THROWAWAY agent (no tools, its own empty memory) so it is fully
+    decoupled from the turn agent: the ack never enters the turn agent's
+    history and can never be re-fed to the model on a later turn — the exact
+    failure mode that produced the "let me… let me…" pile-up. Best-effort: any
+    failure is swallowed so this can never break or delay the real turn.
+    """
+    if task_lock is None:
+        return
+    logger.info("[ack] generating acknowledgement for task %s", task_id)
+    try:
+        # The single agent forces stream=True on the model backend, so astep
+        # returns a STREAMING response (no `.msg`) that must be consumed —
+        # reading `.msg` directly is why the first version got empty content.
+        # stream_accumulate=True makes each chunk carry the full text so far,
+        # so the final chunk holds the whole sentence.
+        ack_agent = ChatAgent(
+            system_message=_ACK_INSTRUCTION,
+            model=agent.model_backend,
+            tools=[],
+            stream_accumulate=True,
+        )
+
+        async def _run() -> str:
+            response = await ack_agent.astep(question)
+            if isinstance(response, AsyncStreamingChatAgentResponse):
+                acc = ""
+                async for chunk in response:
+                    msg = getattr(chunk, "msg", None)
+                    content = (getattr(msg, "content", "") or "") if msg else ""
+                    if content:
+                        acc = content  # cumulative: keep the latest full text
+                return acc
+            msg = getattr(response, "msg", None)
+            return (getattr(msg, "content", "") or "") if msg else ""
+
+        # Bounded so a slow/stuck provider can never delay the real turn by more
+        # than a couple seconds; on timeout we just skip the ack.
+        text = (await asyncio.wait_for(_run(), timeout=8)).strip()
+        if not text:
+            logger.warning("[ack] model returned no content; skipping")
+            return
+        # Guard against a chatty model: keep it to a single tidy line.
+        text = text.splitlines()[0].strip()[:200]
+        if text:
+            await task_lock.put_queue(
+                ActionAcknowledgeData(process_task_id=task_id, data=text)
+            )
+            logger.info("[ack] emitted for task %s: %r", task_id, text)
+    except Exception:
+        logger.warning("[ack] generation failed", exc_info=True)
+
+
 async def _collapse_memory_images(agent: Any) -> None:
     """Replace raw images in the agent's stored memory with a text description.
 
@@ -743,6 +821,14 @@ def _action_to_sse(item: ActionData) -> str | None:
                 "process_task_id": item.process_task_id,
             },
         )
+    if item.action == Action.acknowledge:
+        return sse_json(
+            "acknowledge",
+            {
+                "acknowledgement": item.data,
+                "process_task_id": item.process_task_id,
+            },
+        )
     if item.action == Action.terminal:
         return sse_json(
             "terminal",
@@ -901,6 +987,18 @@ async def single_agent_solve(
         # turn's own image (attached below) is added after and is seen once.
         await _collapse_memory_images(turn_agent)
         _fire_hook(emit_task_started(task_id=task_id))
+        # One-time, presence-conveying acknowledgement (env-gated, off by
+        # default). Emitted BEFORE the main step so it shows first; run_turn
+        # itself is a task the drain loop forwards from concurrently, so this
+        # await doesn't stall the SSE stream. Sequential (not concurrent with
+        # the main step) so it never shares the model backend mid-request. It's
+        # fully decoupled from the turn agent's memory, so it can't leak into
+        # the answer. Bounded internally so it can't delay the turn.
+        if _ack_enabled():
+            logger.info("[ack] AGENT_ACK_ENABLED on for task %s", task_id)
+            await _emit_acknowledgement(
+                turn_agent, question, task_lock, task_id
+            )
         vision_capable = model_supports_vision(
             options.model_platform, options.model_type
         )
