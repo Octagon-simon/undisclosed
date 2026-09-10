@@ -187,6 +187,54 @@ export class UndisclosedAgentLayoutContribution
       .undisclosed-agent-root pre * {
         font-family: var(--theia-editor-font-family, ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace) !important;
       }
+
+      /* 4. "Find All References" peek — the CLICKED (selected/focused) row was
+         pink-on-pink: the theme's strong accent selection background plus a
+         same-hue match highlight hid the symbol text. workbench.colorCustomizations
+         didn't override it here, so force it in CSS: neutral selection + a
+         high-contrast, transparent-background match highlight that reads on any
+         row state. (Hover is fine; this only fixes the selected/focused state.) */
+      .monaco-editor .reference-zone-widget .ref-tree .monaco-list-row.selected,
+      .monaco-editor .reference-zone-widget .ref-tree .monaco-list-row.focused,
+      .monaco-editor .peekview-widget .ref-tree .monaco-list-row.selected,
+      .monaco-editor .peekview-widget .ref-tree .monaco-list-row.focused {
+        background-color: #37373d !important;
+        color: #ffffff !important;
+      }
+      .monaco-editor .reference-zone-widget .ref-tree .monaco-list-row .highlight,
+      .monaco-editor .peekview-widget .ref-tree .monaco-list-row .highlight,
+      .monaco-editor .reference-zone-widget .ref-tree .referenceMatch .highlight,
+      .monaco-editor .peekview-widget .ref-tree .referenceMatch .highlight {
+        background-color: transparent !important;
+        color: #ffcc66 !important;
+        font-weight: 700 !important;
+      }
+
+      /* 5. Divider after our editor "Chat with Agent" action so it doesn't run
+         into the next item (e.g. Lacuna's "Generate Tests"). A border-right
+         traced the item's rounded corner (curved + shadowy), so use a straight
+         pseudo-element rule instead and strip any inherited radius/shadow.
+         (id has a dot → attribute selector, not "#id".) */
+      .lm-TabBar-toolbar [id="undisclosed-agent.open"],
+      .p-TabBar-toolbar [id="undisclosed-agent.open"] {
+        position: relative !important;
+        overflow: visible !important;
+        margin-right: 12px !important;
+        border-radius: 0 !important;
+        box-shadow: none !important;
+      }
+      .lm-TabBar-toolbar [id="undisclosed-agent.open"]::after,
+      .p-TabBar-toolbar [id="undisclosed-agent.open"]::after {
+        content: "" !important;
+        position: absolute !important;
+        right: -6px !important;
+        top: 50% !important;
+        transform: translateY(-50%) !important;
+        width: 1px !important;
+        height: 14px !important;
+        background: var(--theia-editorGroup-border, var(--theia-panel-border, rgba(127, 127, 127, 0.4))) !important;
+        pointer-events: none !important;
+      }
     `;
     document.head.appendChild(style);
   }

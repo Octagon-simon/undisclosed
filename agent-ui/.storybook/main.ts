@@ -11,7 +11,11 @@ import path from 'path';
  */
 const config: StorybookConfig = {
   stories: ['../src/**/*.stories.@(ts|tsx|js|jsx|mdx)'],
-  addons: ['@storybook/addon-docs', '@storybook/addon-a11y'],
+  addons: [
+    '@storybook/addon-docs',
+    '@storybook/addon-a11y',
+    '@storybook/addon-themes',
+  ],
   framework: { name: '@storybook/react-vite', options: {} },
   core: { disableTelemetry: true },
   async viteFinal(cfg) {

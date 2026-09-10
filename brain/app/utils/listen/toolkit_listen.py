@@ -396,7 +396,15 @@ def listen_toolkit(
                 error = None
                 res = None
                 try:
-                    res = func(*args, **kwargs)
+                    # Mirror the async wrapper: drop kwargs the target doesn't
+                    # accept (unless it takes **kwargs). Weaker models sometimes
+                    # pass a stray `description` (conflated with the message
+                    # integration's `message_description`), which otherwise
+                    # raised "unexpected keyword argument 'description'" and
+                    # failed EVERY sync tool call (e.g. shell_exec), stalling
+                    # the turn so only a "Let me…" preamble was left.
+                    safe_kwargs = _filter_kwargs_for_callable(func, kwargs)
+                    res = func(*args, **safe_kwargs)
                     # Safety check: if the result is a coroutine,
                     # this is a programming error
                     if asyncio.iscoroutine(res):

@@ -355,6 +355,7 @@ class TerminalToolkit(BaseTerminalToolkit, AbstractToolkit):
         id: str | None = None,
         block: bool = True,
         timeout: float = 20.0,
+        **_ignored: object,
     ) -> str:
         r"""Executes a shell command in blocking or non-blocking mode.
 
@@ -368,6 +369,13 @@ class TerminalToolkit(BaseTerminalToolkit, AbstractToolkit):
         Returns:
             str: The output of the command execution.
         """
+        # Tolerate stray kwargs. Weaker models sometimes pass a bare
+        # `description` (conflating it with the message-integration
+        # `message_description`, which the wrapper strips — `description` is
+        # not), which otherwise raised `unexpected keyword argument
+        # 'description'` and failed EVERY shell call, stalling the whole turn.
+        if _ignored:
+            logger.debug("shell_exec ignoring stray kwargs: %s", list(_ignored))
         # Auto-generate ID if not provided
         if id is None:
             import time

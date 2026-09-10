@@ -438,8 +438,24 @@ def _ack_enabled() -> bool:
     }
 
 
+def _ack_fallback_seconds() -> float:
+    """Fallback delay for the RARE long task that never calls a tool (e.g.
+    "analyze this whole codebase"). The PRIMARY trigger is the first tool call
+    (see run_turn); this timer only catches long no-tool turns. Deliberately
+    long so it never fires on ordinary chit-chat — those finish and cancel it
+    well before it elapses. Tunable via AGENT_ACK_FALLBACK_MS (default 12000)."""
+    try:
+        ms = float(env("AGENT_ACK_FALLBACK_MS", "12000"))
+    except (TypeError, ValueError):
+        ms = 12000.0
+    return max(0.0, ms / 1000.0)
+
+
 async def _emit_acknowledgement(
-    agent: Any, question: str, task_lock: "TaskLock | None", task_id: str
+    agent: Any,
+    question: str,
+    task_lock: "TaskLock | None",
+    task_id: str,
 ) -> None:
     """Generate a one-line, contextual acknowledgement and push it to the UI.
 
@@ -447,7 +463,8 @@ async def _emit_acknowledgement(
     decoupled from the turn agent: the ack never enters the turn agent's
     history and can never be re-fed to the model on a later turn — the exact
     failure mode that produced the "let me… let me…" pile-up. Best-effort: any
-    failure is swallowed so this can never break or delay the real turn.
+    failure is swallowed so this can never break or delay the real turn. The
+    caller decides WHEN to fire this (first tool call, or a long-task fallback).
     """
     if task_lock is None:
         return
@@ -606,6 +623,7 @@ async def _response_content(
     task_lock: Any = None,
     task_id: str = "",
     stream_reasoning: bool = False,
+    on_first_tool_call: Any = None,
 ) -> tuple[str, int, str, bool]:
     """Returns (content, tokens, reasoning, reasoning_was_streamed).
 
@@ -656,6 +674,8 @@ async def _response_content(
         streamed = False
         last_chunk = None
         _seen_tool_calls = 0
+        _tool_hook_fired = False
+        _hook_tasks: list[asyncio.Task] = []
         _logged_first_reasoning = False
         _dbg_chunk_no = 0
         async for chunk in response:
@@ -673,6 +693,16 @@ async def _response_content(
                     final_reasoning = reasoning
                 content = ""
                 reasoning = ""
+                # First tool call → this turn is doing real work. Fire the
+                # acknowledgement trigger ONCE, non-blocking (never stalls the
+                # stream); the callback itself is idempotent.
+                if on_first_tool_call is not None and not _tool_hook_fired:
+                    _tool_hook_fired = True
+                    _t = asyncio.create_task(on_first_tool_call())
+                    _t.add_done_callback(
+                        lambda t: None if t.cancelled() else t.exception()
+                    )
+                    _hook_tasks.append(_t)
             # DEBUG: dump the structure of the first handful of chunks so we can
             # see exactly where (if anywhere) reasoning lands.
             if debug_enabled() and _dbg_chunk_no < 12:
@@ -987,17 +1017,45 @@ async def single_agent_solve(
         # turn's own image (attached below) is added after and is seen once.
         await _collapse_memory_images(turn_agent)
         _fire_hook(emit_task_started(task_id=task_id))
-        # One-time, presence-conveying acknowledgement (env-gated, off by
-        # default). Emitted BEFORE the main step so it shows first; run_turn
-        # itself is a task the drain loop forwards from concurrently, so this
-        # await doesn't stall the SSE stream. Sequential (not concurrent with
-        # the main step) so it never shares the model backend mid-request. It's
-        # fully decoupled from the turn agent's memory, so it can't leak into
-        # the answer. Bounded internally so it can't delay the turn.
-        if _ack_enabled():
-            logger.info("[ack] AGENT_ACK_ENABLED on for task %s", task_id)
+        # Presence acknowledgement (env-gated, off by default). PRIMARY trigger:
+        # the first tool call (fired from _response_content via on_first_tool_call
+        # below), so a turn that never calls a tool — e.g. "how are you" — gets
+        # NO ack and the redundant dueling-answer is gone. FALLBACK: a long timer
+        # for the rare long task that does real work without tools (e.g. "analyze
+        # this whole codebase"). `_fire_ack` is idempotent, so whichever trigger
+        # wins fires it exactly once; it's fully decoupled from the turn agent's
+        # memory, so it can never leak into the answer.
+        _ack_enabled_turn = _ack_enabled()
+        _ack_fired = False
+        _ack_fallback_task: asyncio.Task | None = None
+
+        async def _fire_ack() -> None:
+            nonlocal _ack_fired
+            if _ack_fired:
+                return
+            _ack_fired = True
             await _emit_acknowledgement(
                 turn_agent, question, task_lock, task_id
+            )
+
+        if _ack_enabled_turn:
+            fallback = _ack_fallback_seconds()
+            logger.info(
+                "[ack] armed for task %s (tool-call trigger + %.0fs fallback)",
+                task_id,
+                fallback,
+            )
+
+            async def _ack_fallback() -> None:
+                try:
+                    await asyncio.sleep(fallback)
+                    await _fire_ack()
+                except asyncio.CancelledError:
+                    pass
+
+            _ack_fallback_task = asyncio.create_task(_ack_fallback())
+            _ack_fallback_task.add_done_callback(
+                lambda t: None if t.cancelled() else t.exception()
             )
         vision_capable = model_supports_vision(
             options.model_platform, options.model_type
@@ -1087,8 +1145,14 @@ async def single_agent_solve(
                 task_lock=task_lock,
                 task_id=task_id,
                 stream_reasoning=_thinking_enabled(options),
+                on_first_tool_call=_fire_ack if _ack_enabled_turn else None,
             )
         )
+        # Turn is done: stop the long-task fallback timer if it's still pending
+        # (short / no-tool turns never reach it → no ack). A tool-using turn has
+        # already fired the ack via on_first_tool_call above.
+        if _ack_fallback_task is not None and not _ack_fallback_task.done():
+            _ack_fallback_task.cancel()
         # Stash the model's reasoning so the 'end' emitter can surface it in a
         # collapsible "thinking" block — UNLESS it was already streamed live
         # (deltas), in which case the UI already has it and re-emitting at the

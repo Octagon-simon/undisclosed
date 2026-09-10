@@ -5,7 +5,7 @@
   "description": "Undisclosed desktop app — an Electron Theia shell that hosts the editor + agent and spawns the Python brain sidecar.",
   "license": "Apache-2.0",
   "author": "Simon Ugorji",
-  "main": "lib/backend/electron-main.js",
+  "main": "electron-entry.js",
   "engines": {
     "node": ">=18 <=20"
   },
@@ -20,7 +20,27 @@
           "workbench.startupEditor": "none",
           "files.enableTrash": false,
           "window.titleBarStyle": "native",
-          "window.menuBarVisibility": "classic"
+          "window.menuBarVisibility": "classic",
+          "terminal.integrated.profiles.osx": {
+            "zsh": { "path": "zsh" },
+            "zsh (login)": { "path": "zsh", "args": ["-l"] },
+            "bash": { "path": "bash" },
+            "sh": { "path": "sh" }
+          },
+          "terminal.integrated.defaultProfile.osx": "zsh",
+          "terminal.integrated.profiles.linux": {
+            "bash": { "path": "bash" },
+            "zsh": { "path": "zsh" },
+            "sh": { "path": "sh" }
+          },
+          "terminal.integrated.defaultProfile.linux": "bash",
+          "workbench.colorCustomizations": {
+            "peekViewResult.selectionBackground": "#37373d",
+            "peekViewResult.selectionForeground": "#ffffff",
+            "peekViewResult.lineForeground": "#d4d4d4",
+            "peekViewResult.matchHighlightBackground": "#ea5c0099",
+            "peekViewEditor.matchHighlightBackground": "#ea5c0066"
+          }
         }
       }
     },
@@ -30,8 +50,19 @@
       }
     }
   },
+  "theiaPluginsDir": "plugins",
+  "_theiaPlugins_note": "VS Code builtin extensions, pinned to 1.95.3 (the version open-vsx hosts under the `vscode` namespace for Theia 1.60). Only LANGUAGE-FEATURES (LSP) are added for languages undisclosed-languages already registers (ts/tsx/js/css/html) to avoid double language registration; the `vscode.json` grammar IS added because undisclosed-languages does not register json/jsonc. Run `npm run download:plugins` (network) before build.",
+  "theiaPlugins": {
+    "vscode.typescript-language-features": "https://open-vsx.org/api/vscode/typescript-language-features/1.95.3/file/vscode.typescript-language-features-1.95.3.vsix",
+    "vscode.css-language-features": "https://open-vsx.org/api/vscode/css-language-features/1.95.3/file/vscode.css-language-features-1.95.3.vsix",
+    "vscode.html-language-features": "https://open-vsx.org/api/vscode/html-language-features/1.95.3/file/vscode.html-language-features-1.95.3.vsix",
+    "vscode.json": "https://open-vsx.org/api/vscode/json/1.95.3/file/vscode.json-1.95.3.vsix",
+    "vscode.json-language-features": "https://open-vsx.org/api/vscode/json-language-features/1.95.3/file/vscode.json-language-features-1.95.3.vsix",
+    "vscode.emmet": "https://open-vsx.org/api/vscode/emmet/1.95.3/file/vscode.emmet-1.95.3.vsix"
+  },
   "dependencies": {
     "@theia/core": "1.60.0",
+    "@theia/debug": "1.60.0",
     "@theia/editor": "1.60.0",
     "@theia/electron": "1.60.0",
     "@theia/file-search": "1.60.0",
@@ -41,6 +72,7 @@
     "@theia/messages": "1.60.0",
     "@theia/monaco": "1.60.0",
     "@theia/navigator": "1.60.0",
+    "@theia/output": "1.60.0",
     "@theia/plugin-ext": "1.60.0",
     "@theia/plugin-ext-vscode": "1.60.0",
     "@theia/preferences": "1.60.0",
@@ -67,7 +99,8 @@
   },
   "scripts": {
     "clean": "theia clean",
-    "build": "theia build --mode production",
+    "download:plugins": "theia download:plugins",
+    "build": "npm run download:plugins && theia build --mode production",
     "watch": "theia build --watch --mode development",
     "start": "theia start",
     "rebuild": "theia rebuild:electron",

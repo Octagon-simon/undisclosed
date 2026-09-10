@@ -16,13 +16,44 @@
         "preferences": {
           "security.workspace.trust.enabled": false,
           "workbench.startupEditor": "none",
-          "files.enableTrash": false
+          "files.enableTrash": false,
+          "terminal.integrated.profiles.osx": {
+            "zsh": { "path": "zsh" },
+            "zsh (login)": { "path": "zsh", "args": ["-l"] },
+            "bash": { "path": "bash" },
+            "sh": { "path": "sh" }
+          },
+          "terminal.integrated.defaultProfile.osx": "zsh",
+          "terminal.integrated.profiles.linux": {
+            "bash": { "path": "bash" },
+            "zsh": { "path": "zsh" },
+            "sh": { "path": "sh" }
+          },
+          "terminal.integrated.defaultProfile.linux": "bash",
+          "workbench.colorCustomizations": {
+            "peekViewResult.selectionBackground": "#37373d",
+            "peekViewResult.selectionForeground": "#ffffff",
+            "peekViewResult.lineForeground": "#d4d4d4",
+            "peekViewResult.matchHighlightBackground": "#ea5c0099",
+            "peekViewEditor.matchHighlightBackground": "#ea5c0066"
+          }
         }
       }
     }
   },
+  "theiaPluginsDir": "plugins",
+  "_theiaPlugins_note": "Keep in sync with apps/desktop/package.json. VS Code builtin LSPs pinned to 1.95.3 (open-vsx `vscode` namespace, Theia 1.60). Only language-features for languages undisclosed-languages already registers (ts/tsx/js/css/html); vscode.json grammar added since json/jsonc aren't registered. Run `npm run download:plugins` (network) before build.",
+  "theiaPlugins": {
+    "vscode.typescript-language-features": "https://open-vsx.org/api/vscode/typescript-language-features/1.95.3/file/vscode.typescript-language-features-1.95.3.vsix",
+    "vscode.css-language-features": "https://open-vsx.org/api/vscode/css-language-features/1.95.3/file/vscode.css-language-features-1.95.3.vsix",
+    "vscode.html-language-features": "https://open-vsx.org/api/vscode/html-language-features/1.95.3/file/vscode.html-language-features-1.95.3.vsix",
+    "vscode.json": "https://open-vsx.org/api/vscode/json/1.95.3/file/vscode.json-1.95.3.vsix",
+    "vscode.json-language-features": "https://open-vsx.org/api/vscode/json-language-features/1.95.3/file/vscode.json-language-features-1.95.3.vsix",
+    "vscode.emmet": "https://open-vsx.org/api/vscode/emmet/1.95.3/file/vscode.emmet-1.95.3.vsix"
+  },
   "dependencies": {
     "@theia/core": "1.60.0",
+    "@theia/debug": "1.60.0",
     "@theia/editor": "1.60.0",
     "@theia/file-search": "1.60.0",
     "@theia/filesystem": "1.60.0",
@@ -33,6 +64,7 @@
     "@theia/messages": "1.60.0",
     "@theia/monaco": "1.60.0",
     "@theia/navigator": "1.60.0",
+    "@theia/output": "1.60.0",
     "@theia/plugin-ext": "1.60.0",
     "@theia/plugin-ext-vscode": "1.60.0",
     "@theia/preferences": "1.60.0",
@@ -55,9 +87,10 @@
   },
   "scripts": {
     "clean": "theia clean",
-    "build": "theia build --mode development",
-    "build:prod": "theia build --mode production",
-    "start": "THEIA_WEBVIEW_EXTERNAL_ENDPOINT='{{hostname}}' theia start --hostname 0.0.0.0 --port 3000",
+    "download:plugins": "theia download:plugins",
+    "build": "npm run download:plugins && theia build --mode development",
+    "build:prod": "npm run download:plugins && theia build --mode production",
+    "start": "THEIA_DEFAULT_PLUGINS=local-dir:plugins THEIA_WEBVIEW_EXTERNAL_ENDPOINT='{{hostname}}' theia start --hostname 0.0.0.0 --port 3000",
     "watch": "theia build --watch --mode development",
     "build:agent-ui": "npm --prefix agent-ui run build:agent-embed && npm run sync:agent-bundle",
     "sync:agent-bundle": "cp agent-ui/dist-agent-embed/agent-embed.umd.js agent-ui/dist-agent-embed/style.css packages/undisclosed-agent/assets/agent-embed/ && echo synced",
@@ -68,6 +101,7 @@
     "dist:mac": "npm run dist:brain && npm run dist:prepare && npm --prefix apps/desktop run dist:mac",
     "dist:win": "npm run dist:brain && npm run dist:prepare && npm --prefix apps/desktop run dist:win",
     "dist:linux": "npm run dist:brain && npm run dist:prepare && npm --prefix apps/desktop run dist:linux",
-    "release": "bash scripts/release.sh"
+    "release": "bash scripts/release.sh",
+    "verify:fresh": "bash scripts/verify-fresh.sh"
   }
 }

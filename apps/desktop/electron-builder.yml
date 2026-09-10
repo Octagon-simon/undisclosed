@@ -23,6 +23,13 @@ files:
   - lib/**
   - src-gen/**
   - package.json
+  # Electron main entry wrapper (sets THEIA_DEFAULT_PLUGINS → bundled plugins).
+  - electron-entry.js
+  # Bundled VS Code builtin extensions (TS/JSON language servers) downloaded by
+  # `theia download:plugins` into ./plugins. Theia deploys them from
+  # theiaPluginsDir at runtime; without this the packaged app has no language
+  # intelligence (go-to-def / references / hover) even though dev does.
+  - plugins/**
   - "!**/*.ts"
   - "!**/*.map"
 

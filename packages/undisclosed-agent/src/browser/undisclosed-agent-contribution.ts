@@ -15,14 +15,19 @@ import {
 import {
   Command,
   CommandRegistry,
+  Emitter,
   MenuModelRegistry,
   MenuPath,
 } from '@theia/core/lib/common';
+import { EditorWidget } from '@theia/editor/lib/browser';
 import { UndisclosedAgentWidget } from './undisclosed-agent-widget';
 
 export const UNDISCLOSED_AGENT_TOGGLE_COMMAND_ID = 'undisclosed-agent:toggle';
 const INTRODUCED_KEY = 'undisclosed-agent.introduced';
 
+/** Editor title-bar action: open the agent panel when it's closed (like Lacuna's
+ * "Generate Tests"). Only shown on editors while the panel isn't visible. */
+const OPEN_AGENT: Command = { id: 'undisclosed-agent.open', label: 'Open Agent' };
 const NEW: Command = { id: 'undisclosed-agent.new-conversation', label: 'New Conversation' };
 const HISTORY: Command = { id: 'undisclosed-agent.history', label: 'History' };
 const CLOSE: Command = { id: 'undisclosed-agent.close', label: 'Close Panel' };
@@ -60,6 +65,11 @@ export class UndisclosedAgentContribution
   @inject(StorageService)
   protected readonly storageService!: StorageService;
 
+  /** Fired when the agent panel opens/closes/(un)collapses, so the editor
+   * toolbar re-renders and the "Chat with Agent" button shows/hides LIVE
+   * (otherwise it only refreshed when you next clicked the editor). */
+  protected readonly onToolbarChange = new Emitter<void>();
+
   constructor() {
     super({
       widgetId: UndisclosedAgentWidget.ID,
@@ -70,8 +80,19 @@ export class UndisclosedAgentContribution
     });
   }
 
+  /** Whether the agent panel is currently open and visible in the shell. */
+  protected isAgentPanelVisible(): boolean {
+    const widget = this.tryGetWidget();
+    return !!(widget && widget.isVisible);
+  }
+
   override registerCommands(commands: CommandRegistry): void {
     super.registerCommands(commands);
+    commands.registerCommand(OPEN_AGENT, {
+      // Open + focus the panel. (The AbstractViewContribution toggle command
+      // would CLOSE it if already open; this one only ever opens.)
+      execute: () => this.openView({ activate: true, reveal: true }),
+    });
     commands.registerCommand(NEW, {
       isVisible: (w) => !!asAgent(w),
       execute: (w) => asAgent(w)?.newConversation(),
@@ -179,6 +200,24 @@ export class UndisclosedAgentContribution
 
   registerToolbarItems(registry: TabBarToolbarRegistry): void {
     const isVisible = (w: Widget): boolean => !!asAgent(w);
+    // Editor title-bar "Open Agent" — shown on an EDITOR (not our panel) only
+    // while the agent panel is closed, so users can reopen it from where they
+    // work (mirrors Lacuna's "Generate Tests"). Hidden again once it's open.
+    registry.registerItem({
+      id: OPEN_AGENT.id,
+      command: OPEN_AGENT.id,
+      tooltip: 'Chat with the agent about this file',
+      // Theia's native toolbar renders EITHER an icon OR text, never both
+      // (tab-bar-toolbar renderItem: "Only present text if there is no icon"),
+      // so to get a visible label we use text and omit the icon.
+      text: 'Chat with Agent',
+      priority: 0,
+      isVisible: (w: Widget) =>
+        w instanceof EditorWidget && !this.isAgentPanelVisible(),
+      // Re-render the toolbar whenever the panel's visibility changes so the
+      // button appears/disappears immediately (no editor click needed).
+      onDidChange: this.onToolbarChange.event,
+    });
     // Ascending priority renders left→right, so: + New · History · ⋯ · ✕
     // (the Antigravity order).
     registry.registerItem({
@@ -240,6 +279,12 @@ export class UndisclosedAgentContribution
     void this.openView({ activate: false, reveal: true }).catch(() => {
       /* panel opens later / shows its own error — must not block startup */
     });
+    // Live-refresh the editor "Chat with Agent" button when the panel opens
+    // (onDidAddWidget) or closes (onDidRemoveWidget), so it appears/disappears
+    // immediately instead of only after the next editor click.
+    const fire = (): void => this.onToolbarChange.fire();
+    this.shell.onDidAddWidget(fire);
+    this.shell.onDidRemoveWidget(fire);
     void this.storageService
       .getData<boolean>(INTRODUCED_KEY, false)
       .then((introduced) => {

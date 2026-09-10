@@ -14,7 +14,6 @@
   "type": "module",
   "scripts": {
     "prepare": "husky",
-    "postinstall": "node scripts/fix-node-pty-permissions.js",
     "clean-cache": "rimraf node_modules/.vite",
     "dev": "npm run clean-cache && vite",
     "dev:web": "npm run clean-cache && vite --config vite.config.web.ts",
@@ -138,6 +137,7 @@
     "@playwright/test": "^1.48.2",
     "@storybook/addon-a11y": "^10.1.11",
     "@storybook/addon-docs": "^10.1.11",
+    "@storybook/addon-themes": "^10.6.0",
     "@storybook/react-vite": "^10.1.11",
     "@testing-library/jest-dom": "^6.8.0",
     "@testing-library/react": "^16.3.0",

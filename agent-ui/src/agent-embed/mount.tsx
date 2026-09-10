@@ -152,25 +152,73 @@ export function mountAgentPanel(
   // class (see vite.config.agent-embed.ts) so they don't leak into the host.
   element.classList.add('undisclosed-agent-root');
 
-  // Keep Cmd/Ctrl+A local to the panel's own inputs. Theia binds select-all
-  // globally and it fires on the active editor even when a chatbox input is
-  // focused. A window CAPTURE listener runs before Theia's handler; when the
-  // target is one of our inputs we stop propagation (but not the default), so
-  // the browser selects the input's text and Theia never sees the key.
-  const selectAllGuard = (e: KeyboardEvent) => {
+  // Keep the editing chords — select-all (A) AND clipboard (C/X/V) — local to
+  // the panel's own inputs. Theia binds ALL of these globally (select-all + its
+  // own copy/cut/paste commands), so when a chatbox input is focused the keys
+  // fire on the active editor instead of the input. In the browser dev build
+  // the native default still slips through, but in the PACKAGED Electron app
+  // Theia's keybindings win and the input goes dead — which is exactly why
+  // Cmd+X/C/V "worked in the editor but not the built app" (Monaco self-handles
+  // its clipboard; our plain contenteditable/inputs rely on the native path).
+  // A window CAPTURE listener runs before Theia's handler; when the target is
+  // one of our inputs we stop propagation (but NOT the default), so the
+  // browser/native performs the edit on the focused input and Theia never sees
+  // the key.
+  const EDIT_CHORD_KEYS = new Set(['a', 'c', 'v', 'x']);
+  const panelEditChordGuard = (e: KeyboardEvent) => {
     if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return;
-    if (e.key !== 'a' && e.key !== 'A') return;
+    const key = e.key.toLowerCase();
+    if (!EDIT_CHORD_KEYS.has(key)) return;
     const t = e.target as HTMLElement | null;
     if (!t || !element.contains(t)) return;
-    if (
+    const editable =
       t.tagName === 'INPUT' ||
       t.tagName === 'TEXTAREA' ||
-      t.isContentEditable
-    ) {
+      t.isContentEditable;
+    if (!editable) return;
+
+    if (key === 'a') {
+      // Select-all is the odd one out: unlike copy/cut/paste there's no native
+      // menu role that reliably scopes to the focused input in the packaged
+      // app (webContents.selectAll only scopes to <input>/<textarea>, not a
+      // contenteditable), so we do it DETERMINISTICALLY. preventDefault +
+      // stopImmediatePropagation so neither Theia nor the native Select-All
+      // re-scopes it to the whole document.
+      e.preventDefault();
+      e.stopImmediatePropagation();
       e.stopPropagation();
+      if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA') {
+        (t as HTMLInputElement | HTMLTextAreaElement).select();
+      } else {
+        // e.target can be a CHILD node inside the contenteditable (a chip span,
+        // a text node's parent), and selecting that selects only part. Climb to
+        // the element that actually carries contentEditable="true" (the input
+        // host) and select ALL of its contents.
+        let host: HTMLElement | null = t;
+        while (
+          host &&
+          host.contentEditable !== 'true' &&
+          host !== element &&
+          element.contains(host)
+        ) {
+          host = host.parentElement;
+        }
+        const target =
+          host && host.contentEditable === 'true' ? host : t;
+        const range = document.createRange();
+        range.selectNodeContents(target);
+        const sel = window.getSelection();
+        sel?.removeAllRanges();
+        sel?.addRange(range);
+      }
+      return;
     }
+
+    // C/X/V: stop Theia's global keybinding from hijacking the chord (but do
+    // NOT preventDefault) so the browser/native clipboard acts on the input.
+    e.stopPropagation();
   };
-  window.addEventListener('keydown', selectAllGuard, true);
+  window.addEventListener('keydown', panelEditChordGuard, true);
 
   const queryClient = new QueryClient();
   const apiRef = createRef<AgentPanelApi>();
@@ -207,7 +255,7 @@ export function mountAgentPanel(
   // first render — before any host toolbar click can arrive).
   return {
     unmount: () => {
-      window.removeEventListener('keydown', selectAllGuard, true);
+      window.removeEventListener('keydown', panelEditChordGuard, true);
       unsubscribeActiveEditor?.();
       root.unmount();
       element.classList.remove('undisclosed-agent-root');

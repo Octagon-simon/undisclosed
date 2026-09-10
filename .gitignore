@@ -54,3 +54,6 @@ apps/desktop/gen-webpack*.js
 brain/dist/
 brain/build/
 brain/*.spec
+
+*.png 
+*.md

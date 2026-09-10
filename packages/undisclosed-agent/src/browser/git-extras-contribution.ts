@@ -12,6 +12,7 @@ import {
   Command,
   CommandContribution,
   CommandRegistry,
+  Emitter,
   MAIN_MENU_BAR,
   MenuContribution,
   MenuModelRegistry,
@@ -65,6 +66,17 @@ export class GitExtrasContribution
   protected readonly repositories!: GitRepositoryProvider;
   @inject(MessageService) protected readonly messages!: MessageService;
   @inject(ScmService) protected readonly scm!: ScmService;
+
+  /** True while the AI commit-message request is in flight — drives the toolbar
+   *  button's spinner (and disables it so it can't be double-fired). */
+  protected generating = false;
+  /** Fire to re-render the SCM toolbar so the button's icon/enabled swap. */
+  protected readonly onDidChangeToolbar = new Emitter<void>();
+
+  protected setGenerating(value: boolean): void {
+    this.generating = value;
+    this.onDidChangeToolbar.fire();
+  }
 
   /** Generate a Conventional-Commits message from the staged diff via the Brain
    *  (which uses the model the user is chatting with), and drop it into the
@@ -197,7 +209,18 @@ export class GitExtrasContribution
       },
     });
     commands.registerCommand(GENERATE_MESSAGE, {
-      execute: () => this.generateCommitMessage(),
+      isEnabled: () => !this.generating,
+      execute: async () => {
+        if (this.generating) {
+          return;
+        }
+        this.setGenerating(true);
+        try {
+          await this.generateCommitMessage();
+        } finally {
+          this.setGenerating(false);
+        }
+      },
     });
   }
 
@@ -223,7 +246,13 @@ export class GitExtrasContribution
       id: GENERATE_MESSAGE.id,
       command: GENERATE_MESSAGE.id,
       tooltip: 'Generate a commit message from the staged changes (AI)',
-      icon: 'codicon codicon-sparkle',
+      // Swap to a spinning icon while the request is in flight so the user
+      // knows it's working (the fetch can take a couple seconds).
+      icon: () =>
+        this.generating
+          ? 'codicon codicon-loading codicon-modifier-spin'
+          : 'codicon codicon-sparkle',
+      onDidChange: this.onDidChangeToolbar.event,
       isVisible: (widget?: Widget) => widget instanceof ScmWidget,
     });
   }

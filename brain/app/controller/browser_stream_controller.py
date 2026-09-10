@@ -97,8 +97,11 @@ async def _discover_page(port: int) -> tuple[str, str] | None:
     tab); fall back to the last page target.
     """
     url = f"http://localhost:{port}/json"
+    # Short timeout: this is localhost, and we poll it repeatedly while waiting
+    # for the agent to open a page (see browser_stream) — a long timeout would
+    # make each poll drag and each non-listening candidate port stall the scan.
     async with httpx.AsyncClient() as client:
-        resp = await client.get(url, timeout=3.0)
+        resp = await client.get(url, timeout=1.5)
         targets = resp.json()
     pages = [
         t
@@ -115,6 +118,30 @@ async def _discover_page(port: int) -> tuple[str, str] | None:
         if u and not u.startswith("about:blank"):
             chosen = t
     return chosen["webSocketDebuggerUrl"], str(chosen.get("url", ""))
+
+
+async def _discover_page_any_port(preferred: int) -> tuple[str, str, int] | None:
+    """Find a live agent page across likely CDP ports, returning
+    (devtools_ws_url, page_url, port).
+
+    The bridge historically assumed `browser_port` (default 9222), but the agent
+    can end up on a nearby port (e.g. 9224 when 9222 is taken), which left the
+    live view permanently "offline" against the wrong Chromium. Try the caller's
+    port first, then scan the small range the launcher uses. Non-listening ports
+    fail fast (connection refused), so this stays cheap.
+    """
+    candidates: list[int] = [preferred]
+    for p in range(9222, 9227):
+        if p not in candidates:
+            candidates.append(p)
+    for p in candidates:
+        try:
+            found = await _discover_page(p)
+        except Exception:
+            found = None
+        if found is not None:
+            return found[0], found[1], p
+    return None
 
 
 class _Cdp:
@@ -285,17 +312,30 @@ async def browser_stream(websocket: WebSocket) -> None:
 
     cdp_ws = None
     try:
-        discovered = await _discover_page(port)
+        # Poll for a page instead of failing on the first miss. The agent often
+        # launches the browser a beat before it opens a page (or its CDP is on a
+        # nearby port), which used to yield an immediate, permanent "offline".
+        # The client stays in its initial "Connecting…" state until we send
+        # "ready" or "error", so this just waits for the page to appear.
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + 12.0
+        discovered = None
+        while loop.time() < deadline:
+            discovered = await _discover_page_any_port(port)
+            if discovered is not None:
+                break
+            await asyncio.sleep(0.4)
         if discovered is None:
             await websocket.send_json(
                 {
                     "type": "error",
                     "message": "The agent has no browser page open yet. Ask it "
-                    "to visit a page, then reopen this view.",
+                    "to visit a page — this view picks it up automatically once "
+                    "it does.",
                 }
             )
             return
-        devtools_url, page_url = discovered
+        devtools_url, page_url, port = discovered
 
         cdp_ws = await websockets.connect(devtools_url, max_size=None)
         cdp = _Cdp(cdp_ws)
