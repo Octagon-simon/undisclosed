@@ -1095,7 +1095,11 @@ async def single_agent_solve(
             "report what you found or changed. A reply that only states intent "
             "(e.g. \"I'll take a look at the file first\", \"Let me read X\") "
             "with NO tool call is a FAILURE — the user should never have to "
-            "prompt you to continue. Act first; narrate after."
+            "prompt you to continue. Act first; narrate after.\n"
+            "LANGUAGE: Write your reply in the SAME language as the user's "
+            "current message (default English). Never switch languages "
+            "mid-conversation — a task result, tool error, or long turn is NOT "
+            "a reason to answer in a different language than the user used."
         )
         try:
             from camel.types import OpenAIBackendRole
@@ -1391,6 +1395,22 @@ async def single_agent_solve(
                                 pass
 
                         cancelled_turn.add_done_callback(_swallow)
+                    # The cancelled turn keeps tearing down in the background
+                    # (we intentionally don't await it — see above). Its agent
+                    # still owns MCP client transports whose anyio task groups
+                    # are mid-collapse; those raise "cancel scope in a different
+                    # task" / "aclose(): async generator already running" as
+                    # cancellation unwinds them off-task. If the NEXT queued
+                    # follow-up reuses this SAME agent, it operates on half-torn
+                    # transports and the turn silently produces nothing — the
+                    # user sends a message and gets no reply. Drop the agent so
+                    # the next turn builds a CLEAN one (browser CDP + MCP just
+                    # reconnect); the old agent finishes teardown in the bg.
+                    agent = None
+                    try:
+                        task_lock.single_agent = None
+                    except Exception:  # pragma: no cover - defensive
+                        pass
                     task_lock.status = Status.done
                     _finalize_memory_for_turn(
                         task_lock,

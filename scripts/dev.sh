@@ -44,7 +44,10 @@ fi
 cd "$ROOT"
 
 is_up() { curl -s -o /dev/null -w "%{http_code}" "http://localhost:$PORT" 2>/dev/null | grep -q 200; }
-port_pids() { lsof -ti:"$PORT" 2>/dev/null || true; }
+# LISTEN-only: `lsof -ti:PORT` also matches processes CONNECTED to :PORT (e.g. a
+# browser tab or the agent panel), which stop() would then kill. Only ever match
+# the Theia server that's actually listening.
+port_pids() { lsof -nP -iTCP:"$PORT" -sTCP:LISTEN -t 2>/dev/null || true; }
 
 stop() {
   local pids

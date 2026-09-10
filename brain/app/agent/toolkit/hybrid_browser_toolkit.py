@@ -590,6 +590,7 @@ class HybridBrowserToolkit(BaseHybridBrowserToolkit, AbstractToolkit):
         user_data_dir: str | None = None,
         stealth: bool = True,
         cache_dir: str | None = None,
+        download_dir: str | None = None,
         enabled_tools: list[str] | None = None,
         browser_log_to_file: bool = False,
         log_dir: str | None = None,
@@ -633,6 +634,22 @@ class HybridBrowserToolkit(BaseHybridBrowserToolkit, AbstractToolkit):
                 f"[HybridBrowserToolkit] Using provided user_data_dir: {user_data_dir}"
             )
 
+        # Without a download_dir the TS bridge's `download_file` action fails
+        # with "No download directory configured", so the agent can't save a
+        # PDF/CSV/etc. the user asks it to download (it falls back to flaky
+        # base64-chunking). Default to ~/.undisclosed/downloads so downloads
+        # just work and land somewhere the user (and the agent) can find them.
+        if download_dir is None:
+            download_dir = os.path.expanduser("~/.undisclosed/downloads")
+        try:
+            os.makedirs(download_dir, exist_ok=True)
+        except Exception:
+            logger.warning(
+                "[HybridBrowserToolkit] could not create download_dir %s",
+                download_dir,
+                exc_info=True,
+            )
+
         logger.debug(
             f"[HybridBrowserToolkit] Calling super().__init__ with session_id: {session_id}"
         )
@@ -641,6 +658,7 @@ class HybridBrowserToolkit(BaseHybridBrowserToolkit, AbstractToolkit):
             user_data_dir=user_data_dir,
             stealth=stealth,
             cache_dir=cache_dir,
+            download_dir=download_dir,
             enabled_tools=enabled_tools,
             browser_log_to_file=browser_log_to_file,
             session_id=session_id,

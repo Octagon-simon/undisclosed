@@ -31,19 +31,26 @@ RUNFILE="$ROOT/.brain.run"  # exists while the dev brain is meant to be running
 
 supervisor_pids() { [ -f "$PIDFILE" ] && cat "$PIDFILE" 2>/dev/null || true; }
 
-# Everything currently holding or listening on the brain port, as pid lines.
-port_pids() { lsof -ti:"$PORT" 2>/dev/null || true; }
+# The process LISTENING on the brain port, as pid lines. MUST be LISTEN-only:
+# `lsof -ti:PORT` also matches CLIENTS connected TO :PORT (either endpoint), so
+# when the packaged app's Theia backend holds a proxied `/api` SSE connection to
+# the brain (panel open on a conversation), the plain query returns the BACKEND
+# too — and stop() would SIGKILL the editor's backend, dropping its :53701
+# socket.io and knocking the whole editor offline. `-sTCP:LISTEN` excludes
+# clients so we only ever kill the brain itself.
+port_pids() { lsof -nP -iTCP:"$PORT" -sTCP:LISTEN -t 2>/dev/null || true; }
 
-# The full supervisor (dev) process subtree rooted at the saved pidfile pid:
-# the `( cd brain; while …; done ) &` subshell plus whatever python it spawned.
-brain_tree_pids() {
-  local sup pid
-  sup="$(supervisor_pids)"
-  [ -n "$sup" ] || return 0
-  # `ps -o pgid` — the whole tree shares the supervisor's process-group id.
-  local pg
-  pg="$(ps -o pgid= -p "$sup" 2>/dev/null | tr -d ' ')"
-  [ -n "$pg" ] && ps -eo pid=,pgid= 2>/dev/null | awk -v pg="$pg" '$2==pg{print $1}'
+# Poll until :PORT has no owner, up to $1 seconds. Returns 0 once clear, 1 on
+# timeout. Used to wait out a graceful (uvicorn) shutdown before escalating —
+# the old one-shot `sleep 0.5` recheck fired before the socket was released and
+# made `stop` report a false "still in use".
+wait_port_clear() {
+  local end=$((SECONDS + ${1:-3}))
+  while [ "$SECONDS" -lt "$end" ]; do
+    [ -z "$(port_pids)" ] && return 0
+    sleep 0.25
+  done
+  [ -z "$(port_pids)" ]
 }
 
 ensure_venv() {
@@ -86,42 +93,41 @@ start() {
 
 stop() {
   echo "[brain] stopping…"
-  # 1) Tell the dev supervisor to stop respawning FIRST.
+  # 1) Tell the dev supervisor to stop respawning FIRST, so once the child dies
+  #    it is not brought back.
   rm -f "$RUNFILE"
 
-  # 2) Clean up the dev supervisor subtree (group kill) if one is recorded.
-  local tree
-  tree="$(brain_tree_pids)"
-  if [ -n "$tree" ]; then
-    # shellcheck disable=SC2086
-    kill $tree 2>/dev/null || true
-  fi
+  # 2) Kill the supervisor subshell if one is recorded. (Killing it ORPHANS the
+  #    python child — it keeps the port — so step 3 targets the port owner
+  #    directly rather than relying on a process-group kill, which here could
+  #    hit this script's own group.)
   local sup
   sup="$(supervisor_pids)"
   if [ -n "$sup" ]; then
-    # Escalate to SIGKILL if the supervisor ignores SIGTERM.
-    sleep 0.3
-    if ps -p "$sup" >/dev/null 2>&1; then
-      kill -9 "$sup" 2>/dev/null || true
-    fi
-    rm -f "$PIDFILE"
+    kill "$sup" 2>/dev/null || true
+    sleep 0.2
+    ps -p "$sup" >/dev/null 2>&1 && kill -9 "$sup" 2>/dev/null || true
   fi
+  rm -f "$PIDFILE"
 
-  # 3) Whatever still holds :5001 (an app-owned brain whose parent quits later,
-  #    or an orphaned worker) — tear it down too. Send TERM, then KILL stragglers
-  #    so nothing survives half-dead.
+  # 3) Tear down whatever still holds :PORT — the (now orphaned) python child, an
+  #    app-owned brain that outlived its parent, or an orphaned worker. TERM and
+  #    WAIT for a graceful exit (uvicorn shutdown can take a couple seconds);
+  #    only then escalate to SIGKILL. The wait is what the old one-shot recheck
+  #    lacked, which is why stragglers survived and `stop` falsely returned 1.
   local pids
   pids="$(port_pids)"
   if [ -n "$pids" ]; then
     # shellcheck disable=SC2086
     kill $pids 2>/dev/null || true
-    sleep 0.5
-    local leftover
-    leftover="$(port_pids)"
-    if [ -n "$leftover" ]; then
-      echo "[brain] process(es) ignored SIGTERM; force-killing: $(echo $leftover | tr '\n' ' ')"
-      # shellcheck disable=SC2086
-      kill -9 $leftover 2>/dev/null || true
+    if ! wait_port_clear 3; then
+      pids="$(port_pids)"
+      if [ -n "$pids" ]; then
+        echo "[brain] process(es) ignored SIGTERM; force-killing: $(echo $pids | tr '\n' ' ')"
+        # shellcheck disable=SC2086
+        kill -9 $pids 2>/dev/null || true
+        wait_port_clear 3 || true
+      fi
     fi
   fi
 
@@ -146,7 +152,10 @@ case "${1:-start}" in
   setup) "$ROOT/scripts/setup-brain.sh" ;;
   start) start ;;
   stop) stop ;;
-  restart) stop; sleep 1; start ;;
+  # `stop` may return non-zero (e.g. the port is genuinely wedged); under
+  # `set -e` that would abort before `start` ever ran — which is why `restart`
+  # used to just print "stopping…" and quit. Tolerate it and let `start` report.
+  restart) stop || true; start ;;
   logs) tail -f "$LOG" ;;
   status) status ;;
   *) echo "usage: $0 {setup|start|stop|restart|logs|status}" >&2; exit 1 ;;

@@ -144,6 +144,22 @@ async def _discover_page_any_port(preferred: int) -> tuple[str, str, int] | None
     return None
 
 
+async def _list_pages(port: int) -> list[dict[str, Any]]:
+    """All live (non-devtools, ws-capable) page targets on `port`, in the order
+    Chrome's /json returns them (newest first). Used by the tab-follow watcher."""
+    url = f"http://localhost:{port}/json"
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(url, timeout=1.5)
+        targets = resp.json()
+    return [
+        t
+        for t in targets
+        if t.get("type") == "page"
+        and not str(t.get("url", "")).startswith("devtools://")
+        and t.get("webSocketDebuggerUrl")
+    ]
+
+
 class _Cdp:
     """Minimal CDP client over one DevTools WebSocket (fire-and-forget sends)."""
 
@@ -310,7 +326,125 @@ async def browser_stream(websocket: WebSocket) -> None:
     device_scale = float(websocket.query_params.get("device_scale", "1") or 1)
     port = _browser_port(websocket.query_params.get("port"))
 
-    cdp_ws = None
+    # Current viewport (mutable: the client's `viewport` messages update it and
+    # every rebind re-applies it to the new target).
+    cur_w, cur_h, cur_dsf = width, height, device_scale
+    # The target we're actively streaming; `desired` is where the watcher wants
+    # us next. Swapping between them is a "rebind".
+    state: dict[str, Any] = {"ws": None, "cdp": None, "target_id": None}
+    desired: dict[str, Any] = {"url": None, "id": None, "page_url": ""}
+    rebind = asyncio.Event()
+    seen_ids: set[str] = set()
+    input_task: asyncio.Task[Any] | None = None
+    watch_task: asyncio.Task[Any] | None = None
+
+    async def _connect(devtools: str) -> tuple[Any, _Cdp]:
+        ws = await websockets.connect(devtools, max_size=None)
+        c = _Cdp(ws)
+        await c.send("Page.enable")
+        # The agent's window is offscreen; without a forced render surface
+        # Chromium never composites the tab, so no frames arrive.
+        await _configure_screencast(
+            c, cur_w, cur_h, cur_dsf, quality, stop_first=False
+        )
+        return ws, c
+
+    async def _teardown(ws: Any) -> None:
+        if ws is None:
+            return
+        try:
+            # Restore the page: stop the screencast + drop the metrics override.
+            await ws.send(
+                json.dumps({"id": 99998, "method": "Page.stopScreencast", "params": {}})
+            )
+            await ws.send(
+                json.dumps(
+                    {
+                        "id": 99999,
+                        "method": "Emulation.clearDeviceMetricsOverride",
+                        "params": {},
+                    }
+                )
+            )
+        except Exception:
+            pass
+        try:
+            await ws.close()
+        except Exception:
+            pass
+
+    async def _pump_input() -> None:
+        nonlocal cur_w, cur_h, cur_dsf
+        while True:
+            msg = await websocket.receive_json()
+            cdp = state["cdp"]
+            if msg.get("type") == "viewport":
+                try:
+                    cur_w = int(msg.get("width", cur_w))
+                    cur_h = int(msg.get("height", cur_h))
+                    # Clamp DPR so a hostile/huge value can't blow up capture.
+                    cur_dsf = max(
+                        1.0, min(float(msg.get("deviceScaleFactor", cur_dsf) or 1), 3.0)
+                    )
+                    if cdp is not None:
+                        await _configure_screencast(
+                            cdp, cur_w, cur_h, cur_dsf, quality, stop_first=True
+                        )
+                except Exception:
+                    logger.debug("screencast resize failed", exc_info=True)
+            elif cdp is not None:
+                try:
+                    await _dispatch_input(cdp, msg)
+                except Exception:
+                    logger.debug("input dispatch failed", exc_info=True)
+
+    async def _watch_targets() -> None:
+        """Follow the agent across tabs. When it opens a NEW page target, switch
+        the live view to it; if the tab we're showing closes, fall back to the
+        most recent remaining page. Without this the bridge stayed pinned to the
+        target chosen at connect time, so a newly opened tab was never shown."""
+        while True:
+            await asyncio.sleep(1.0)
+            try:
+                pages = await _list_pages(port)
+            except Exception:
+                continue
+            if not pages:
+                continue
+            ids = [str(p.get("id")) for p in pages if p.get("id")]
+            id_set = set(ids)
+            new_ids = [i for i in ids if i not in seen_ids]
+            target: dict[str, Any] | None = None
+            if new_ids:
+                # Prefer a non-blank newly-opened tab (the agent navigates it a
+                # beat after opening); else take the newest new target.
+                for p in pages:
+                    if str(p.get("id")) in new_ids and not str(
+                        p.get("url", "")
+                    ).startswith("about:blank"):
+                        target = p
+                        break
+                if target is None:
+                    target = next(
+                        (p for p in pages if str(p.get("id")) == new_ids[0]), None
+                    )
+            elif state["target_id"] not in id_set:
+                # The tab we were streaming closed — fall back to a live page.
+                target = pages[0]
+                for p in pages:
+                    if not str(p.get("url", "")).startswith("about:blank"):
+                        target = p
+                        break
+            seen_ids.update(ids)
+            if target is not None:
+                tws = target.get("webSocketDebuggerUrl")
+                tid = str(target.get("id"))
+                if tws and tid != state["target_id"]:
+                    desired["url"] = tws
+                    desired["id"] = tid
+                    desired["page_url"] = str(target.get("url", ""))
+                    rebind.set()
+
     try:
         # Poll for a page instead of failing on the first miss. The agent often
         # launches the browser a beat before it opens a page (or its CDP is on a
@@ -336,48 +470,67 @@ async def browser_stream(websocket: WebSocket) -> None:
             )
             return
         devtools_url, page_url, port = discovered
+        desired["url"] = devtools_url
+        desired["page_url"] = page_url
+        # Seed the "seen" set + our target id from the current target list so the
+        # watcher only reacts to tabs opened AFTER we connect.
+        try:
+            for p in await _list_pages(port):
+                if p.get("id"):
+                    seen_ids.add(str(p.get("id")))
+                if p.get("webSocketDebuggerUrl") == devtools_url:
+                    desired["id"] = str(p.get("id"))
+        except Exception:
+            pass
 
-        cdp_ws = await websockets.connect(devtools_url, max_size=None)
-        cdp = _Cdp(cdp_ws)
-
-        await cdp.send("Page.enable")
-        # The agent's window is offscreen; without a forced render surface
-        # Chromium never composites the tab, so no frames arrive. The client's
-        # first `viewport` message (sent on open) upgrades this to the panel's
-        # exact size and the display's real DPR.
-        await _configure_screencast(
-            cdp, width, height, device_scale, quality, stop_first=False
-        )
-        await websocket.send_json({"type": "ready", "url": page_url})
-
-        async def _pump_input() -> None:
-            while True:
-                msg = await websocket.receive_json()
-                if msg.get("type") == "viewport":
-                    try:
-                        w = int(msg.get("width", width))
-                        h = int(msg.get("height", height))
-                        dsf = float(msg.get("deviceScaleFactor", device_scale) or 1)
-                        # Clamp DPR so a hostile/huge value can't blow up capture.
-                        dsf = max(1.0, min(dsf, 3.0))
-                        await _configure_screencast(
-                            cdp, w, h, dsf, quality, stop_first=True
-                        )
-                    except Exception:
-                        logger.debug("screencast resize failed", exc_info=True)
-                else:
-                    try:
-                        await _dispatch_input(cdp, msg)
-                    except Exception:
-                        logger.debug("input dispatch failed", exc_info=True)
-
-        frames_task = asyncio.create_task(_pump_frames(cdp_ws, cdp, websocket))
         input_task = asyncio.create_task(_pump_input())
-        done, pending = await asyncio.wait(
-            {frames_task, input_task}, return_when=asyncio.FIRST_COMPLETED
-        )
-        for task in pending:
-            task.cancel()
+        watch_task = asyncio.create_task(_watch_targets())
+
+        while True:
+            ws, cdp = await _connect(desired["url"])
+            state["ws"], state["cdp"], state["target_id"] = ws, cdp, desired["id"]
+            await websocket.send_json(
+                {"type": "ready", "url": desired.get("page_url") or page_url}
+            )
+            frames_task = asyncio.create_task(_pump_frames(ws, cdp, websocket))
+            rebind_wait = asyncio.create_task(rebind.wait())
+            done, _pending = await asyncio.wait(
+                {frames_task, rebind_wait, input_task, watch_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            # Client gone or a driver task died → finish.
+            if input_task in done or watch_task in done:
+                for t in (input_task, watch_task):
+                    if t in done:
+                        try:
+                            t.result()  # retrieve to avoid "exception never retrieved"
+                        except Exception:
+                            pass
+                frames_task.cancel()
+                rebind_wait.cancel()
+                await _teardown(ws)
+                break
+
+            # The watcher wants a different tab → swap the screencast to it.
+            if rebind_wait in done:
+                rebind.clear()
+                frames_task.cancel()
+                state["cdp"] = None
+                await _teardown(ws)
+                continue
+
+            # frames_task ended = the streamed socket closed (tab likely closed).
+            # Give the watcher a moment to pick a fallback tab before giving up.
+            rebind_wait.cancel()
+            await _teardown(ws)
+            state["cdp"] = None
+            try:
+                await asyncio.wait_for(rebind.wait(), timeout=3.0)
+                rebind.clear()
+                continue
+            except asyncio.TimeoutError:
+                break
 
     except WebSocketDisconnect:
         pass
@@ -388,25 +541,8 @@ async def browser_stream(websocket: WebSocket) -> None:
         except Exception:
             pass
     finally:
-        if cdp_ws is not None:
-            try:
-                # Restore the agent's page: stop the screencast + drop the
-                # metrics override we forced for rendering.
-                await cdp_ws.send(
-                    json.dumps({"id": 99998, "method": "Page.stopScreencast", "params": {}})
-                )
-                await cdp_ws.send(
-                    json.dumps(
-                        {
-                            "id": 99999,
-                            "method": "Emulation.clearDeviceMetricsOverride",
-                            "params": {},
-                        }
-                    )
-                )
-            except Exception:
-                pass
-            try:
-                await cdp_ws.close()
-            except Exception:
-                pass
+        if input_task is not None:
+            input_task.cancel()
+        if watch_task is not None:
+            watch_task.cancel()
+        await _teardown(state["ws"])
