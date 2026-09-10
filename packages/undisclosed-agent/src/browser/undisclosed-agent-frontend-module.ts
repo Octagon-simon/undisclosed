@@ -18,6 +18,8 @@ import { UndisclosedAgentWidget } from './undisclosed-agent-widget';
 import { UndisclosedAgentContribution } from './undisclosed-agent-contribution';
 import { UndisclosedAgentLayoutContribution } from './undisclosed-agent-layout-contribution';
 import { GitExtrasContribution } from './git-extras-contribution';
+import { UndisclosedWelcomeWidget } from './undisclosed-welcome-widget';
+import { UndisclosedWelcomeContribution } from './undisclosed-welcome-contribution';
 
 /**
  * Frontend DI module (referenced by `theiaExtensions` in package.json). Binds
@@ -44,6 +46,20 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
       createWidget: () => ctx.container.get<UndisclosedAgentWidget>(UndisclosedAgentWidget),
     }))
     .inSingletonScope();
+
+  // Branded welcome shown in the main area when no workspace is open.
+  bind(UndisclosedWelcomeWidget).toSelf();
+  bind(WidgetFactory)
+    .toDynamicValue((ctx) => ({
+      id: UndisclosedWelcomeWidget.ID,
+      createWidget: () =>
+        ctx.container.get<UndisclosedWelcomeWidget>(UndisclosedWelcomeWidget),
+    }))
+    .inSingletonScope();
+  bind(UndisclosedWelcomeContribution).toSelf().inSingletonScope();
+  bind(FrontendApplicationContribution).toService(
+    UndisclosedWelcomeContribution
+  );
 
   // Extra git commands (Undo Last Commit, unstage/discard all) + AI commit
   // message button in the Source Control toolbar.

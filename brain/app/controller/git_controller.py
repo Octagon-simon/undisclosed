@@ -54,10 +54,12 @@ async def git_commit_message(body: dict) -> dict:
             "so it knows which model to use, then try again.",
         }
 
-    # Keep the call cheap: a very large diff is truncated (the head carries the
-    # most signal for a summary).
-    if len(diff) > 20000:
-        diff = diff[:20000] + "\n…(diff truncated)…"
+    # Keep the call cheap: a very large diff is truncated. The client prepends a
+    # `--stat` file list at the HEAD, so even when the patch tail is trimmed the
+    # model still sees EVERY changed file (it just loses per-line detail on the
+    # overflow). 60k chars (~15k tokens) fits comfortably in modern contexts.
+    if len(diff) > 60000:
+        diff = diff[:60000] + "\n…(patch truncated — see the file list above)…"
 
     try:
         from camel.agents import ChatAgent

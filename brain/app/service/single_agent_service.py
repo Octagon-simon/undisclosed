@@ -1087,7 +1087,15 @@ async def single_agent_solve(
             "control\", \"I clicked X\", \"continue\"), treat it as a directive "
             "and TAKE THE NEXT CONCRETE ACTION toward it — call the needed "
             "tools. Do NOT restate, re-summarize, or repeat any earlier "
-            "response; everything before this is COMPLETED background only."
+            "response; everything before this is COMPLETED background only.\n"
+            "CRITICAL — ACT, DON'T ANNOUNCE: never end your turn by only saying "
+            "what you are ABOUT to do. If your reply says you'll read, open, "
+            "inspect, look at, check, search, or implement something, you MUST "
+            "call the tool(s) to actually do it IN THIS SAME TURN and then "
+            "report what you found or changed. A reply that only states intent "
+            "(e.g. \"I'll take a look at the file first\", \"Let me read X\") "
+            "with NO tool call is a FAILURE — the user should never have to "
+            "prompt you to continue. Act first; narrate after."
         )
         try:
             from camel.types import OpenAIBackendRole

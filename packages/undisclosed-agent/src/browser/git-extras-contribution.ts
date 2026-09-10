@@ -94,14 +94,30 @@ export class GitExtrasContribution
         '--cached',
         '--no-color',
       ]);
-      diff = staged.stdout || '';
-      if (!diff.trim()) {
+      let patch = staged.stdout || '';
+      let staged_scope = true;
+      if (!patch.trim()) {
         // Nothing staged — fall back to the working-tree diff.
         const unstaged = await this.git.exec(repository, [
           'diff',
           '--no-color',
         ]);
-        diff = unstaged.stdout || '';
+        patch = unstaged.stdout || '';
+        staged_scope = false;
+      }
+      if (patch.trim()) {
+        // Prepend the FULL list of changed files (--stat) ahead of the patch.
+        // The patch can be truncated downstream for very large changesets, but
+        // the stat is small and sits at the head, so the model always sees
+        // EVERY changed file even when the patch body is trimmed — otherwise
+        // late files were dropped and the message "missed" changes.
+        const stat = await this.git.exec(
+          repository,
+          staged_scope
+            ? ['diff', '--cached', '--stat']
+            : ['diff', '--stat']
+        );
+        diff = `Files changed:\n${(stat.stdout || '').trim()}\n\n${patch}`;
       }
     } catch (err) {
       this.messages.error(

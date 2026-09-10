@@ -1,15 +1,26 @@
 # Copyright (c) 2026 Simon Ugorji
 
-"""Startup patch: strip trailing whitespace from assistant messages sent to
-Anthropic.
+"""Startup patch: sanitize assistant messages sent to Anthropic.
 
-Anthropic rejects a request whose FINAL message is an assistant message whose
-text ends with whitespace ("final assistant content cannot end with trailing
-whitespace"). This surfaces on multi-step / extended-thinking turns where the
-model's own assistant text (which may end with a newline) is fed back into the
-next request. CAMEL's `AnthropicModel` builds the request messages but does not
-sanitize this, so we wrap its OpenAI->Anthropic converter to rstrip assistant
-text blocks. Idempotent and defensive: any failure leaves CAMEL untouched.
+Anthropic rejects two things on assistant turns that CAMEL's `AnthropicModel`
+does not guard against when it feeds the model's own prior output back into the
+next request (multi-step / extended-thinking turns):
+
+1. **Trailing whitespace on the FINAL assistant message** — "final assistant
+   content cannot end with trailing whitespace". The model's text often ends in
+   a newline.
+2. **Empty / whitespace-only text content blocks on a NON-final assistant
+   message** — "text content blocks must be non-empty" / "all messages must
+   have non-empty content except the optional final assistant message". This
+   shows up with models that emit a thinking-only turn (e.g. sonnet-5 returns a
+   thinking block plus an empty visible-text block): once another message
+   follows it, that empty text block is illegal.
+
+We wrap CAMEL's OpenAI->Anthropic converter to (a) rstrip assistant text and
+(b) drop empty text blocks, while preserving a legitimately-empty FINAL
+assistant turn (Anthropic allows that — it's the prefill slot). Non-text blocks
+(tool_use, thinking, …) are never touched, so tool/thinking continuation is
+unaffected. Idempotent and defensive: any failure leaves CAMEL untouched.
 """
 
 from __future__ import annotations
@@ -19,20 +30,49 @@ import logging
 logger = logging.getLogger("anthropic_whitespace_patch")
 
 
-def _rstrip_message_content(msg: dict) -> None:
-    """rstrip trailing whitespace on an assistant message's text in place."""
+def _sanitize_assistant(msg: dict, *, is_final: bool) -> bool:
+    """Sanitize one assistant message in place.
+
+    Returns True to keep the message, False to drop it (only ever drops a
+    message that would otherwise be sent with NO content at all, which Anthropic
+    rejects — and only when it is not the final turn, where empty is allowed).
+    """
     content = msg.get("content")
+
     if isinstance(content, str):
-        msg["content"] = content.rstrip()
-        return
+        stripped = content.rstrip()
+        msg["content"] = stripped
+        # Empty string content is allowed only as the final assistant turn.
+        return bool(stripped) or is_final
+
     if isinstance(content, list):
-        # Block list: rstrip the LAST text block (that's what ends the message).
+        # rstrip the LAST text block (that's what ends the message), then drop
+        # every empty/whitespace-only text block so none is sent as illegal
+        # empty content. tool_use / thinking / other blocks are preserved.
         for block in reversed(content):
             if isinstance(block, dict) and block.get("type") == "text":
                 text = block.get("text")
                 if isinstance(text, str):
                     block["text"] = text.rstrip()
                 break
+        kept_blocks = [
+            b
+            for b in content
+            if not (
+                isinstance(b, dict)
+                and b.get("type") == "text"
+                and not str(b.get("text") or "").strip()
+            )
+        ]
+        # Mutate in place so any external reference to the list stays valid.
+        content[:] = kept_blocks
+        # A fully-empty block list is allowed only as the final assistant turn;
+        # anywhere else it must be dropped (an empty interior assistant message
+        # is degenerate and should not occur, but Anthropic hard-rejects it).
+        return bool(kept_blocks) or is_final
+
+    # Unknown content shape — leave it alone.
+    return True
 
 
 def apply() -> None:
@@ -51,19 +91,27 @@ def apply() -> None:
     def wrapped(self, messages):
         system_message, anthropic_messages = orig(self, messages)
         try:
-            # rstrip every assistant message's text — harmless for interior
-            # ones, required for the final one. Anthropic only forbids trailing
-            # whitespace on assistant turns (user/tool content is fine).
-            for m in anthropic_messages or []:
+            msgs = anthropic_messages or []
+            last_idx = len(msgs) - 1
+            kept = []
+            for i, m in enumerate(msgs):
                 if isinstance(m, dict) and m.get("role") == "assistant":
-                    _rstrip_message_content(m)
+                    if _sanitize_assistant(m, is_final=(i == last_idx)):
+                        kept.append(m)
+                    # else: drop the empty interior assistant message
+                else:
+                    kept.append(m)
+            # Only rebuild the list if we actually dropped a message, and mutate
+            # in place so the caller's returned reference keeps pointing at it.
+            if isinstance(anthropic_messages, list) and len(kept) != len(msgs):
+                anthropic_messages[:] = kept
         except Exception:  # pragma: no cover - never break the request path
-            logger.debug("assistant whitespace rstrip failed", exc_info=True)
+            logger.debug("assistant message sanitize failed", exc_info=True)
         return system_message, anthropic_messages
 
     wrapped._undisclosed_ws_patched = True
     AnthropicModel._convert_openai_to_anthropic_messages = wrapped
     logger.info(
-        "Patched AnthropicModel to strip trailing whitespace from assistant "
-        "messages"
+        "Patched AnthropicModel to sanitize assistant messages (rstrip "
+        "trailing whitespace + drop empty text blocks)"
     )
