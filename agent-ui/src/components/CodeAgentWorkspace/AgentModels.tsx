@@ -37,6 +37,13 @@ import {
 } from '@/api/http';
 import { toProviderValidStatus } from '@/lib/providerStatus';
 import {
+  CLOUD_PROVIDER_PRESETS as CLOUD_PROVIDERS,
+  LOCAL_PROVIDER_PRESETS as LOCAL_PROVIDERS,
+  PROVIDER_PRESETS as PROVIDERS,
+  isLocalProviderId,
+  providerLabel,
+} from '@/lib/providerRegistry';
+import {
   Check,
   Eye,
   EyeOff,
@@ -49,79 +56,9 @@ import {
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
-/** A configurable provider. `id` is the backend `provider_name` (==
- *  model_platform). `needsUrl` requires a base URL; `local` runtimes need no API
- *  key and prefill their default localhost endpoint. */
-type Preset = {
-  id: string;
-  label: string;
-  modelHint: string;
-  needsUrl?: boolean;
-  local?: boolean;
-  defaultEndpoint?: string;
-};
-
-const CLOUD_PROVIDERS: Preset[] = [
-  { id: 'openai', label: 'OpenAI', modelHint: 'gpt-4o' },
-  { id: 'anthropic', label: 'Anthropic', modelHint: 'claude-sonnet-5' },
-  { id: 'gemini', label: 'Google Gemini', modelHint: 'gemini-3-pro-preview' },
-  { id: 'deepseek', label: 'DeepSeek', modelHint: 'deepseek-chat' },
-  { id: 'qwen', label: 'Qwen', modelHint: 'qwen-max' },
-  { id: 'openrouter', label: 'OpenRouter', modelHint: 'openai/gpt-4o' },
-  {
-    id: 'openai-compatible',
-    label: 'OpenAI-compatible',
-    modelHint: 'model-name',
-    needsUrl: true,
-  },
-];
-
-// Local runtimes (OpenAI-compatible servers on localhost). Endpoints mirror
-// src/pages/Agents/localModels.ts; inlined to keep the embed self-contained.
-const LOCAL_PROVIDERS: Preset[] = [
-  {
-    id: 'ollama',
-    label: 'Ollama',
-    modelHint: 'llama3.1',
-    local: true,
-    needsUrl: true,
-    defaultEndpoint: 'http://localhost:11434/v1',
-  },
-  {
-    id: 'lmstudio',
-    label: 'LM Studio',
-    modelHint: 'model-name',
-    local: true,
-    needsUrl: true,
-    defaultEndpoint: 'http://localhost:1234/v1',
-  },
-  {
-    id: 'vllm',
-    label: 'vLLM',
-    modelHint: 'model-name',
-    local: true,
-    needsUrl: true,
-    defaultEndpoint: 'http://localhost:8000/v1',
-  },
-  {
-    id: 'sglang',
-    label: 'SGLang',
-    modelHint: 'model-name',
-    local: true,
-    needsUrl: true,
-    defaultEndpoint: 'http://localhost:30000/v1',
-  },
-  {
-    id: 'llama.cpp',
-    label: 'LLaMA.cpp',
-    modelHint: 'model-name',
-    local: true,
-    needsUrl: true,
-    defaultEndpoint: 'http://localhost:8080/v1',
-  },
-];
-
-const PROVIDERS: Preset[] = [...CLOUD_PROVIDERS, ...LOCAL_PROVIDERS];
+// Provider ids + labels come from the shared registry
+// (`@/lib/providerRegistry`) so the composer picker and this screen cannot
+// drift. `id` is the backend `provider_name` (== CAMEL `model_platform`).
 
 interface ProviderRow {
   id: string | number;
@@ -135,8 +72,7 @@ interface ProviderRow {
   encrypted_config?: Record<string, any> | null;
 }
 
-const labelFor = (name: string) =>
-  PROVIDERS.find((p) => p.id === name)?.label || name;
+const labelFor = (name: string) => providerLabel(name);
 
 const emptyForm = {
   provider_name: 'openai',
@@ -159,7 +95,7 @@ export default function AgentModels() {
   const [busyId, setBusyId] = useState<string | number | null>(null);
 
   const preset = PROVIDERS.find((p) => p.id === form.provider_name);
-  const isLocal = !!preset?.local;
+  const isLocal = isLocalProviderId(preset?.id);
   const isAnthropic = form.provider_name === 'anthropic';
   // Anthropic identity-linked keys require an `anthropic-workspace-id` header on
   // EVERY request. We set it two ways for full coverage:
@@ -360,7 +296,7 @@ export default function AgentModels() {
                   provider_name: id,
                   // Prefill a local runtime's default endpoint when the URL is empty.
                   endpoint_url:
-                    p?.local && p.defaultEndpoint && !f.endpoint_url
+                    isLocalProviderId(p?.id) && p?.defaultEndpoint && !f.endpoint_url
                       ? p.defaultEndpoint
                       : f.endpoint_url,
                 }));

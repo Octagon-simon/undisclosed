@@ -180,3 +180,33 @@ export async function applyDefaultModelSelection(
 /** Settings route when the user must finish configuring a provider first. */
 export const DEFAULT_MODEL_CONFIGURE_PATH =
   '/history?tab=agents&section=models';
+
+/**
+ * Mark one specific configured provider row as the global default by setting
+ * the server-side `prefer` flag. Used by the data-driven composer picker, which
+ * pins an exact row (provider + `model_type`) rather than a whole provider.
+ */
+export async function preferProviderRow(
+  providerId: number,
+  t: TFunction
+): Promise<boolean> {
+  try {
+    const hasSearchKey = await checkHasSearchKey();
+    if (!hasSearchKey) {
+      toast(t('setting.warning-google-search-not-configured'), {
+        description: t(
+          'setting.search-functionality-may-be-limited-without-google-api'
+        ),
+        closeButton: true,
+      });
+    }
+    await proxyFetchPost('/api/v1/provider/prefer', {
+      provider_id: providerId,
+    });
+    return true;
+  } catch (e) {
+    console.error('preferProviderRow failed:', e);
+    toast.error(t('setting.validate-failed'));
+    return false;
+  }
+}

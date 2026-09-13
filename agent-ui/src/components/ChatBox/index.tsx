@@ -24,6 +24,7 @@ import { isWeb } from '@/client/platform';
 import useChatStoreAdapter from '@/hooks/useChatStoreAdapter';
 import { useModelConfigCheck } from '@/hooks/useModelConfigCheck';
 import { useHost } from '@/host';
+import { requestEmbedScreen } from '@/agent-embed/embedNav';
 import { useComposerDraft } from '@/agent-embed/composerDraft';
 import { generateUniqueId, SITE_URL } from '@/lib';
 import {
@@ -401,6 +402,8 @@ export default function ChatBox(): JSX.Element {
   const navigate = useNavigate();
 
   const handleSelectModel = useCallback(() => {
+    // Embedded panel has no app router → request the Models screen explicitly.
+    requestEmbedScreen('models');
     navigate('/history?tab=agents');
   }, [navigate]);
 
@@ -607,6 +610,7 @@ export default function ChatBox(): JSX.Element {
           return;
         }
         toast.error('Please select a model first.');
+        requestEmbedScreen('models');
         navigate('/history?tab=agents');
         return;
       }
@@ -718,6 +722,7 @@ export default function ChatBox(): JSX.Element {
         return;
       }
       toast.error('Please select a model first.');
+      requestEmbedScreen('models');
       navigate('/history?tab=agents');
       return;
     }

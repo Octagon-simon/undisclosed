@@ -13,16 +13,34 @@
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
 
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from camel.toolkits import FunctionTool, TodoToolkit
 from camel.toolkits.todo_toolkit import TodoItem
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.agent.toolkit.abstract_toolkit import AbstractToolkit
 from app.service.task import ActionTodoStateData, Agents, get_task_lock
 from app.utils.listen.toolkit_listen import _safe_put_queue
 
 logger = logging.getLogger("observable_todo_toolkit")
+
+
+class _FlexTodoItem(BaseModel):
+    """Todo item that accepts EITHER `active_form` (CAMEL's field) or the
+    camelCase `activeForm` that Claude-family models emit by prior (it matches
+    Claude Code's own TodoWrite schema, so the model reaches for it even though
+    CAMEL's `TodoItem` declares `active_form`). Validating tool args against
+    CAMEL's strict model made every `todo_write` fail with
+    `active_form Field required`. `populate_by_name=True` + the alias makes both
+    spellings valid; we coerce to CAMEL's `TodoItem` before the actual write.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    content: str
+    active_form: str = Field(alias="activeForm")
+    status: Literal["pending", "in_progress", "completed"]
 
 
 class ObservableTodoToolkit(TodoToolkit, AbstractToolkit):
@@ -48,19 +66,36 @@ class ObservableTodoToolkit(TodoToolkit, AbstractToolkit):
         self.task_id = task_id
         self.agent_id = agent_id
 
-    def todo_write(self, todos: list[TodoItem]) -> str:
+    def todo_write(self, todos: list[_FlexTodoItem]) -> str:
         """Create or update the current task todo list.
 
         Use this tool to track task progress with concise todo items. Each
-        todo should include content, active_form, and status fields.
+        todo should include content, activeForm (present-continuous label), and
+        status ("pending" | "in_progress" | "completed").
 
         Args:
-            todos (list[TodoItem]): The full ordered todo list to store.
+            todos (list[_FlexTodoItem]): The full ordered todo list to store.
 
         Returns:
             str: A message indicating whether the todo list was updated.
         """
-        result = super().todo_write(todos)
+        # FunctionTool may hand us validated models or raw dicts; normalise both
+        # to the flexible model, then coerce to CAMEL's strict TodoItem.
+        coerced: list[TodoItem] = []
+        for t in todos:
+            flex = (
+                t
+                if isinstance(t, _FlexTodoItem)
+                else _FlexTodoItem.model_validate(t)
+            )
+            coerced.append(
+                TodoItem(
+                    content=flex.content,
+                    active_form=flex.active_form,
+                    status=flex.status,
+                )
+            )
+        result = super().todo_write(coerced)
         if not result.startswith("[ERROR]"):
             self.emit_todo_state()
         return result

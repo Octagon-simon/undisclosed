@@ -14,33 +14,44 @@
 // ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
 
 /**
- * Default model picker for the chat input bar — same structure as Agents → Models.
- * Configured models switch inline; unconfigured options open Agents → Models.
+ * Default model picker for the chat input bar.
+ *
+ * Data-driven: it renders the models that are ACTUALLY configured
+ * (`GET /api/v1/providers`), grouped per provider, one entry per row. That is
+ * what lets DeepSeek show both `deepseek-chat` and `deepseek-v4-flash` instead
+ * of collapsing to a single "Deepseek" entry that always pinned the first row.
+ *
+ * Selecting a row pins that exact row: for a project it stores the row's
+ * `provider_id` + `model_type` on the Project; otherwise it sets the row as the
+ * server-side default (`POST /api/v1/provider/prefer`). Providers that are not
+ * configured yet are still listed under "Add …" and route to the models screen.
  */
 
 import { proxyFetchGet } from '@/api/http';
-import folderIcon from '@/assets/logo/eigent_icon_rich.svg';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { requestEmbedScreen } from '@/agent-embed/embedNav';
 import { createHost } from '@/host/createHost';
 import {
-  applyDefaultModelSelection,
   DEFAULT_MODEL_CONFIGURE_PATH,
-  isDefaultModelConfigured,
-  type DefaultModelCategory,
+  preferProviderRow,
 } from '@/lib/applyDefaultModelSelection';
 import { INIT_PROVODERS } from '@/lib/llm';
-import { getProviderValid } from '@/lib/providerStatus';
+import {
+  isLocalProviderId,
+  providerPreset,
+} from '@/lib/providerRegistry';
 import { cn } from '@/lib/utils';
 import {
-  getLocalPlatformName,
   LOCAL_MODEL_OPTIONS,
 } from '@/pages/Agents/localModels';
 import {
@@ -51,7 +62,6 @@ import { useAuthStore } from '@/store/authStore';
 import { useCloudModelStore } from '@/store/cloudModelStore';
 import { useProjectRuntimeStore } from '@/store/projectRuntimeStore';
 import { useSpaceStore } from '@/store/spaceStore';
-import type { Provider } from '@/types';
 
 import {
   Check,
@@ -59,9 +69,9 @@ import {
   HardDrive,
   Key,
   Layers,
+  Plus,
   Server,
 } from 'lucide-react';
-import type { Dispatch, SetStateAction } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
@@ -83,10 +93,52 @@ export interface ModelSelectProps {
   readOnly?: boolean;
 }
 
+/** A configured provider row as served by `GET /api/v1/providers`. */
+interface ProviderRow {
+  id: number;
+  provider_name: string;
+  model_type?: string;
+  endpoint_url?: string;
+  api_key?: string;
+  prefer?: boolean;
+  is_valid?: unknown;
+  encrypted_config?: Record<string, unknown> | null;
+}
+
+type ProviderSelectionKind = 'custom' | 'local';
+
+interface ProviderGroup {
+  providerName: string;
+  label: string;
+  rows: ProviderRow[];
+}
+
 const modelTriggerShellClass = cn(
   'rounded-xl px-2 py-1 inline-flex min-w-0 max-w-[min(100%,320px)] shrink items-center gap-1.5',
   'bg-ds-bg-neutral-default-default text-ds-text-neutral-default-default'
 );
+
+const CATALOG_LABELS = new Map<string, string>(
+  INIT_PROVODERS.map((p) => [p.id, p.name])
+);
+
+/** Preset label first, then the wider catalog, then the raw id. */
+function catalogLabel(id: string): string {
+  const preset = providerPreset(id);
+  if (preset) return preset.label;
+  return CATALOG_LABELS.get(id) ?? id;
+}
+
+function rowLabel(row: ProviderRow): string {
+  const base = catalogLabel(row.provider_name);
+  return row.model_type ? `${base} (${row.model_type})` : base;
+}
+
+/** Keep preset providers in their catalog order, unknown ids last. */
+function presetIndex(id: string, presets: { id: string }[]): number {
+  const index = presets.findIndex((p) => p.id === id);
+  return index === -1 ? Number.MAX_SAFE_INTEGER : index;
+}
 
 export function ModelSelect({
   disabled,
@@ -102,8 +154,8 @@ export function ModelSelect({
     email,
     appearance,
     setModelType,
-    setCloudModelType,
   } = useAuthStore();
+
   const cloudModels = useCloudModelStore((state) => state.models);
   const fetchCloudModels = useCloudModelStore(
     (state) => state.fetchCloudModels
@@ -111,9 +163,7 @@ export function ModelSelect({
   const getCloudModelDisplayName = useCloudModelStore(
     (state) => state.getModelDisplayName
   );
-  const effectiveCloudModelId = useCloudModelStore((state) =>
-    state.getEffectiveModelId(cloud_model_type)
-  );
+
   const setProjectModel = useProjectRuntimeStore(
     (state) => state.setProjectModel
   );
@@ -134,42 +184,24 @@ export function ModelSelect({
   const pinnedSelection = projectId
     ? (runtimePinnedSelection ?? spacePinnedSelection)
     : null;
-  const cloudModelOptions = useMemo(
-    () =>
-      cloudModels.map((model) => ({
-        id: model.id,
-        name: model.display_name,
-      })),
-    [cloudModels]
-  );
 
-  const [items] = useState<Provider[]>(
-    INIT_PROVODERS.filter((p) => p.id !== 'local')
-  );
-  const [form, setForm] = useState(() =>
-    INIT_PROVODERS.filter((p) => p.id !== 'local').map((p) => ({
-      apiKey: p.apiKey,
-      apiHost: p.apiHost,
-      is_valid: p.is_valid ?? false,
-      model_type: p.model_type ?? '',
-      externalConfig: p.externalConfig
-        ? p.externalConfig.map((ec) => ({ ...ec }))
-        : undefined,
-      provider_id: p.provider_id ?? undefined,
-      prefer: p.prefer ?? false,
-    }))
-  );
-  const [cloudPrefer, setCloudPrefer] = useState(false);
-  const [localPrefer, setLocalPrefer] = useState(false);
-  const [localPlatform, setLocalPlatform] = useState<string>('ollama');
-  const [localTypes, setLocalTypes] = useState<Record<string, string>>({});
-  const [localProviderIds, setLocalProviderIds] = useState<
-    Record<string, number | undefined>
-  >({});
+  const [providers, setProviders] = useState<ProviderRow[]>([]);
+  const [open, setOpen] = useState(false);
   const [codexStatus, setCodexStatus] = useState<{
     connected: boolean;
     status: string;
   }>({ connected: false, status: 'not_connected' });
+
+  const loadProviders = useCallback(async () => {
+    try {
+      const res = await proxyFetchGet('/api/v1/providers');
+      const list = Array.isArray(res) ? res : res?.items || [];
+      setProviders(list as ProviderRow[]);
+    } catch (error) {
+      console.error('Error fetching providers:', error);
+      setProviders([]);
+    }
+  }, []);
 
   useEffect(() => {
     if (import.meta.env.VITE_USE_LOCAL_PROXY === 'true') return;
@@ -177,101 +209,8 @@ export function ModelSelect({
   }, [fetchCloudModels]);
 
   useEffect(() => {
-    (async () => {
-      try {
-        const res = await proxyFetchGet('/api/v1/providers');
-        const providerList = Array.isArray(res) ? res : res.items || [];
-
-        setForm((f) =>
-          f.map((fi, idx) => {
-            const item = items[idx];
-            const found = providerList.find(
-              (p: { provider_name: string }) => p.provider_name === item.id
-            );
-            if (found) {
-              return {
-                ...fi,
-                provider_id: found.id,
-                apiKey: found.api_key || '',
-                apiHost: found.endpoint_url || item.apiHost,
-                is_valid: getProviderValid(found),
-                prefer: found.prefer ?? false,
-                model_type: found.model_type ?? '',
-                externalConfig: fi.externalConfig
-                  ? fi.externalConfig.map((ec) => {
-                      if (
-                        found.encrypted_config &&
-                        found.encrypted_config[ec.key] !== undefined
-                      ) {
-                        return { ...ec, value: found.encrypted_config[ec.key] };
-                      }
-                      return ec;
-                    })
-                  : undefined,
-              };
-            }
-            return fi;
-          })
-        );
-
-        const localProviders = providerList.filter(
-          (p: { provider_name: string }) =>
-            LOCAL_MODEL_OPTIONS.some((model) => model.id === p.provider_name)
-        );
-
-        const types: Record<string, string> = {};
-        const providerIds: Record<string, number | undefined> = {};
-
-        localProviders.forEach((local: Record<string, unknown>) => {
-          const platform =
-            (local.encrypted_config as { model_platform?: string } | undefined)
-              ?.model_platform || (local.provider_name as string);
-          types[platform] =
-            (local.encrypted_config as { model_type?: string } | undefined)
-              ?.model_type || '';
-          providerIds[platform] = local.id as number;
-
-          if (local.prefer) {
-            setLocalPrefer(true);
-            setLocalPlatform(platform);
-          }
-        });
-
-        setLocalTypes(types);
-        setLocalProviderIds(providerIds);
-
-        if (localProviders.length === 0) {
-          const nextTypes: Record<string, string> = {};
-          const nextIds: Record<string, number | undefined> = {};
-          LOCAL_MODEL_OPTIONS.forEach((model) => {
-            nextTypes[model.id] = '';
-            nextIds[model.id] = undefined;
-          });
-          setLocalTypes(nextTypes);
-          setLocalProviderIds(nextIds);
-        }
-
-        if (modelType === 'cloud') {
-          setCloudPrefer(true);
-          setForm((f) => f.map((fi) => ({ ...fi, prefer: false })));
-          setLocalPrefer(false);
-        } else if (modelType === 'local') {
-          setForm((f) => f.map((fi) => ({ ...fi, prefer: false })));
-          setLocalPrefer(true);
-          setCloudPrefer(false);
-        } else if (modelType === 'codex_subscription') {
-          setForm((f) => f.map((fi) => ({ ...fi, prefer: false })));
-          setLocalPrefer(false);
-          setCloudPrefer(false);
-        } else {
-          setLocalPrefer(false);
-          setCloudPrefer(false);
-        }
-      } catch (e) {
-        console.error('Error fetching providers:', e);
-      }
-    })();
-  }, [items, modelType]);
+    void loadProviders();
+  }, [loadProviders, modelType]);
 
   const refreshCodexStatus = useCallback(async () => {
     if (!email) {
@@ -304,6 +243,113 @@ export function ModelSelect({
     };
   }, [refreshCodexStatus]);
 
+  const codexProvider = useMemo(
+    () => INIT_PROVODERS.find((p) => p.authMode === 'oauth_subscription'),
+    []
+  );
+
+  /** Every configured row, grouped by provider_name. */
+  const groups = useMemo<ProviderGroup[]>(() => {
+    const byName = new Map<string, ProviderGroup>();
+    for (const row of providers) {
+      const name = row.provider_name;
+      let group = byName.get(name);
+      if (!group) {
+        group = { providerName: name, label: catalogLabel(name), rows: [] };
+        byName.set(name, group);
+      }
+      group.rows.push(row);
+    }
+    return [...byName.values()];
+  }, [providers]);
+
+  const configuredNames = useMemo(
+    () => new Set(providers.map((p) => p.provider_name)),
+    [providers]
+  );
+
+  const cloudGroups = useMemo(
+    () =>
+      groups
+        .filter((g) => !isLocalProviderId(g.providerName))
+        .sort((a, b) => {
+          const order = (id: string) => {
+            const cloudOrder = [
+              'openai',
+              'anthropic',
+              'gemini',
+              'deepseek',
+              'tongyi-qianwen',
+              'openrouter',
+              'openai-compatible-model',
+            ];
+            const idx = cloudOrder.indexOf(id);
+            return idx === -1 ? Number.MAX_SAFE_INTEGER : idx;
+          };
+          const diff = order(a.providerName) - order(b.providerName);
+          return diff !== 0 ? diff : a.label.localeCompare(b.label);
+        }),
+    [groups]
+  );
+
+  const localGroups = useMemo(
+    () =>
+      groups
+        .filter((g) => isLocalProviderId(g.providerName))
+        .sort(
+          (a, b) =>
+            presetIndex(a.providerName, LOCAL_MODEL_OPTIONS) -
+            presetIndex(b.providerName, LOCAL_MODEL_OPTIONS)
+        ),
+    [groups]
+  );
+
+  /** Catalog providers with nothing configured yet → route to models screen. */
+  const unconfiguredCloud = useMemo(
+    () =>
+      INIT_PROVODERS.filter(
+        (p) =>
+          p.authMode !== 'oauth_subscription' &&
+          !isLocalProviderId(p.id) &&
+          !configuredNames.has(p.id)
+      ),
+    [configuredNames]
+  );
+
+  const unconfiguredLocal = useMemo(
+    () =>
+      LOCAL_MODEL_OPTIONS.filter((m) => !configuredNames.has(m.id)),
+    [configuredNames]
+  );
+
+  const activeRow = useMemo(() => {
+    if (pinnedSelection?.provider_id !== undefined) {
+      return providers.find((p) => p.id === pinnedSelection.provider_id);
+    }
+    if (pinnedSelection) return undefined;
+    return providers.find((p) => p.prefer);
+  }, [pinnedSelection, providers]);
+
+  const codexIsPreferred = pinnedSelection
+    ? pinnedSelection.modelType === 'codex_subscription'
+    : modelType === 'codex_subscription';
+
+  const isDefaultRow = useCallback(
+    (row: ProviderRow, kind: ProviderSelectionKind): boolean => {
+      if (pinnedSelection) {
+        return (
+          pinnedSelection.modelType === kind &&
+          pinnedSelection.provider_id === row.id
+        );
+      }
+      return !!row.prefer;
+    },
+    [pinnedSelection]
+  );
+
+  const needsInvert = (modelId: string | null): boolean =>
+    needsInvertModelImage(modelId, appearance);
+
   const handleCodexSetDefault = useCallback(() => {
     if (projectId) {
       const codexModelId = codex_model_type || 'gpt-5.5';
@@ -315,13 +361,34 @@ export function ModelSelect({
       });
       return;
     }
-    setCloudPrefer(false);
-    setLocalPrefer(false);
-    setForm((f) => f.map((fi) => ({ ...fi, prefer: false })));
     setModelType('codex_subscription');
   }, [codex_model_type, projectId, setModelType, setProjectModel]);
 
-  /** Model name only in the trigger (e.g. "Gemini 3.1 Pro Preview", no cloud/source prefix). */
+  const handleSelectRow = useCallback(
+    async (row: ProviderRow) => {
+      const kind: ProviderSelectionKind = isLocalProviderId(row.provider_name)
+        ? 'local'
+        : 'custom';
+      if (projectId) {
+        setProjectModel(projectId, {
+          modelType: kind,
+          provider_id: row.id,
+          model_platform: row.provider_name,
+          model_type: row.model_type || undefined,
+        });
+        return;
+      }
+      const ok = await preferProviderRow(row.id, t);
+      if (!ok) return;
+      setModelType(kind);
+      setProviders((prev) =>
+        prev.map((p) => ({ ...p, prefer: p.id === row.id }))
+      );
+    },
+    [projectId, setModelType, setProjectModel, t]
+  );
+
+  /** Model name only in the trigger (e.g. "DeepSeek (deepseek-v4-flash)"). */
   const triggerModelName = useMemo(() => {
     if (pinnedSelection) {
       if (pinnedSelection.modelType === 'codex_subscription') {
@@ -333,33 +400,20 @@ export function ModelSelect({
           pinnedSelection.cloud_model_type || cloud_model_type
         );
       }
-      if (pinnedSelection.modelType === 'custom') {
-        const idx =
-          pinnedSelection.provider_id !== undefined
-            ? form.findIndex(
-                (f) => f.provider_id === pinnedSelection.provider_id
-              )
-            : -1;
-        if (idx !== -1) {
-          const mt = form[idx].model_type || '';
-          return `${items[idx].name}${mt ? ` (${mt})` : ''}`;
+      if (
+        pinnedSelection.modelType === 'custom' ||
+        pinnedSelection.modelType === 'local'
+      ) {
+        if (activeRow) {
+          return rowLabel(activeRow);
         }
-      }
-      if (pinnedSelection.modelType === 'local') {
-        const platform = Object.keys(localProviderIds).find(
-          (key) => localProviderIds[key] === pinnedSelection.provider_id
-        );
-        if (platform) {
-          const mt = localTypes[platform] || '';
-          return `${getLocalPlatformName(platform)}${mt ? ` (${mt})` : ''}`;
+        // Providers still loading (or the pinned provider disappeared):
+        // fall back to the identifiers captured with the pin.
+        if (pinnedSelection.model_platform || pinnedSelection.model_type) {
+          const platformLabel = pinnedSelection.model_platform || '';
+          const mt = pinnedSelection.model_type || '';
+          return platformLabel ? `${platformLabel}${mt ? ` (${mt})` : ''}` : mt;
         }
-      }
-      // Providers are still loading (or the pinned provider disappeared):
-      // fall back to the identifiers captured with the pin.
-      if (pinnedSelection.model_platform || pinnedSelection.model_type) {
-        const platformLabel = pinnedSelection.model_platform || '';
-        const mt = pinnedSelection.model_type || '';
-        return platformLabel ? `${platformLabel}${mt ? ` (${mt})` : ''}` : mt;
       }
     }
 
@@ -367,127 +421,24 @@ export function ModelSelect({
       return `Codex Subscription${codex_model_type ? ` (${codex_model_type})` : ''}`;
     }
 
-    if (cloudPrefer) {
+    if (modelType === 'cloud') {
       return getCloudModelDisplayName(cloud_model_type);
     }
 
-    const preferredIdx = form.findIndex((f) => f.prefer);
-    if (preferredIdx !== -1) {
-      const item = items[preferredIdx];
-      const mt = form[preferredIdx].model_type || '';
-      return `${item.name}${mt ? ` (${mt})` : ''}`;
-    }
-
-    if (localPrefer && localPlatform) {
-      const platformName = getLocalPlatformName(localPlatform);
-      const mt = localTypes[localPlatform] || '';
-      return `${platformName}${mt ? ` (${mt})` : ''}`;
+    if (activeRow) {
+      return rowLabel(activeRow);
     }
 
     return t('setting.select-default-model');
   }, [
-    cloudPrefer,
+    activeRow,
     cloud_model_type,
     codex_model_type,
-    form,
     getCloudModelDisplayName,
-    items,
-    localPrefer,
-    localPlatform,
-    localProviderIds,
-    localTypes,
     modelType,
     pinnedSelection,
     t,
   ]);
-
-  const needsInvert = (modelId: string | null): boolean =>
-    needsInvertModelImage(modelId, appearance);
-
-  const handleDefaultModelSelect = useCallback(
-    async (category: DefaultModelCategory, modelId: string) => {
-      if (
-        !isDefaultModelConfigured(category, modelId, {
-          items,
-          form,
-          localProviderIds,
-        })
-      ) {
-        navigate(DEFAULT_MODEL_CONFIGURE_PATH);
-        return;
-      }
-      if (projectId) {
-        // Pin the choice to this Project only; the global default model
-        // (and the server-side preferred provider) stays unchanged.
-        if (category === 'cloud') {
-          setProjectModel(projectId, {
-            modelType: 'cloud',
-            cloud_model_type: modelId,
-          });
-          return;
-        }
-        if (category === 'custom') {
-          const idx = items.findIndex((item) => item.id === modelId);
-          const providerId = idx !== -1 ? form[idx]?.provider_id : undefined;
-          if (providerId === undefined) return;
-          setProjectModel(projectId, {
-            modelType: 'custom',
-            provider_id: providerId,
-            model_platform: modelId,
-            model_type: form[idx]?.model_type || undefined,
-          });
-          return;
-        }
-        if (category === 'local') {
-          const providerId = localProviderIds[modelId];
-          if (providerId === undefined) return;
-          setProjectModel(projectId, {
-            modelType: 'local',
-            provider_id: providerId,
-            model_platform: modelId,
-            model_type: localTypes[modelId] || undefined,
-          });
-          return;
-        }
-        return;
-      }
-      await applyDefaultModelSelection({
-        category,
-        modelId,
-        items,
-        form,
-        setForm: setForm as Dispatch<SetStateAction<unknown[]>>,
-        setCloudPrefer,
-        setLocalPrefer,
-        setLocalPlatform,
-        localProviderIds,
-        localPlatform,
-        setModelType,
-        setCloudModelType: (id: string) => {
-          setCloudModelType(id);
-        },
-        t,
-      });
-    },
-    [
-      items,
-      form,
-      localProviderIds,
-      localPlatform,
-      localTypes,
-      navigate,
-      projectId,
-      setProjectModel,
-      setModelType,
-      setCloudModelType,
-      t,
-    ]
-  );
-
-  // Grow the trigger to match the open dropdown's content width (never shrink
-  // below its own natural content width). Keep in sync with the `w-[180px]`
-  // on `DropdownMenuContent` below.
-  const [open, setOpen] = useState(false);
 
   const activeSubTriggerRef = useRef<HTMLElement | null>(null);
 
@@ -504,19 +455,83 @@ export function ModelSelect({
     el.style.marginTop = `${trigH - subH}px`;
   }, []);
 
+  const renderProviderGroup = (
+    group: ProviderGroup,
+    kind: ProviderSelectionKind
+  ) => (
+    <div key={group.providerName}>
+      <DropdownMenuLabel className="px-2 py-1 text-label-xs text-ds-text-neutral-subtle-default">
+        {group.label}
+      </DropdownMenuLabel>
+      {group.rows.map((row) => {
+        const isDefault = isDefaultRow(row, kind);
+        const modelImage = getModelImage(row.provider_name);
+        return (
+          <DropdownMenuItem
+            key={row.id}
+            onSelect={() => {
+              void handleSelectRow(row);
+            }}
+            className="flex items-center justify-between"
+          >
+            <div className="flex min-w-0 items-center gap-2">
+              {modelImage ? (
+                <img
+                  src={modelImage}
+                  alt={group.label}
+                  className="h-4 w-4 shrink-0"
+                  style={
+                    needsInvert(row.provider_name)
+                      ? { filter: 'invert(1)' }
+                      : undefined
+                  }
+                />
+              ) : (
+                <Key className="h-3 w-3 shrink-0 text-ds-icon-neutral-muted-default" />
+              )}
+              <span className="truncate text-body-sm text-ds-text-neutral-default-default">
+                {rowLabel(row)}
+              </span>
+            </div>
+            {isDefault ? (
+              <Check className="h-4 w-4 shrink-0 text-ds-text-success-default-default" />
+            ) : (
+              <div className="h-2 w-2 shrink-0 rounded-full bg-ds-text-neutral-subtle-default opacity-10" />
+            )}
+          </DropdownMenuItem>
+        );
+      })}
+    </div>
+  );
+
+  const renderAddEntry = (label: string) => (
+    <DropdownMenuItem
+      key={`add-${label}`}
+      onSelect={() => {
+        // Embedded panel (Theia agent widget) has no app router, so the
+        // navigate() below is a no-op there — request the Models screen so the
+        // panel body actually switches. Desktop/app: no listener, navigate wins.
+        requestEmbedScreen('models');
+        navigate(DEFAULT_MODEL_CONFIGURE_PATH);
+      }}
+      className="flex items-center gap-2"
+    >
+      <Plus className="h-3.5 w-3.5 shrink-0 text-ds-icon-neutral-muted-default" />
+      <span className="truncate text-body-sm text-ds-text-neutral-subtle-default">
+        {t('setting.add-model', { defaultValue: 'Add' })} {label}
+      </span>
+    </DropdownMenuItem>
+  );
+
   if (readOnly) {
     return (
       <div
         role="status"
         title={triggerModelName}
         aria-label={triggerModelName}
-        className={cn(
-          modelTriggerShellClass,
-          'pointer-events-none bg-transparent',
-          {
-            'opacity-50': disabled,
-          }
-        )}
+        className={cn(modelTriggerShellClass, 'pointer-events-none bg-transparent', {
+          'opacity-50': disabled,
+        })}
       >
         <span className="inline-flex min-h-[1.25rem] min-w-0 items-center gap-1.5 overflow-hidden">
           <span className="min-w-0 truncate !text-label-xs font-semibold">
@@ -531,7 +546,10 @@ export function ModelSelect({
     <DropdownMenu
       onOpenChange={(next) => {
         setOpen(next);
-        if (next) void fetchCloudModels();
+        if (next) {
+          void loadProviders();
+          void fetchCloudModels();
+        }
       }}
     >
       <DropdownMenuTrigger asChild>
@@ -594,82 +612,44 @@ export function ModelSelect({
             ref={subContentCallbackRef}
             className="max-h-[440px] w-[220px] overflow-y-auto"
           >
-            {items
-              .map((item, idx) => ({ item, idx }))
-              .sort((a, b) => {
-                // Subscription (OAuth) providers first, original order otherwise.
-                const aSub = a.item.authMode === 'oauth_subscription' ? 0 : 1;
-                const bSub = b.item.authMode === 'oauth_subscription' ? 0 : 1;
-                return aSub - bSub;
-              })
-              .map(({ item, idx }) => {
-                const isSubscriptionAuth =
-                  item.authMode === 'oauth_subscription';
-                const isConfigured = isSubscriptionAuth
-                  ? codexStatus.connected
-                  : !!form[idx]?.provider_id;
-                const isPreferred = pinnedSelection
-                  ? isSubscriptionAuth
-                    ? pinnedSelection.modelType === 'codex_subscription'
-                    : pinnedSelection.modelType === 'custom' &&
-                      pinnedSelection.provider_id !== undefined &&
-                      form[idx]?.provider_id === pinnedSelection.provider_id
-                  : isSubscriptionAuth
-                    ? modelType === 'codex_subscription'
-                    : form[idx]?.prefer;
-                const modelImage = getModelImage(item.id);
-
-                return (
-                  <DropdownMenuItem
-                    key={item.id}
-                    onSelect={() => {
-                      if (isSubscriptionAuth) {
-                        if (isConfigured) {
-                          handleCodexSetDefault();
-                        } else {
-                          navigate(DEFAULT_MODEL_CONFIGURE_PATH);
-                        }
-                        return;
-                      }
-                      void handleDefaultModelSelect('custom', item.id);
-                    }}
-                    className="flex items-center justify-between"
+            {codexProvider && (
+              <DropdownMenuItem
+                onSelect={() => {
+                  if (codexStatus.connected) {
+                    handleCodexSetDefault();
+                  } else {
+                    requestEmbedScreen('models');
+                    navigate(DEFAULT_MODEL_CONFIGURE_PATH);
+                  }
+                }}
+                className="flex items-center justify-between"
+              >
+                <div className="flex items-center gap-2">
+                  <img
+                    src={getModelImage(codexProvider.id) ?? ''}
+                    alt={codexProvider.name}
+                    className="h-4 w-4"
+                  />
+                  <span
+                    className={`text-body-sm ${codexStatus.connected ? 'text-ds-text-neutral-default-default' : 'text-ds-text-neutral-subtle-default'}`}
                   >
-                    <div className="flex items-center gap-2">
-                      {modelImage ? (
-                        <img
-                          src={modelImage}
-                          alt={item.name}
-                          className="h-4 w-4"
-                          style={
-                            needsInvert(item.id)
-                              ? { filter: 'invert(1)' }
-                              : undefined
-                          }
-                        />
-                      ) : (
-                        <Key className="h-3 w-3 text-ds-icon-neutral-muted-default" />
-                      )}
-                      <span
-                        className={`text-body-sm ${isConfigured ? 'text-ds-text-neutral-default-default' : 'text-ds-text-neutral-subtle-default'}`}
-                      >
-                        {item.name}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      {!isConfigured && (
-                        <div className="h-2 w-2 rounded-full bg-ds-text-neutral-subtle-default opacity-10" />
-                      )}
-                      {isPreferred && (
-                        <Check className="h-4 w-4 text-ds-text-success-default-default" />
-                      )}
-                      {isConfigured && !isPreferred && (
-                        <div className="h-2 w-2 rounded-full bg-ds-text-success-default-default" />
-                      )}
-                    </div>
-                  </DropdownMenuItem>
-                );
-              })}
+                    {codexProvider.name}
+                  </span>
+                </div>
+                {codexIsPreferred && (
+                  <Check className="h-4 w-4 text-ds-text-success-default-default" />
+                )}
+              </DropdownMenuItem>
+            )}
+
+            {cloudGroups.map((group) => renderProviderGroup(group, 'custom'))}
+
+            {cloudGroups.length > 0 &&
+              (unconfiguredCloud.length > 0 || unconfiguredLocal.length > 0) && (
+                <DropdownMenuSeparator />
+              )}
+
+            {unconfiguredCloud.map((p) => renderAddEntry(catalogLabel(p.id)))}
           </DropdownMenuSubContent>
         </DropdownMenuSub>
 
@@ -688,62 +668,19 @@ export function ModelSelect({
               {t('setting.local-model')}
             </span>
           </DropdownMenuSubTrigger>
-          <DropdownMenuSubContent
-            ref={subContentCallbackRef}
-            className="w-[200px]"
-          >
-            {LOCAL_MODEL_OPTIONS.map((model) => {
-              const isConfigured = !!localProviderIds[model.id];
-              const isPreferred = pinnedSelection
-                ? pinnedSelection.modelType === 'local' &&
-                  pinnedSelection.provider_id !== undefined &&
-                  localProviderIds[model.id] === pinnedSelection.provider_id
-                : localPrefer && localPlatform === model.id;
-              const modelImage = getModelImage(`local-${model.id}`);
-
-              return (
-                <DropdownMenuItem
-                  key={model.id}
-                  onSelect={() => {
-                    void handleDefaultModelSelect('local', model.id);
-                  }}
-                  className="flex items-center justify-between"
-                >
-                  <div className="flex items-center gap-2">
-                    {modelImage ? (
-                      <img
-                        src={modelImage}
-                        alt={model.name}
-                        className="h-4 w-4"
-                        style={
-                          needsInvert(`local-${model.id}`)
-                            ? { filter: 'invert(1)' }
-                            : undefined
-                        }
-                      />
-                    ) : (
-                      <Server className="h-4 w-4 text-ds-icon-neutral-muted-default" />
-                    )}
-                    <span
-                      className={`text-body-sm ${isConfigured ? 'text-ds-text-neutral-default-default' : 'text-ds-text-neutral-subtle-default'}`}
-                    >
-                      {model.name}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    {!isConfigured && (
-                      <div className="h-2 w-2 rounded-full bg-ds-text-neutral-subtle-default opacity-10" />
-                    )}
-                    {isPreferred && (
-                      <Check className="h-4 w-4 text-ds-text-success-default-default" />
-                    )}
-                    {isConfigured && !isPreferred && (
-                      <div className="h-2 w-2 rounded-full bg-ds-text-success-default-default" />
-                    )}
-                  </div>
-                </DropdownMenuItem>
-              );
-            })}
+          <DropdownMenuSubContent ref={subContentCallbackRef} className="w-[200px]">
+            {localGroups.map((group) => renderProviderGroup(group, 'local'))}
+            {localGroups.length > 0 && unconfiguredLocal.length > 0 && (
+              <DropdownMenuSeparator />
+            )}
+            {unconfiguredLocal.map((m) => renderAddEntry(m.name))}
+            {localGroups.length === 0 && unconfiguredLocal.length === 0 && (
+              <DropdownMenuItem disabled className="text-body-sm">
+                {t('setting.no-local-models', {
+                  defaultValue: 'No local models configured',
+                })}
+              </DropdownMenuItem>
+            )}
           </DropdownMenuSubContent>
         </DropdownMenuSub>
       </DropdownMenuContent>

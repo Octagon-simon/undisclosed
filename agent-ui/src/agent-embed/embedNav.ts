@@ -23,7 +23,16 @@
 
 import { create } from 'zustand';
 
-export type EmbedScreen = 'conversation' | 'history' | 'stats' | 'skills' | 'connectors';
+export type EmbedScreen =
+  | 'conversation'
+  | 'history'
+  | 'stats'
+  | 'skills'
+  | 'connectors'
+  | 'memory'
+  | 'models'
+  | 'settings'
+  | 'browser';
 
 interface EmbedNavState {
   /** A one-shot screen request from a shared component; the panel consumes it. */

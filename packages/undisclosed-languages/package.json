@@ -2,15 +2,17 @@
   "name": "undisclosed-languages",
   "version": "0.0.1",
   "private": true,
-  "description": "Undisclosed editor language support: registers Monarch tokenizers for the popular languages directly against Theia's Monaco.",
+  "description": "Undisclosed editor support: registers Monarch tokenizers for the popular languages directly against Theia's Monaco, and ships the native media preview (images / audio / video) as an OpenHandler + widget.",
   "license": "Apache-2.0",
   "theiaExtensions": [
     {
-      "frontend": "lib/browser/undisclosed-languages-frontend-module"
+      "frontend": "lib/browser/undisclosed-languages-frontend-module",
+      "style": "style/undisclosed-media-preview.css"
     }
   ],
   "dependencies": {
     "@theia/core": "1.60.0",
+    "@theia/filesystem": "1.60.0",
     "@theia/monaco": "1.60.0",
     "@theia/monaco-editor-core": "1.96.302"
   },
@@ -26,6 +28,7 @@
   "files": [
     "lib",
     "src",
-    "script"
+    "script",
+    "style"
   ]
 }

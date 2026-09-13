@@ -12,6 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
 
+import mimetypes
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,6 +42,57 @@ from app.utils.space_overlay_client import (
     sha256_of_file,
     should_record_overlay,
 )
+
+
+# ---------------------------------------------------------------------------
+# Text fast-path for read_file.
+#
+# CAMEL's FileToolkit.read_file routes every file through MarkItDownLoader,
+# whose SUPPORTED_FORMATS whitelist only covers rich documents (pdf, docx,
+# xlsx, images, audio, csv/json/xml/txt/md). Source code (.tsx, .py, .rs, ...)
+# therefore raises "Unsupported file format", and even whitelisted text formats
+# get re-rendered as Markdown instead of being returned verbatim. We short
+# circuit plain-text/code files and only fall back to MarkItDown for genuinely
+# rich documents.
+# ---------------------------------------------------------------------------
+
+# Extensions we always treat as text even if `mimetypes` has no opinion.
+_TEXT_EXTENSIONS: frozenset[str] = frozenset(
+    {
+        ".bash", ".c", ".cc", ".cfg", ".cjs", ".clj", ".conf", ".cpp",
+        ".cs", ".css", ".csv", ".diff", ".env", ".erl", ".ex", ".exs",
+        ".gql", ".go", ".graphql", ".h", ".hcl", ".hpp", ".hs", ".htm",
+        ".html", ".ini", ".java", ".js", ".jsonc", ".jsx", ".kt", ".kts",
+        ".less", ".log", ".lua", ".mjs", ".patch", ".php", ".pl", ".proto",
+        ".py", ".pyi", ".r", ".rb", ".rs", ".rst", ".sass", ".scala",
+        ".scss", ".sh", ".sql", ".svelte", ".swift", ".tf", ".tfvars",
+        ".toml", ".ts", ".tsv", ".tsx", ".txt", ".vue", ".xml", ".yaml",
+        ".yml", ".zsh", ".astro", ".mdx",
+    }
+)
+
+# Extensionless files that are conventionally text.
+_TEXT_FILENAMES: frozenset[str] = frozenset(
+    {
+        ".bashrc", ".dockerignore", ".editorconfig", ".env", ".gitattributes",
+        ".gitignore", ".nvmrc", ".zshrc", "dockerfile", "gemfile", "license",
+        "makefile", "procfile", "rakefile",
+    }
+)
+
+_TEXT_MIME_TYPES: frozenset[str] = frozenset(
+    {
+        "application/javascript",
+        "application/json",
+        "application/toml",
+        "application/x-sh",
+        "application/x-yaml",
+        "application/xml",
+    }
+)
+
+# Refuse to slurp huge files into the agent's context window.
+_MAX_TEXT_BYTES: int = 2 * 1024 * 1024  # 2 MB
 
 
 @dataclass(frozen=True)
@@ -82,6 +134,137 @@ class FileToolkit(BaseFileToolkit, AbstractToolkit):
             working_directory, timeout, default_encoding, backup_enabled
         )
         self.api_task_id = api_task_id
+
+    @property
+    def _encoding(self) -> str:
+        return getattr(self, "default_encoding", None) or "utf-8"
+
+    def _is_explicit_text(self, path: Path) -> bool:
+        r"""True when the extension/filename is a known text or code format."""
+        return (
+            path.suffix.lower() in _TEXT_EXTENSIONS
+            or path.name.lower() in _TEXT_FILENAMES
+        )
+
+    def _is_text_readable(self, path: Path) -> bool:
+        r"""Heuristically decide whether ``path`` should be read as text.
+
+        Order: extension/filename allowlist -> size guard -> mimetype guess ->
+        null-byte / decode sniff. Explicit text extensions win even when the
+        file is large (the reader truncates); only unknown files are rejected
+        on size, so the agent's context window is never blown by a giant blob.
+        """
+        try:
+            if not path.is_file():
+                return False
+            size = path.stat().st_size
+        except OSError:
+            return False
+
+        if self._is_explicit_text(path):
+            return True
+
+        if size > _MAX_TEXT_BYTES:
+            return False
+
+        mime, _ = mimetypes.guess_type(str(path))
+        if mime and (
+            mime.startswith("text/") or mime in _TEXT_MIME_TYPES
+        ):
+            return True
+
+        try:
+            with path.open("rb") as handle:
+                sample = handle.read(8192)
+        except OSError:
+            return False
+        if b"\x00" in sample:
+            return False
+        try:
+            sample.decode(self._encoding)
+        except (UnicodeDecodeError, LookupError):
+            return False
+        return True
+
+    def _read_text_file(self, path: Path) -> str:
+        r"""Return the file's text with 1-based line numbers prefixed.
+
+        Line numbers let the agent cite and edit exact lines without counting
+        or re-reading the file. Files larger than the cap are truncated with a
+        trailing marker instead of being refused.
+        """
+        try:
+            with path.open("rb") as handle:
+                raw = handle.read(_MAX_TEXT_BYTES + 1)
+        except OSError as e:
+            return f"Error reading file: {e}"
+
+        truncated = len(raw) > _MAX_TEXT_BYTES
+        text = raw[:_MAX_TEXT_BYTES].decode(
+            self._encoding, errors="replace"
+        )
+        lines = text.splitlines()
+        if truncated:
+            lines.append(f"... [truncated at {_MAX_TEXT_BYTES} bytes]")
+        if not lines:
+            return ""
+        width = len(str(len(lines)))
+        return "\n".join(
+            f"{number:>{width}}: {line}"
+            for number, line in enumerate(lines, start=1)
+        )
+
+    def read_file(
+        self, file_paths: str | list[str]
+    ) -> str | dict[str, str]:
+        r"""Read one or more files, preferring a plain-text fast-path.
+
+        Text and source-code files are returned verbatim (with line numbers);
+        rich documents (pdf, docx, xlsx, images, audio, ...) fall back to
+        CAMEL's MarkItDown-based ``read_file``.
+
+        Args:
+            file_paths: A single path or a list of paths, relative or absolute.
+
+        Returns:
+            The file content as a string for a single path, or a dict keyed by
+            the original paths for a list.
+        """
+        try:
+            if isinstance(file_paths, str):
+                resolved = self._resolve_existing_filepath(file_paths)
+                if self._is_text_readable(resolved):
+                    return self._read_text_file(resolved)
+                return super().read_file(file_paths)
+
+            resolved_paths = [
+                self._resolve_existing_filepath(fp) for fp in file_paths
+            ]
+            result: dict[str, str] = {}
+            rich_originals: list[str] = []
+            rich_resolved: list[str] = []
+            for original, resolved in zip(file_paths, resolved_paths):
+                if self._is_text_readable(resolved):
+                    result[original] = self._read_text_file(resolved)
+                else:
+                    rich_originals.append(original)
+                    rich_resolved.append(str(resolved))
+
+            if rich_resolved:
+                rich = super().read_file(rich_resolved)
+                if isinstance(rich, dict):
+                    for original, resolved in zip(
+                        rich_originals, rich_resolved
+                    ):
+                        result[original] = rich.get(
+                            resolved, f"Failed to read file: {resolved}"
+                        )
+                else:
+                    result[rich_originals[0]] = rich
+
+            return result
+        except Exception as e:
+            return f"Error reading file(s): {e}"
 
     def _overlay_write_context(
         self, filename: str

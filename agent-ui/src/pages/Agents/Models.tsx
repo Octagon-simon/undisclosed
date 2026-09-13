@@ -37,6 +37,8 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
@@ -61,6 +63,10 @@ import {
   splitProviderConfig,
 } from '@/lib/modelConfig';
 import { getProviderValid, toProviderValidStatus } from '@/lib/providerStatus';
+import {
+  isLocalProviderId,
+  providerPreset,
+} from '@/lib/providerRegistry';
 import { useAuthStore } from '@/store/authStore';
 import { useCloudModelStore } from '@/store/cloudModelStore';
 import { Provider } from '@/types';
@@ -77,7 +83,7 @@ import {
   Server,
   Settings,
 } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -255,6 +261,17 @@ export default function SettingModels() {
   const [localProviderIds, setLocalProviderIds] = useState<
     Record<string, number | undefined>
   >({});
+  // Raw configured provider rows from GET /api/v1/providers. Unlike `form`
+  // (indexed one slot per catalog provider), this keeps EVERY row, so a
+  // provider with several models shows all of them in the default dropdown.
+  const [providerRows, setProviderRows] = useState<
+    Array<{
+      id: number;
+      provider_name: string;
+      model_type?: string;
+      prefer?: boolean;
+    }>
+  >([]);
   const [localVerifying, setLocalVerifying] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [localInputError, setLocalInputError] = useState(false);
@@ -407,6 +424,7 @@ export default function SettingModels() {
       try {
         const res = await proxyFetchGet('/api/v1/providers');
         const providerList = Array.isArray(res) ? res : res.items || [];
+        setProviderRows(providerList);
 
         // Handle custom models
         setForm((f) =>
@@ -537,6 +555,108 @@ export default function SettingModels() {
     void fetchCloudModels();
   }, [fetchCloudModels]);
 
+  // Reload the raw configured rows (used when the default dropdown opens) so
+  // the menu reflects providers added/edited elsewhere without a full remount.
+  const refreshProviderRows = useCallback(async () => {
+    try {
+      const res = await proxyFetchGet('/api/v1/providers');
+      setProviderRows(Array.isArray(res) ? res : res.items || []);
+    } catch (e) {
+      console.error('Error refreshing providers:', e);
+    }
+  }, []);
+
+  /** Preset label first, then the catalog, then the raw id. */
+  const catalogLabelForRow = useCallback(
+    (id: string): string =>
+      providerPreset(id)?.label ??
+      items.find((item) => item.id === id)?.name ??
+      id,
+    [items]
+  );
+
+  const groupConfiguredRows = useCallback(
+    (rows: typeof providerRows, localOnly: boolean) => {
+      const byName = new Map<
+        string,
+        { providerName: string; label: string; rows: typeof providerRows }
+      >();
+      for (const row of rows) {
+        if (isLocalProviderId(row.provider_name) !== localOnly) continue;
+        let group = byName.get(row.provider_name);
+        if (!group) {
+          group = {
+            providerName: row.provider_name,
+            label: catalogLabelForRow(row.provider_name),
+            rows: [],
+          };
+          byName.set(row.provider_name, group);
+        }
+        group.rows.push(row);
+      }
+      return [...byName.values()];
+    },
+    [catalogLabelForRow]
+  );
+
+  const customRowGroups = useMemo(
+    () => groupConfiguredRows(providerRows, false),
+    [groupConfiguredRows, providerRows]
+  );
+  const localRowGroups = useMemo(
+    () => groupConfiguredRows(providerRows, true),
+    [groupConfiguredRows, providerRows]
+  );
+
+  const configuredProviderNames = useMemo(
+    () => new Set(providerRows.map((row) => row.provider_name)),
+    [providerRows]
+  );
+
+  const rowDisplayLabel = (row: { provider_name: string; model_type?: string }) =>
+    `${catalogLabelForRow(row.provider_name)}${row.model_type ? ` (${row.model_type})` : ''}`;
+
+  /** Pin one specific configured row (`provider_id`) as the global default. */
+  const handleSelectConfiguredRow = async (row: {
+    id: number;
+    provider_name: string;
+    model_type?: string;
+  }) => {
+    const isLocal = isLocalProviderId(row.provider_name);
+    try {
+      const hasSearchKey = await checkHasSearchKey();
+      if (!hasSearchKey) {
+        toast(t('setting.warning-google-search-not-configured'), {
+          description: t(
+            'setting.search-functionality-may-be-limited-without-google-api'
+          ),
+          closeButton: true,
+        });
+      }
+      await proxyFetchPost('/api/v1/provider/prefer', {
+        provider_id: row.id,
+      });
+      setModelType(isLocal ? 'local' : 'custom');
+      setCloudPrefer(false);
+      setActiveModelIdx(null);
+      setForm((f) =>
+        f.map((fi) => ({ ...fi, prefer: fi.provider_id === row.id }))
+      );
+      setProviderRows((prev) =>
+        prev.map((r) => ({ ...r, prefer: r.id === row.id }))
+      );
+      if (isLocal) {
+        setLocalPlatform(row.provider_name);
+        setLocalPrefer(true);
+      } else {
+        setLocalPrefer(false);
+      }
+      setPendingDefaultModel(null);
+    } catch (e) {
+      console.error('Error switching model:', e);
+    }
+  };
+
   // Get current default model display text
   const getDefaultModelDisplayText = (): string => {
     if (cloudPrefer) {
@@ -548,6 +668,16 @@ export default function SettingModels() {
       return `${t('setting.custom-model')} / Codex Subscription${
         codex_model_type ? ` (${codex_model_type})` : ''
       }`;
+    }
+
+    // Configured rows are the source of truth for a model-level default: this
+    // surfaces the exact `model_type` even when a provider has several models.
+    const preferredRow = providerRows.find((row) => row.prefer);
+    if (preferredRow) {
+      const prefix = isLocalProviderId(preferredRow.provider_name)
+        ? t('setting.local-model')
+        : t('setting.custom-model');
+      return `${prefix} / ${rowDisplayLabel(preferredRow)}`;
     }
 
     // Check for custom model preference
@@ -2484,7 +2614,10 @@ export default function SettingModels() {
           </div>
           <DropdownMenu
             onOpenChange={(open) => {
-              if (open) void fetchCloudModels();
+              if (open) {
+                void fetchCloudModels();
+                void refreshProviderRows();
+              }
             }}
           >
             <DropdownMenuTrigger asChild>
@@ -2533,7 +2666,69 @@ export default function SettingModels() {
                   </span>
                 </DropdownMenuSubTrigger>
                 <DropdownMenuSubContent className="max-h-[440px] w-[220px] overflow-y-auto">
-                  {items.map((item, idx) => {
+                  {/* Every configured row, grouped by provider, so a provider
+                      with several models (e.g. deepseek-chat and
+                      deepseek-v4-flash) shows all of them. */}
+                  {customRowGroups.map((group) => (
+                    <div key={group.providerName}>
+                      <DropdownMenuLabel className="px-2 py-1 text-label-xs text-ds-text-neutral-muted-default">
+                        {group.label}
+                      </DropdownMenuLabel>
+                      {group.rows.map((row) => {
+                        const modelImage = getModelImage(row.provider_name);
+                        return (
+                          <DropdownMenuItem
+                            key={row.id}
+                            onClick={() => handleSelectConfiguredRow(row)}
+                            className="flex items-center justify-between"
+                          >
+                            <div className="flex items-center gap-2">
+                              {modelImage ? (
+                                <img
+                                  src={modelImage}
+                                  alt={group.label}
+                                  className="h-4 w-4"
+                                  style={
+                                    needsInvert(row.provider_name)
+                                      ? { filter: 'invert(1)' }
+                                      : undefined
+                                  }
+                                />
+                              ) : (
+                                <Key className="h-4 w-4 text-ds-icon-neutral-muted-default" />
+                              )}
+                              <span
+                                className={`text-body-sm ${row.prefer ? 'text-ds-text-neutral-default-default' : 'text-ds-text-neutral-muted-default'}`}
+                              >
+                                {rowDisplayLabel(row)}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              {row.prefer ? (
+                                <Check className="h-4 w-4 text-ds-text-status-completed-strong-default" />
+                              ) : (
+                                <div className="h-2 w-2 rounded-full bg-text-label opacity-10" />
+                              )}
+                            </div>
+                          </DropdownMenuItem>
+                        );
+                      })}
+                    </div>
+                  ))}
+                  {customRowGroups.length > 0 &&
+                    items.some(
+                      (item) =>
+                        item.authMode !== 'oauth_subscription' &&
+                        !configuredProviderNames.has(item.id)
+                    ) && <DropdownMenuSeparator />}
+                  {items
+                    .map((item, idx) => ({ item, idx }))
+                    .filter(
+                      ({ item }) =>
+                        item.authMode === 'oauth_subscription' ||
+                        !configuredProviderNames.has(item.id)
+                    )
+                    .map(({ item, idx }) => {
                     const isSubscriptionAuth =
                       item.authMode === 'oauth_subscription';
                     const isConfigured = isSubscriptionAuth
@@ -2607,7 +2802,55 @@ export default function SettingModels() {
                   </span>
                 </DropdownMenuSubTrigger>
                 <DropdownMenuSubContent className="w-[200px]">
-                  {LOCAL_MODEL_OPTIONS.map((model) => {
+                  {/* Every configured local row, grouped by runtime. */}
+                  {localRowGroups.map((group) => (
+                    <div key={group.providerName}>
+                      <DropdownMenuLabel className="px-2 py-1 text-label-xs text-ds-text-neutral-muted-default">
+                        {group.label}
+                      </DropdownMenuLabel>
+                      {group.rows.map((row) => {
+                        const modelImage = getModelImage(row.provider_name);
+                        return (
+                          <DropdownMenuItem
+                            key={row.id}
+                            onClick={() => handleSelectConfiguredRow(row)}
+                            className="flex items-center justify-between"
+                          >
+                            <div className="flex items-center gap-2">
+                              {modelImage ? (
+                                <img
+                                  src={modelImage}
+                                  alt={group.label}
+                                  className="h-4 w-4"
+                                />
+                              ) : (
+                                <Server className="h-4 w-4 text-ds-icon-neutral-muted-default" />
+                              )}
+                              <span
+                                className={`text-body-sm ${row.prefer ? 'text-ds-text-neutral-default-default' : 'text-ds-text-neutral-muted-default'}`}
+                              >
+                                {rowDisplayLabel(row)}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              {row.prefer ? (
+                                <Check className="h-4 w-4 text-ds-text-status-completed-strong-default" />
+                              ) : (
+                                <div className="h-2 w-2 rounded-full bg-text-label opacity-10" />
+                              )}
+                            </div>
+                          </DropdownMenuItem>
+                        );
+                      })}
+                    </div>
+                  ))}
+                  {localRowGroups.length > 0 &&
+                    LOCAL_MODEL_OPTIONS.some(
+                      (model) => !configuredProviderNames.has(model.id)
+                    ) && <DropdownMenuSeparator />}
+                  {LOCAL_MODEL_OPTIONS.filter(
+                    (model) => !configuredProviderNames.has(model.id)
+                  ).map((model) => {
                     const isConfigured = !!localProviderIds[model.id];
                     const isPreferred =
                       localPrefer && localPlatform === model.id;

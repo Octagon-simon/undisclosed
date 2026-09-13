@@ -75,11 +75,88 @@ def _sanitize_assistant(msg: dict, *, is_final: bool) -> bool:
     return True
 
 
+def _sanitize_message_list(messages: object) -> object:
+    """Sanitize every assistant message in a full request `messages` list.
+    Drops an empty INTERIOR assistant message (illegal), keeps an empty FINAL
+    one (allowed prefill). Mutates dict items in place; returns the (possibly
+    filtered) list. Non-list input is returned unchanged."""
+    if not isinstance(messages, list):
+        return messages
+    last_idx = len(messages) - 1
+    kept = []
+    for i, m in enumerate(messages):
+        if isinstance(m, dict) and m.get("role") == "assistant":
+            if _sanitize_assistant(m, is_final=(i == last_idx)):
+                kept.append(m)
+            # else: drop the empty interior assistant message
+        else:
+            kept.append(m)
+    return kept
+
+
+def _patch_anthropic_sdk() -> None:
+    """Sanitize assistant messages at the Anthropic SDK boundary — the LAST
+    point before the request leaves, covering every path (streaming via
+    create(stream=True), non-streaming, prefills, cache_control wrapping, and
+    any CAMEL version) regardless of how the messages list was built. This is
+    the belt to the converter patch's suspenders: the converter patch can miss
+    if CAMEL renames its method or appends a message after conversion; this
+    can't."""
+    try:
+        import anthropic.resources.messages.messages as _am
+    except Exception:  # pragma: no cover - anthropic layout changed
+        logger.debug("anthropic Messages module not importable; SDK patch skipped")
+        return
+
+    patched_any = False
+    for cls_name in ("Messages", "AsyncMessages"):
+        cls = getattr(_am, cls_name, None)
+        if cls is None:
+            continue
+        orig_create = getattr(cls, "create", None)
+        if orig_create is None or getattr(
+            orig_create, "_undisclosed_ws_patched", False
+        ):
+            continue
+
+        def _make(orig):
+            # Plain def works for BOTH sync and async: we only mutate kwargs
+            # synchronously before delegating; the async `create` returns an
+            # awaitable that the caller awaits unchanged.
+            def create(self, *args, **kwargs):
+                msgs = kwargs.get("messages")
+                if msgs is not None:
+                    try:
+                        kwargs["messages"] = _sanitize_message_list(msgs)
+                    except Exception:  # pragma: no cover - never break sends
+                        logger.debug(
+                            "SDK-boundary messages sanitize failed",
+                            exc_info=True,
+                        )
+                return orig(self, *args, **kwargs)
+
+            create._undisclosed_ws_patched = True
+            return create
+
+        setattr(cls, "create", _make(orig_create))
+        patched_any = True
+
+    if patched_any:
+        logger.info(
+            "Patched Anthropic SDK Messages.create (sync+async) to sanitize "
+            "assistant messages at the request boundary"
+        )
+
+
 def apply() -> None:
+    # ALWAYS patch the SDK boundary first — it's the bulletproof layer and does
+    # not depend on CAMEL's internals being where we expect.
+    _patch_anthropic_sdk()
+
     try:
         from camel.models.anthropic_model import AnthropicModel
     except Exception:  # pragma: no cover - camel layout changed
-        logger.debug("AnthropicModel not importable; whitespace patch skipped")
+        logger.debug("AnthropicModel not importable; converter patch skipped")
         return
 
     orig = getattr(
