@@ -26,10 +26,38 @@ import logging
 from camel.toolkits import FunctionTool
 
 from app.agent.toolkit.abstract_toolkit import AbstractToolkit
-from app.memory import semantic_store
+from app.memory import LocalMemoryStore, semantic_store
+from app.memory.rolling_summary import RollingSummary
 from app.service.task import Agents
 
 logger = logging.getLogger("memory_toolkit")
+
+# A "broad" recall query is one that asks about the conversation as a whole
+# ("the plan", "what we decided", "continue", "where were we") rather than a
+# narrow fact lookup. For these the cumulative summary IS the answer; a raw
+# keyword scan would only return fragments.
+_BROAD_QUERY_TERMS = (
+    "plan",
+    "decided",
+    "discussed",
+    "continue",
+    "so far",
+    "summary",
+    "recap",
+    "context",
+    "remember",
+    "earlier",
+    "where were we",
+    "what we",
+    "status",
+)
+
+
+def _is_broad_query(query: str) -> bool:
+    q = (query or "").lower().strip()
+    if not q:
+        return True
+    return any(term in q for term in _BROAD_QUERY_TERMS)
 
 
 class MemoryToolkit(AbstractToolkit):
@@ -43,13 +71,43 @@ class MemoryToolkit(AbstractToolkit):
         user_key: str | None = None,
         space_id: str | None = None,
         agent_name: str | None = None,
+        store: LocalMemoryStore | None = None,
     ) -> None:
         # api_task_id == project_id (matches the other Undisclosed toolkits).
         self.api_task_id = api_task_id
         self.user_key = user_key
         self.space_id = space_id
+        self._store = store
         if agent_name is not None:
             self.agent_name = agent_name
+
+    # ----- Rolling summary helpers -----
+
+    def _store_or_default(self) -> LocalMemoryStore:
+        return self._store or LocalMemoryStore()
+
+    def _read_summary_text(self) -> str:
+        """Rendered cumulative summary for this Project ("" when unavailable)."""
+        if not self.user_key or not self.space_id:
+            return ""
+        try:
+            text = self._store_or_default().read_project_summary(
+                self.user_key, self.space_id, self.api_task_id
+            )
+        except Exception:  # noqa: BLE001 — best-effort
+            return ""
+        return (text or "").strip()
+
+    def _read_summary(self) -> RollingSummary | None:
+        if not self.user_key or not self.space_id:
+            return None
+        try:
+            payload = self._store_or_default().read_project_summary_json(
+                self.user_key, self.space_id, self.api_task_id
+            )
+        except Exception:  # noqa: BLE001
+            return None
+        return RollingSummary.from_dict(payload)
 
     def remember_fact(self, fact: str) -> str:
         """Save a durable fact worth recalling in future conversations.
@@ -125,36 +183,51 @@ class MemoryToolkit(AbstractToolkit):
         import json
         from pathlib import Path
 
+        # 1. Cumulative summary FIRST. A broad query ("the plan", "what we
+        #    decided", "continue") is answered by the summary directly; the raw
+        #    keyword scan below only returns fragments for those.
+        summary_text = self._read_summary_text()
+        if summary_text and _is_broad_query(query):
+            return summary_text
+
+        # 2. Narrow lookup: raw per-turn keyword scan.
         root = (
             Path.home()
             / ".undisclosed"
             / "turns"
             / str(self.api_task_id).replace("/", "_")
         )
-        if not root.is_dir():
-            return "No earlier messages found for this conversation."
-        terms = [t for t in query.lower().split() if len(t) > 2]
         scored: list[tuple[int, str, str]] = []
-        for p in sorted(root.glob("turn_*.json")):
-            try:
-                data = json.loads(p.read_text(encoding="utf-8"))
-            except Exception:
-                continue
-            msgs: list[tuple[str, str]] = []
-            um = data.get("userMessage") or {}
-            if um.get("content"):
-                msgs.append(("User", str(um["content"])))
-            for m in data.get("otherMessages") or []:
-                c = m.get("content")
-                if c:
-                    msgs.append(("Assistant", str(c)))
-            for who, text in msgs:
-                low = text.lower()
-                score = sum(low.count(t) for t in terms) if terms else 0
-                if score > 0:
-                    scored.append((score, who, text))
+        if root.is_dir():
+            terms = [t for t in query.lower().split() if len(t) > 2]
+            for p in sorted(root.glob("turn_*.json")):
+                try:
+                    data = json.loads(p.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                msgs: list[tuple[str, str]] = []
+                um = data.get("userMessage") or {}
+                if um.get("content"):
+                    msgs.append(("User", str(um["content"])))
+                for m in data.get("otherMessages") or []:
+                    c = m.get("content")
+                    if c:
+                        msgs.append(("Assistant", str(c)))
+                for who, text in msgs:
+                    low = text.lower()
+                    score = sum(low.count(t) for t in terms) if terms else 0
+                    if score > 0:
+                        scored.append((score, who, text))
+
         if not scored:
+            # 3. Fall back to the cumulative summary before giving up, so a
+            #    narrow query that still relates to prior work gets continuity.
+            if summary_text:
+                return summary_text
+            if not root.is_dir():
+                return "No earlier messages found for this conversation."
             return "No earlier messages matched that query."
+
         scored.sort(key=lambda x: x[0], reverse=True)
         out: list[str] = []
         for _score, who, text in scored[:5]:
@@ -164,11 +237,45 @@ class MemoryToolkit(AbstractToolkit):
             out.append(f"[{who}] {snippet}")
         return "\n\n".join(out)
 
+    def recall_turns(self, k: int = 5) -> str:
+        """Return the last K structured turn digests (oldest to newest).
+
+        Use when you need a compact, ordered view of what each prior turn asked
+        and did — e.g. to reconstruct a multi-step plan — instead of raw text
+        snippets.
+
+        Args:
+            k (int): How many recent turns to return (default 5).
+
+        Returns:
+            str: One line per turn, or a note that no summary exists yet.
+        """
+        summary = self._read_summary()
+        if summary is None or not summary.turns:
+            # Fall back to the rendered summary if only the .md exists.
+            text = self._read_summary_text()
+            return text or "No conversation summary is available yet."
+        try:
+            count = max(1, int(k))
+        except (TypeError, ValueError):
+            count = 5
+        turns = summary.turns[-count:]
+        lines: list[str] = []
+        for turn in turns:
+            line = f"[Turn {turn.n} · {turn.status}] User: {turn.user}"
+            if turn.did:
+                line += f"\n  Did: {turn.did}"
+            if turn.files:
+                line += f"\n  Files: {', '.join(turn.files)}"
+            lines.append(line)
+        return "\n".join(lines)
+
     def get_tools(self) -> list[FunctionTool]:
         return [
             FunctionTool(self.remember_fact),
             FunctionTool(self.recall_facts),
             FunctionTool(self.recall_conversation),
+            FunctionTool(self.recall_turns),
         ]
 
     @classmethod

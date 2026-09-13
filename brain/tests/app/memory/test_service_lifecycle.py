@@ -408,3 +408,171 @@ class TestCrossRestartRecovery:
         rendered = bundle.to_prompt("single_agent")
         assert "Pricing change" in rendered
         assert "What was the cause again?" in rendered
+
+
+class TestRollingSummaryWrite:
+    """End-of-run hook now maintains one cumulative summary per Project."""
+
+    def test_summary_is_cumulative_across_runs(self, service, run_context):
+        from dataclasses import replace
+
+        service.on_run_start(
+            run_context=run_context,
+            space_name="W",
+            project_name="P",
+            mode="single_agent",
+            user_prompt="investigate the Q2 drop",
+        )
+        service.on_run_end(
+            run_context=run_context,
+            state="done",
+            final_result="Pricing change caused it. Root cause confirmed.",
+        )
+
+        run2 = replace(run_context, run_id="run_lifecycle_2")
+        service.on_run_start(
+            run_context=run2,
+            space_name=None,
+            project_name=None,
+            mode=None,
+            user_prompt="go ahead and implement the fix",
+        )
+        service.on_run_end(
+            run_context=run2,
+            state="done",
+            final_result="Applied the patch to pricing.ts.",
+        )
+
+        summary_md = service.store.read_project_summary(
+            "user_42", run_context.space_id, run_context.project_id
+        )
+        # Turn 2's summary reflects turns 1..2 together, not just turn 2.
+        assert "investigate the Q2 drop" in summary_md
+        assert "go ahead and implement the fix" in summary_md
+        assert "turns 1..2" in summary_md
+        # Detail past the first sentence survives (the whole reason this
+        # feature exists): both clauses of turn 1's result are kept.
+        assert "Pricing change caused it." in summary_md
+        assert "Root cause confirmed." in summary_md
+
+        payload = service.store.read_project_summary_json(
+            "user_42", run_context.space_id, run_context.project_id
+        )
+        assert payload is not None
+        assert payload["turn_count"] == 2
+        assert [t["query_id"] for t in payload["turns"]] == [
+            run_context.run_id,
+            run2.run_id,
+        ]
+
+    def test_duplicate_finalize_does_not_double_append(self, service, run_context):
+        class DummyTaskLock:
+            pass
+
+        task_lock = DummyTaskLock()
+        task_lock.memory_service = service
+        task_lock.run_context = run_context
+        task_lock._memory_finalized_runs = set()
+        task_lock.conversation_history = []
+
+        service.on_run_start(
+            run_context=run_context,
+            space_name="W",
+            project_name="P",
+            mode="single_agent",
+            user_prompt="do the thing",
+        )
+        assert finalize_task_lock_run_memory(
+            task_lock, state="done", final_result="done it"
+        )
+        # Duplicate end/finally for the same run must not append again.
+        assert not finalize_task_lock_run_memory(
+            task_lock, state="cancelled", final_result="late"
+        )
+        payload = service.store.read_project_summary_json(
+            "user_42", run_context.space_id, run_context.project_id
+        )
+        assert payload is not None
+        assert payload["turn_count"] == 1
+
+    def test_disabled_flag_skips_write(self, service, run_context, monkeypatch):
+        monkeypatch.setenv("UNDISCLOSED_ROLLING_SUMMARY", "0")
+        service.on_run_start(
+            run_context=run_context,
+            space_name="W",
+            project_name="P",
+            mode="single_agent",
+            user_prompt="q",
+        )
+        service.on_run_end(
+            run_context=run_context, state="done", final_result="a"
+        )
+        assert (
+            service.store.read_project_summary(
+                "user_42", run_context.space_id, run_context.project_id
+            )
+            == ""
+        )
+
+    def test_corrupt_sidecar_recovers(self, service, run_context):
+        store = service.store
+        path = (
+            store.project_path(
+                "user_42", run_context.space_id, run_context.project_id
+            )
+            / "summary.json"
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("not json", encoding="utf-8")
+
+        service.on_run_start(
+            run_context=run_context,
+            space_name="W",
+            project_name="P",
+            mode="single_agent",
+            user_prompt="recover me",
+        )
+        service.on_run_end(
+            run_context=run_context, state="done", final_result="recovered"
+        )
+        payload = store.read_project_summary_json(
+            "user_42", run_context.space_id, run_context.project_id
+        )
+        assert payload is not None
+        assert payload["turn_count"] == 1
+
+    def test_finalize_populates_files_from_tool_events(
+        self, service, run_context
+    ):
+        from app.memory import ToolEvent
+
+        service.on_run_start(
+            run_context=run_context,
+            space_name="W",
+            project_name="P",
+            mode="single_agent",
+            user_prompt="edit the file",
+        )
+        service.store.append_tool_event(
+            "user_42",
+            run_context.space_id,
+            run_context.project_id,
+            run_context.run_id,
+            ToolEvent(
+                event_id="te1",
+                run_id=run_context.run_id,
+                timestamp="t",
+                tool_name="write_file",
+                arguments={"file_path": "src/app.ts"},
+                result_summary="ok",
+                visibility="context",
+            ),
+        )
+        service.on_run_end(
+            run_context=run_context, state="done", final_result="edited"
+        )
+        payload = service.store.read_project_summary_json(
+            "user_42", run_context.space_id, run_context.project_id
+        )
+        assert payload is not None
+        assert payload["turns"][0]["files"] == ["src/app.ts"]

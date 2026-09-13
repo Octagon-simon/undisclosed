@@ -38,6 +38,7 @@ from app.hooks.emitters import (
 from app.memory import (
     build_durable_context_for_task_lock,
     finalize_task_lock_run_memory,
+    read_rolling_summary_for_task_lock,
 )
 from app.model.chat import Chat, sse_json
 from app.agent.tool_rag import (
@@ -235,6 +236,15 @@ def _build_single_agent_context(
             "=== Recent messages in this conversation (background only, NOT the "
             "current request; for anything older call recall_conversation) ==="
         ]
+        # Cumulative summary first: even when the durable bundle is
+        # unavailable, a follow-up turn still gets turns 1..N, not just the
+        # thin recent tail. Best-effort.
+        try:
+            _rolling = read_rolling_summary_for_task_lock(task_lock)
+        except Exception:  # noqa: BLE001 - defensive
+            _rolling = None
+        if _rolling:
+            lines.append(_rolling.rstrip())
         for entry in _recent_history:
             role = entry.get("role", "")
             content = entry.get("content", "")

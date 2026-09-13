@@ -36,13 +36,15 @@ from app.memory.local_store import LocalMemoryStore
 
 # Section weights when allocating a token budget. They sum to ~1.0 plus a
 # small slack so the final assembled prompt rarely overshoots.
-_HEADER_WEIGHT = 0.20  # space + project summary + facts overview
-_RECENT_CONVO_WEIGHT = 0.65  # most recent conversation tail
-_ARTIFACTS_WEIGHT = 0.10
-_TODOS_WEIGHT = 0.05
+_HEADER_WEIGHT = 0.15  # space + project identity/facts overview
+_SUMMARY_WEIGHT = 0.25  # cumulative conversation summary (rolling)
+_RECENT_CONVO_WEIGHT = 0.50  # most recent conversation tail
+_ARTIFACTS_WEIGHT = 0.07
+_TODOS_WEIGHT = 0.03
 
 # Hard caps to keep any one section from dominating regardless of budget.
 _MAX_RECENT_CONVO_EVENTS = 24
+_MAX_SUMMARY_CHARS = 4000
 
 ContextMode = Literal[
     "single_agent",
@@ -132,6 +134,9 @@ class AgentContextBundle:
     space_summary: str
     project_name: str
     project_summary: str
+    # Cumulative conversation summary (turns 1..N). Rendered in the volatile
+    # delta, never the stable prefix, so it can't break prompt caching.
+    cumulative_summary: str = ""
     recent_conversation: list[ConversationEvent] = field(default_factory=list)
     relevant_facts: list[MemoryFact] = field(default_factory=list)
     relevant_artifacts: list[MemoryArtifact] = field(default_factory=list)
@@ -148,6 +153,7 @@ class AgentContextBundle:
         return (
             not self.space_summary
             and not self.project_summary
+            and not self.cumulative_summary
             and not self.recent_conversation
             and not self.relevant_facts
             and not self.relevant_artifacts
@@ -185,10 +191,12 @@ class AgentContextBundle:
         stable: list[str] = ["=== Persisted Project Context ==="]
         if self.space_name or self.space_summary:
             stable.append(_section("Space", self.space_name, self.space_summary))
-        if self.project_name or self.project_summary:
-            stable.append(
-                _section("Project", self.project_name, self.project_summary)
-            )
+        # Project IDENTITY only. The project summary is now the cumulative
+        # rolling conversation summary, which changes every turn -- rendering
+        # it here would invalidate the provider prompt cache each request, so
+        # it lives in the volatile delta below instead.
+        if self.project_name:
+            stable.append(f"Project: {self.project_name}")
         # Tier 1: facts already spelled out in the visible conversation would be
         # pure duplication -- drop the redundant bullets.
         novel_facts = [
@@ -213,6 +221,18 @@ class AgentContextBundle:
             stable.append("\n".join(lines))
 
         delta: list[str] = []
+        # Cumulative summary first in the delta: the agent reads "what we've
+        # done across ALL prior turns" before the raw recent tail, so a plan or
+        # diagnosis from turn 1 survives into turn N. Volatile by design.
+        summary_body = (self.cumulative_summary or self.project_summary).strip()
+        if summary_body:
+            # The rendered .md already opens with this heading; only add it for
+            # a plain/legacy summary so the block is always self-describing.
+            if not summary_body.lower().startswith("conversation so far"):
+                summary_body = (
+                    "Conversation so far (cumulative):\n" + summary_body
+                )
+            delta.append(summary_body)
         if self.recent_conversation:
             lines = ["Recent conversation:"]
             for event in self.recent_conversation:
@@ -319,16 +339,22 @@ class ProjectContextBuilder:
         ]
 
         header_budget = _chars_for(token_budget, _HEADER_WEIGHT)
+        summary_budget = min(
+            _chars_for(token_budget, _SUMMARY_WEIGHT), _MAX_SUMMARY_CHARS
+        )
         convo_budget = _chars_for(token_budget, _RECENT_CONVO_WEIGHT)
         artifacts_budget = _chars_for(token_budget, _ARTIFACTS_WEIGHT)
         todos_budget = _chars_for(token_budget, _TODOS_WEIGHT)
 
-        # Header: split between space + project summary roughly evenly.
+        # Header: space-level summary (not authored yet) gets its own share.
         space_summary = _truncate(
             "",  # space-level summary not authored yet in this milestone
             header_budget // 2,
         )
-        project_summary = _truncate(project_summary_raw, header_budget // 2)
+        # The project summary file now holds the cumulative rolling summary;
+        # budget it against the dedicated summary weight, not the header's.
+        cumulative_summary = _truncate(project_summary_raw, summary_budget)
+        project_summary = cumulative_summary
 
         # Recent conversation, fit newest-first.
         trimmed_recent = self._fit_conversation_to_budget(
@@ -347,6 +373,7 @@ class ProjectContextBuilder:
             space_summary=space_summary,
             project_name=project.name if project is not None else project_id,
             project_summary=project_summary,
+            cumulative_summary=cumulative_summary,
             recent_conversation=trimmed_recent,
             relevant_facts=relevant_facts,
             relevant_artifacts=relevant_artifacts,

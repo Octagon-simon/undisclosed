@@ -45,11 +45,19 @@ from app.memory.paths import (
     space_dir,
     user_dir,
 )
+from app.memory.rolling_summary import (
+    RollingSummary,
+    TurnDigest,
+    append_turn,
+    build_turn_digest,
+    render_md,
+)
 from app.memory.service import (
     MemoryService,
     build_durable_context_for_task_lock,
     finalize_task_lock_run_memory,
     get_memory_service,
+    read_rolling_summary_for_task_lock,
 )
 
 __all__ = [
@@ -63,17 +71,23 @@ __all__ = [
     "MemoryService",
     "ProjectContextBuilder",
     "ProjectMemory",
+    "RollingSummary",
     "RunMemory",
     "RunStatus",
     "SpaceMemory",
     "SyncSettings",
     "ToolEvent",
+    "TurnDigest",
+    "append_turn",
     "build_durable_context_for_task_lock",
+    "build_turn_digest",
     "canonical_user_id",
     "finalize_task_lock_run_memory",
     "get_memory_service",
     "memory_root",
     "project_dir",
+    "read_rolling_summary_for_task_lock",
+    "render_md",
     "run_dir",
     "space_dir",
     "user_dir",

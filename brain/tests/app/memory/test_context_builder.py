@@ -685,3 +685,101 @@ class TestCompactionTiers:
         convo_pos = rendered.find("Recent conversation:")
         current_pos = rendered.find("Now pull the pricing-impact dashboard.")
         assert -1 < header_pos < facts_pos < convo_pos < current_pos
+
+
+# ----- Cumulative rolling summary injection -----
+
+
+class TestCumulativeSummary:
+    def _seed(self, store, ids, summary_text: str) -> None:
+        store.write_space(
+            ids["user_key"],
+            SpaceMemory(
+                space_id=ids["space_id"],
+                user_id="42",
+                name="W",
+                source_type="blank",
+                created_at="t",
+                updated_at="t",
+            ),
+        )
+        store.write_project(
+            ids["user_key"],
+            ProjectMemory(
+                project_id=ids["project_id"],
+                space_id=ids["space_id"],
+                name="Q2 retro",
+                created_at="t",
+                updated_at="t",
+                mode="single_agent",
+            ),
+        )
+        store.write_project_summary(
+            ids["user_key"], ids["space_id"], ids["project_id"], summary_text
+        )
+
+    def test_summary_rendered_in_delta(self, store, ids):
+        self._seed(
+            store,
+            ids,
+            "Conversation so far (cumulative):\n"
+            "- Turn 1 [done] user: investigate\n  did: found the cause",
+        )
+        bundle = ProjectContextBuilder(store).build(
+            user_key=ids["user_key"],
+            space_id=ids["space_id"],
+            project_id=ids["project_id"],
+            run_id=ids["run_id"],
+            mode="single_agent",
+            token_budget=8000,
+            current_user_prompt="now implement it",
+        )
+        assert bundle.cumulative_summary
+        rendered = bundle.to_prompt("single_agent")
+        assert "Conversation so far (cumulative):" in rendered
+        # It lives in the delta: after the stable Project identity line and
+        # before the current turn.
+        assert rendered.find("Project: Q2 retro") < rendered.find(
+            "Conversation so far"
+        )
+        assert rendered.find("Conversation so far") < rendered.find(
+            "now implement it"
+        )
+
+    def test_summary_absent_from_stable_prefix(self, store, ids):
+        self._seed(store, ids, "cumulative narrative body")
+
+        def core_prefix(prompt: str) -> str:
+            b = ProjectContextBuilder(store).build(
+                user_key=ids["user_key"],
+                space_id=ids["space_id"],
+                project_id=ids["project_id"],
+                run_id=ids["run_id"],
+                mode="single_agent",
+                token_budget=8000,
+                current_user_prompt=prompt,
+            )
+            return b.to_prompt("single_agent").split(
+                "Conversation so far"
+            )[0]
+
+        # The prefix before the cumulative block is byte-stable regardless of
+        # the current turn, so the provider cache keeps collapsing it.
+        assert core_prefix("one thing") == core_prefix("a totally other thing")
+        # And the summary itself is NOT in that prefix.
+        assert "cumulative narrative body" not in core_prefix("x")
+
+    def test_summary_respects_hard_cap(self, store, ids):
+        from app.memory.context_builder import _MAX_SUMMARY_CHARS
+
+        self._seed(store, ids, "S" * 50_000)
+        bundle = ProjectContextBuilder(store).build(
+            user_key=ids["user_key"],
+            space_id=ids["space_id"],
+            project_id=ids["project_id"],
+            run_id=ids["run_id"],
+            mode="single_agent",
+            token_budget=100_000,
+            current_user_prompt="x",
+        )
+        assert len(bundle.cumulative_summary) <= _MAX_SUMMARY_CHARS

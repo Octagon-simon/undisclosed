@@ -129,15 +129,32 @@ function catalogLabel(id: string): string {
   return CATALOG_LABELS.get(id) ?? id;
 }
 
+/**
+ * What a single row shows. The provider is already the group heading above the
+ * row, so repeating it here ("DeepSeek (deepseek-chat)") just ate the visible
+ * width. Show the model id, or the provider label when the row has no
+ * `model_type` at all.
+ */
 function rowLabel(row: ProviderRow): string {
-  const base = catalogLabel(row.provider_name);
-  return row.model_type ? `${base} (${row.model_type})` : base;
+  return row.model_type?.trim() || catalogLabel(row.provider_name);
 }
 
 /** Keep preset providers in their catalog order, unknown ids last. */
 function presetIndex(id: string, presets: { id: string }[]): number {
   const index = presets.findIndex((p) => p.id === id);
   return index === -1 ? Number.MAX_SAFE_INTEGER : index;
+}
+
+/**
+ * Trigger label for one configured row: "DeepSeek (deepseek-chat)". The
+ * trigger lives in the chat input bar where the provider is not shown
+ * anywhere else, so unlike the menu rows it keeps both parts.
+ */
+function rowTriggerLabel(row: ProviderRow): string {
+  const model = row.model_type?.trim();
+  return model
+    ? `${catalogLabel(row.provider_name)} (${model})`
+    : catalogLabel(row.provider_name);
 }
 
 export function ModelSelect({
@@ -388,7 +405,7 @@ export function ModelSelect({
     [projectId, setModelType, setProjectModel, t]
   );
 
-  /** Model name only in the trigger (e.g. "DeepSeek (deepseek-v4-flash)"). */
+  /** Trigger label (e.g. "DeepSeek (deepseek-v4-flash)"). */
   const triggerModelName = useMemo(() => {
     if (pinnedSelection) {
       if (pinnedSelection.modelType === 'codex_subscription') {
@@ -405,7 +422,7 @@ export function ModelSelect({
         pinnedSelection.modelType === 'local'
       ) {
         if (activeRow) {
-          return rowLabel(activeRow);
+          return rowTriggerLabel(activeRow);
         }
         // Providers still loading (or the pinned provider disappeared):
         // fall back to the identifiers captured with the pin.
@@ -426,7 +443,7 @@ export function ModelSelect({
     }
 
     if (activeRow) {
-      return rowLabel(activeRow);
+      return rowTriggerLabel(activeRow);
     }
 
     return t('setting.select-default-model');
@@ -457,15 +474,39 @@ export function ModelSelect({
 
   const renderProviderGroup = (
     group: ProviderGroup,
-    kind: ProviderSelectionKind
+    kind: ProviderSelectionKind,
+    /** Suppress the divider before the first group in a menu body. */
+    isFirst = false
   ) => (
     <div key={group.providerName}>
-      <DropdownMenuLabel className="px-2 py-1 text-label-xs text-ds-text-neutral-subtle-default">
-        {group.label}
+      {/*
+        Provider heading. It carries the logo and draws a divider above
+        itself (every group but the first), so each entry below is just the
+        model name and the groups stay visually separated.
+      */}
+      {!isFirst && <DropdownMenuSeparator />}
+      <DropdownMenuLabel className="flex items-center gap-2 px-2 py-1 text-label-xs font-semibold text-ds-text-neutral-subtle-default">
+        {(() => {
+          const logo = getModelImage(group.providerName);
+          return logo ? (
+            <img
+              src={logo}
+              alt={group.label}
+              className="h-4 w-4 shrink-0"
+              style={
+                needsInvert(group.providerName)
+                  ? { filter: 'invert(1)' }
+                  : undefined
+              }
+            />
+          ) : (
+            <Key className="h-3.5 w-3.5 shrink-0 text-ds-icon-neutral-muted-default" />
+          );
+        })()}
+        <span className="truncate uppercase tracking-wide">{group.label}</span>
       </DropdownMenuLabel>
       {group.rows.map((row) => {
         const isDefault = isDefaultRow(row, kind);
-        const modelImage = getModelImage(row.provider_name);
         return (
           <DropdownMenuItem
             key={row.id}
@@ -474,21 +515,7 @@ export function ModelSelect({
             }}
             className="flex items-center justify-between"
           >
-            <div className="flex min-w-0 items-center gap-2">
-              {modelImage ? (
-                <img
-                  src={modelImage}
-                  alt={group.label}
-                  className="h-4 w-4 shrink-0"
-                  style={
-                    needsInvert(row.provider_name)
-                      ? { filter: 'invert(1)' }
-                      : undefined
-                  }
-                />
-              ) : (
-                <Key className="h-3 w-3 shrink-0 text-ds-icon-neutral-muted-default" />
-              )}
+            <div className="flex min-w-0 items-center">
               <span className="truncate text-body-sm text-ds-text-neutral-default-default">
                 {rowLabel(row)}
               </span>
@@ -642,7 +669,9 @@ export function ModelSelect({
               </DropdownMenuItem>
             )}
 
-            {cloudGroups.map((group) => renderProviderGroup(group, 'custom'))}
+            {cloudGroups.map((group, i) =>
+              renderProviderGroup(group, 'custom', i === 0)
+            )}
 
             {cloudGroups.length > 0 &&
               (unconfiguredCloud.length > 0 || unconfiguredLocal.length > 0) && (
@@ -669,7 +698,9 @@ export function ModelSelect({
             </span>
           </DropdownMenuSubTrigger>
           <DropdownMenuSubContent ref={subContentCallbackRef} className="w-[200px]">
-            {localGroups.map((group) => renderProviderGroup(group, 'local'))}
+            {localGroups.map((group, i) =>
+              renderProviderGroup(group, 'local', i === 0)
+            )}
             {localGroups.length > 0 && unconfiguredLocal.length > 0 && (
               <DropdownMenuSeparator />
             )}

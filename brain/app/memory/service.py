@@ -38,6 +38,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any, Literal
 
+from app.memory import rolling_summary
 from app.memory.context_builder import ContextMode, ProjectContextBuilder
 from app.memory.events import (
     ConversationEvent,
@@ -206,6 +207,61 @@ def _build_semantic_recall_section(
     return "\n".join(lines)
 
 
+def read_rolling_summary_for_task_lock(task_lock: Any) -> str | None:
+    """Best-effort read of the rendered cumulative summary for a TaskLock.
+
+    Used as a fallback injection so a follow-up turn still sees the cumulative
+    conversation state when the durable bundle path is unavailable. Returns the
+    rendered markdown, or None when there is nothing to inject.
+    """
+
+    run_context = getattr(task_lock, "run_context", None)
+    if run_context is None:
+        return None
+    try:
+        user_key = canonical_user_id(
+            run_context.user_id, email=run_context.email
+        )
+    except ValueError:
+        return None
+    service = getattr(task_lock, "memory_service", None)
+    store = getattr(service, "store", None) or LocalMemoryStore()
+    try:
+        rendered = rolling_summary.render_for_prompt(
+            store,
+            user_key,
+            run_context.space_id,
+            run_context.project_id,
+        )
+    except Exception:  # noqa: BLE001 — best-effort read
+        logger.debug("rolling summary fallback read failed", exc_info=True)
+        return None
+    return rendered or None
+
+
+def _user_prompt_from_task_lock(task_lock: Any) -> str | None:
+    """The verbatim user message for the turn that just finished.
+
+    The turn's own message is the last `task_result` entry appended to the
+    in-process conversation history (before finalize). Returns None when the
+    history is absent (e.g. a restart), so the caller falls back to the Run
+    header written at `on_run_start`.
+    """
+
+    history = getattr(task_lock, "conversation_history", None) or []
+    for entry in reversed(history):
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("role") != "task_result":
+            continue
+        content = entry.get("content")
+        if isinstance(content, dict):
+            prompt = content.get("task_content")
+            if isinstance(prompt, str) and prompt.strip():
+                return prompt
+    return None
+
+
 def finalize_task_lock_run_memory(
     task_lock: Any,
     *,
@@ -244,6 +300,7 @@ def finalize_task_lock_run_memory(
             final_result=final_result,
             summary=summary,
             error=error,
+            user_prompt=_user_prompt_from_task_lock(task_lock),
         )
         # Index this run's outcome into semantic memory so future conversations
         # can recall it. Best-effort; never blocks finalize.
@@ -517,6 +574,8 @@ class MemoryService:
         final_result: str | None = None,
         summary: str | None = None,
         error: str | None = None,
+        user_prompt: str | None = None,
+        files: list[str] | None = None,
     ) -> None:
         user_key = _resolve_user_key(run_context)
         if user_key is None:
@@ -568,6 +627,31 @@ class MemoryService:
                 exc_info=True,
             )
 
+        # Cumulative rolling summary. Runs in its own guard so a failure here
+        # can never affect the transcript/status writes above.
+        try:
+            self._write_rolling_summary(
+                user_key=user_key,
+                run_context=run_context,
+                state=state,
+                final_result=final_result,
+                summary=summary,
+                error=error,
+                user_prompt=user_prompt,
+                files=files,
+                now=now,
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "memory.service.on_run_end: rolling summary write failed",
+                extra={
+                    "project_id": run_context.project_id,
+                    "run_id": run_context.run_id,
+                    "state": state,
+                },
+                exc_info=True,
+            )
+
     def register_runtime_log_artifact(
         self,
         *,
@@ -609,6 +693,109 @@ class MemoryService:
             )
 
     # ----- Internals -----
+
+    def _write_rolling_summary(
+        self,
+        *,
+        user_key: str,
+        run_context: RunContext,
+        state: Literal["done", "failed", "cancelled"],
+        final_result: str | None,
+        summary: str | None,
+        error: str | None,
+        user_prompt: str | None,
+        files: list[str] | None,
+        now: str,
+    ) -> None:
+        """Merge this turn into the Project's cumulative summary.
+
+        Single chokepoint for every end-of-run path (single agent, workforce,
+        skip, stop, failure) because they all funnel through `on_run_end`.
+        Deterministic (no model call) on the default path.
+        """
+
+        if not rolling_summary.enabled():
+            return
+
+        prompt = (user_prompt or "").strip()
+        if not prompt:
+            # Cross-restart / no in-process history: read the Run header
+            # written at on_run_start.
+            run = self._store.read_run(
+                user_key,
+                run_context.space_id,
+                run_context.project_id,
+                run_context.run_id,
+            )
+            if run is not None:
+                prompt = (run.user_prompt or "").strip()
+
+        resolved_files = files
+        if resolved_files is None:
+            try:
+                events = self._store.read_tool_events(
+                    user_key,
+                    run_context.space_id,
+                    run_context.project_id,
+                    run_context.run_id,
+                )
+                resolved_files = rolling_summary.extract_touched_files(events)
+            except Exception:  # noqa: BLE001 — enrichment is optional
+                resolved_files = []
+
+        digest = rolling_summary.build_turn_digest(
+            query_id=run_context.run_id,
+            status=state,
+            user_prompt=prompt,
+            final_result=final_result,
+            summary=summary,
+            error=error,
+            ts=now,
+            files=resolved_files,
+        )
+
+        budget = rolling_summary.char_budget()
+        keep = rolling_summary.keep_turns()
+        backfill = rolling_summary.backfill_enabled()
+        project_id = run_context.project_id
+        space_id = run_context.space_id
+
+        def _mutate(payload: Any) -> dict[str, Any]:
+            current = rolling_summary.RollingSummary.from_dict(payload)
+            if current is None:
+                if backfill:
+                    events = self._store.read_conversation_tail(
+                        user_key,
+                        space_id,
+                        project_id,
+                        limit=max(20, keep * 4),
+                    )
+                    current = rolling_summary.backfill_from_conversation(
+                        events, project_id=project_id, updated_at=now
+                    )
+                else:
+                    current = rolling_summary.RollingSummary(
+                        project_id=project_id, updated_at=now
+                    )
+            current = rolling_summary.append_turn(current, digest)
+            current.updated_at = now
+            current = rolling_summary.compact_if_over_budget(
+                current, budget=budget, keep=keep
+            )
+            return current.to_dict()
+
+        updated = self._store.update_project_summary_json(
+            user_key, space_id, project_id, _mutate
+        )
+        rendered_summary = rolling_summary.RollingSummary.from_dict(updated)
+        if rendered_summary is None:
+            return
+        self._store.write_project_summary(
+            user_key,
+            space_id,
+            project_id,
+            rolling_summary.render_md(rendered_summary),
+        )
 
     def _ensure_space(
         self,

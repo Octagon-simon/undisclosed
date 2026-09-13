@@ -33,6 +33,7 @@ import os
 import tempfile
 import threading
 import weakref
+from collections.abc import Callable
 from dataclasses import asdict, fields, is_dataclass
 from pathlib import Path
 from typing import Any, TypeVar
@@ -337,6 +338,48 @@ class LocalMemoryStore:
         path = self.project_path(user_key, space_id, project_id) / "summary.md"
         _atomic_write_text(path, text)
 
+    def read_project_summary_json(
+        self, user_key: str, space_id: str, project_id: str
+    ) -> Any | None:
+        """Structured sidecar for the rolling conversation summary.
+
+        The rendered ``summary.md`` is the budgeted view consumed by the
+        context builder; ``summary.json`` is the lossless source of truth the
+        merge/compaction reads back. Missing or malformed files return None so
+        callers can rebuild from the conversation log.
+        """
+
+        path = (
+            self.project_path(user_key, space_id, project_id) / "summary.json"
+        )
+        return _read_json(path)
+
+    def update_project_summary_json(
+        self,
+        user_key: str,
+        space_id: str,
+        project_id: str,
+        mutator: Callable[[Any | None], Any | None],
+    ) -> Any | None:
+        """Atomically read-modify-write ``summary.json`` under a per-path lock.
+
+        The merge must see the previous cumulative state to preserve the
+        "summary of turns 1..N" invariant, so the read + transform + write runs
+        inside one lock. `mutator` receives the parsed payload (or None when the
+        file is absent/corrupt) and returns the new payload; returning None
+        skips the write. Returns whatever the mutator returned.
+        """
+
+        path = (
+            self.project_path(user_key, space_id, project_id) / "summary.json"
+        )
+        with _path_lock(path):
+            payload = _read_json(path)
+            updated = mutator(payload)
+            if updated is not None:
+                _atomic_write_json(path, updated)
+            return updated
+
     def read_facts(
         self, user_key: str, space_id: str, project_id: str
     ) -> list[MemoryFact]:
@@ -461,6 +504,32 @@ class LocalMemoryStore:
             / "tool_events.jsonl"
         )
         _append_jsonl(target, asdict(event))
+
+    def read_tool_events(
+        self,
+        user_key: str,
+        space_id: str,
+        project_id: str,
+        run_id: str,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        """Read a run's raw tool-event rows (newest `limit`), tolerating gaps.
+
+        Returns plain dicts (not ToolEvent dataclasses) because the rolling
+        summary only needs to scan tool names/arguments best-effort and must
+        never fail on schema drift.
+        """
+
+        if limit <= 0:
+            return []
+        target = (
+            self.run_path(user_key, space_id, project_id, run_id)
+            / "tool_events.jsonl"
+        )
+        rows = _read_jsonl_lines(target)
+        if not rows:
+            return []
+        return rows[-limit:]
 
     def write_run_status(
         self,
