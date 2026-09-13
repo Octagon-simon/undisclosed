@@ -54,9 +54,10 @@ import { cn } from '@/lib/utils';
 import {
   LOCAL_MODEL_OPTIONS,
 } from '@/pages/Agents/localModels';
+import { useEffectiveAppearance } from '@/shared/hostTheme';
 import {
   getModelImage,
-  needsInvertModelImage,
+  modelImageStyle,
 } from '@/shared/modelProviderImages';
 import { useAuthStore } from '@/store/authStore';
 import { useCloudModelStore } from '@/store/cloudModelStore';
@@ -170,8 +171,20 @@ export function ModelSelect({
     codex_model_type,
     email,
     appearance,
+    appearanceMode,
     setModelType,
   } = useAuthStore();
+
+  /**
+   * The theme actually on screen (see `shared/hostTheme.ts`).
+   *
+   * `appearance` is the resolved mode ThemeProvider writes back, `appearanceMode`
+   * is what the user picked ("system"), and the HOST's active theme (Theia) wins
+   * when present: the panel is skinned by the host's CSS, so a dark editor is a
+   * dark surface even while the panel's own stored appearance says light. That
+   * mismatch is why the Anthropic/OpenAI marks stayed black on a dark editor.
+   */
+  const effectiveAppearance = useEffectiveAppearance(appearance, appearanceMode);
 
   const cloudModels = useCloudModelStore((state) => state.models);
   const fetchCloudModels = useCloudModelStore(
@@ -364,8 +377,12 @@ export function ModelSelect({
     [pinnedSelection]
   );
 
-  const needsInvert = (modelId: string | null): boolean =>
-    needsInvertModelImage(modelId, appearance);
+  /**
+   * Dark-mode style for a provider logo (a dark mark inverts so it stays
+   * visible on the dark surface -- the Anthropic logo bug and its siblings).
+   */
+  const needsInvert = (modelId: string | null): { filter: string } | undefined =>
+    modelImageStyle(modelId, effectiveAppearance);
 
   const handleCodexSetDefault = useCallback(() => {
     if (projectId) {
@@ -493,11 +510,7 @@ export function ModelSelect({
               src={logo}
               alt={group.label}
               className="h-4 w-4 shrink-0"
-              style={
-                needsInvert(group.providerName)
-                  ? { filter: 'invert(1)' }
-                  : undefined
-              }
+              style={needsInvert(group.providerName)}
             />
           ) : (
             <Key className="h-3.5 w-3.5 shrink-0 text-ds-icon-neutral-muted-default" />
@@ -656,6 +669,7 @@ export function ModelSelect({
                     src={getModelImage(codexProvider.id) ?? ''}
                     alt={codexProvider.name}
                     className="h-4 w-4"
+                    style={needsInvert(codexProvider.id)}
                   />
                   <span
                     className={`text-body-sm ${codexStatus.connected ? 'text-ds-text-neutral-default-default' : 'text-ds-text-neutral-subtle-default'}`}

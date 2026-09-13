@@ -29,6 +29,16 @@ export interface ActiveEditorInfo {
   selection?: { startLine: number; endLine: number } | null;
 }
 
+/** What the host's ACTIVE color theme looks like to the panel. */
+export interface HostThemeInfo {
+  /** The theme's own id (Theia: 'dark', 'light', 'hc-black', 'hc-light', ...). */
+  id?: string;
+  /** Resolved mode. This is the part the panel actually needs. */
+  type: 'light' | 'dark';
+  /** Host-resolved name, for diagnostics only. */
+  label?: string;
+}
+
 export interface AppHost {
   electronAPI: any;
   ipcRenderer: any;
@@ -60,4 +70,19 @@ export interface AppHost {
    * it (images fall back to alt text).
    */
   readFileAsDataUrl?(path: string): Promise<string | null>;
+  /**
+   * The host's ACTIVE color theme. The embedded panel is themed by the host's
+   * own CSS (`theme.css` maps `--ds-*` onto Theia's `--theia-*` vars), so the
+   * host is the authoritative answer to "is this surface dark?" — the panel's
+   * stored appearance can say light while the editor is dark, which is exactly
+   * how a dark-filled logo (OpenAI/Anthropic) ended up black-on-dark. Optional:
+   * standalone/desktop mounts have no host theme and use their own appearance.
+   */
+  getTheme?(): HostThemeInfo;
+  /**
+   * Subscribe to host theme switches so the panel can re-render (logo inversion,
+   * etc.) the moment the user changes the editor theme. Returns an unsubscribe
+   * function. Optional.
+   */
+  onThemeChanged?(cb: (theme: HostThemeInfo) => void): () => void;
 }

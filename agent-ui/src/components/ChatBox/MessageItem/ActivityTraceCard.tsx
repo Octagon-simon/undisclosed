@@ -24,6 +24,7 @@ import {
   InlineMessageRow,
   type TimelineItem,
 } from '@/components/ChatBox/MessageItem/workLogTimeline';
+import { FILE_ICON_PATHS } from '@/assets/fileIcons.generated';
 import ShinyText from '@/components/ui/ShinyText/ShinyText';
 import { MarkDown } from '@/components/WorkFlow/MarkDown';
 import {
@@ -51,9 +52,51 @@ import {
 import { memo, useMemo, useState } from 'react';
 
 /**
- * Antigravity-style colored file-type badge: a small rounded square with a
- * short label in the language's brand color, so TS/PY/JSON/etc. are recognizable
- * at a glance. Special-cases well-known filenames (package.json, README, …).
+ * Real per-language SVG logo, generated from Simple Icons into
+ * `fileIcons.generated.ts` (see `scripts/fetch-file-icons.mjs`).
+ *
+ * Brand logos belong to their respective owners; we bundle the path data only,
+ * so nothing is fetched at runtime. See `fileIcons.LICENSE.md`.
+ */
+const FileSvgIcon = memo(function FileSvgIcon({
+  entry,
+}: {
+  entry: {
+    title: string;
+    hex: string;
+    mono?: boolean;
+    path: string;
+    viewBox: string;
+  };
+}) {
+  // `mono` entries are brands whose own mark is a near-black solid (JSON,
+  // Markdown, Rust…), plus mid/dark brand colors that no longer read on a dark
+  // surface once the light-mode background flips. Those render in
+  // `currentColor`, which makes dark mode work by construction instead of a
+  // per-icon `filter: invert(1)` hack. Saturated colors that read on both
+  // themes (TypeScript blue, Go cyan, Python blue…) keep their brand hex.
+  const fill = entry.mono ? 'currentColor' : entry.hex;
+  return (
+    <svg
+      viewBox={entry.viewBox}
+      width={14}
+      height={14}
+      role="img"
+      aria-label={entry.title}
+      className={cn(
+        'shrink-0',
+        entry.mono && 'text-ds-icon-neutral-subtle-default'
+      )}
+    >
+      <path d={entry.path} fill={fill} />
+    </svg>
+  );
+});
+
+/**
+ * Legacy fallback badge: a small rounded square with a short label in the
+ * language's brand color. Used only for extensions with no brand mark upstream
+ * (txt, rst, java, .m/.mm, .proto) and for anything unknown.
  */
 // color = the outline/label color. ts vs tsx (and js vs jsx) are distinct.
 const FILE_BADGE: Record<string, { label: string; color: string }> = {
@@ -96,7 +139,15 @@ const FILE_BADGE: Record<string, { label: string; color: string }> = {
 };
 
 const IMAGE_EXTS = new Set([
-  'png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico', 'avif', 'bmp',
+  'png',
+  'jpg',
+  'jpeg',
+  'gif',
+  'svg',
+  'webp',
+  'ico',
+  'avif',
+  'bmp',
 ]);
 
 function badgeFor(path: string): { label: string; color: string } {
@@ -126,6 +177,10 @@ function FileTypeIcon({ path }: { path: string }) {
       />
     );
   }
+  // Prefer a real language logo when we have one; the chip stays for the
+  // extensions listed in FILE_ICON_FALLBACK_EXTENSIONS (and anything unknown).
+  const icon = FILE_ICON_PATHS[ext];
+  if (icon) return <FileSvgIcon entry={icon} />;
   const { label, color } = badgeFor(path);
   // Outlined (not a solid block): transparent fill, colored border + label.
   return (

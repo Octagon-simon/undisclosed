@@ -81,14 +81,54 @@ export function getModelImage(modelId: string | null): string | null {
   return MODEL_PROVIDER_IMAGE_MAP[modelId] ?? null;
 }
 
+/**
+ * Are we rendering a dark surface?
+ *
+ * Appearance resolves to a concrete `light` | `dark` mode, but callers are not
+ * consistent about what they pass:
+ *
+ *  - `useAuthStore().appearance` holds the RESOLVED mode (ThemeProvider writes
+ *    it back via `setResolvedAppearance`), so it is 'dark' whenever the app is
+ *    actually dark.
+ *  - Some callers pass `appearanceMode` instead, which is 'system' when the
+ *    user picked "follow system". `appearanceMode === 'dark'` is then FALSE
+ *    even though the app is rendering dark, so every dark-fill logo quietly
+ *    failed to invert.
+ *
+ * 'system' therefore counts as dark: invert only ever applies to dark-fill
+ * marks, and light-on-dark is the intended look for a dark surface.
+ */
+export function rendersDarkSurface(appearance: string | undefined): boolean {
+  return appearance === 'dark' || appearance === 'system';
+}
+
 /** Whether a logo should be inverted in dark mode (fill-style logos). */
 export function needsInvertModelImage(
   modelId: string | null,
   appearance: string | undefined
 ): boolean {
-  if (!modelId || appearance !== 'dark') return false;
+  if (!modelId || !rendersDarkSurface(appearance)) return false;
   const key = modelId.startsWith('local-')
     ? modelId.replace('local-', '')
     : modelId;
   return DARK_FILL_MODELS.has(key);
+}
+
+/**
+ * Inline style for a provider/model logo `<img>`.
+ *
+ * Dark-mode support for marks that are a solid dark shape (Anthropic, OpenAI,
+ * Moonshot, ...): a dark logo disappears against the dark surface, so we invert
+ * it. This is the single place that owns the rule, so a caller cannot forget it
+ * the way the Anthropic logo in the model picker previously rendered "missing".
+ *
+ * Light mode never inverts, so the light-mode rendering is unchanged.
+ */
+export function modelImageStyle(
+  modelId: string | null,
+  appearance: string | undefined
+): { filter: string } | undefined {
+  return needsInvertModelImage(modelId, appearance)
+    ? { filter: 'invert(1)' }
+    : undefined;
 }

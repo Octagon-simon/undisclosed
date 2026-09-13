@@ -45,6 +45,7 @@
     "test:e2e": "vitest run --config vitest.config.ts",
     "test:coverage": "vitest run --coverage",
     "check:i18n": "node scripts/check-i18n-locale-parity.js",
+    "icons:file-extensions": "node ../scripts/fetch-file-icons.mjs",
     "check:design-token-usage": "node scripts/check-design-token-usage.mjs",
     "check:design-tokens": "npm run verify:theme && npm run check:design-token-usage",
     "verify:theme": "vite-node scripts/verify-theme-tokens.ts",

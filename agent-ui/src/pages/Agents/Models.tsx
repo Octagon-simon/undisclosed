@@ -89,9 +89,10 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import eigentImage from '@/assets/model/eigent.svg';
+import { useEffectiveAppearance } from '@/shared/hostTheme';
 import {
   getModelImage,
-  needsInvertModelImage,
+  modelImageStyle,
 } from '@/shared/modelProviderImages';
 
 import {
@@ -145,6 +146,7 @@ export default function SettingModels() {
     setCloudModelType,
     setCodexModelType,
     appearance,
+    appearanceMode,
   } = useAuthStore();
   const _navigate = useNavigate();
   const { t } = useTranslation();
@@ -1438,8 +1440,18 @@ export default function SettingModels() {
     }
   };
 
-  const needsInvert = (modelId: string | null): boolean =>
-    needsInvertModelImage(modelId, appearance);
+  /**
+   * Dark-mode style for a provider logo, per the shared `modelImageStyle` rule
+   * (a dark mark inverts so it stays visible on a dark surface).
+   *
+   * The theme is resolved through `useEffectiveAppearance`, so the HOST theme
+   * (the editor's active theme, which is what actually paints the panel) wins
+   * over the panel's stored appearance — otherwise a dark editor with a
+   * light-mode panel appearance leaves the OpenAI/Anthropic marks black.
+   */
+  const effectiveAppearance = useEffectiveAppearance(appearance, appearanceMode);
+  const needsInvert = (modelId: string | null): { filter: string } | undefined =>
+    modelImageStyle(modelId, effectiveAppearance);
 
   // Helper to render sidebar tab item
   const renderSidebarItem = (
@@ -1479,7 +1491,7 @@ export default function SettingModels() {
               src={modelImage}
               alt={label}
               className="h-5 w-5"
-              style={needsInvert(modelId) ? { filter: 'invert(1)' } : undefined}
+              style={needsInvert(modelId)}
             />
           ) : (
             <span
@@ -2688,11 +2700,7 @@ export default function SettingModels() {
                                   src={modelImage}
                                   alt={group.label}
                                   className="h-4 w-4"
-                                  style={
-                                    needsInvert(row.provider_name)
-                                      ? { filter: 'invert(1)' }
-                                      : undefined
-                                  }
+                                  style={needsInvert(row.provider_name)}
                                 />
                               ) : (
                                 <Key className="h-4 w-4 text-ds-icon-neutral-muted-default" />
@@ -2761,11 +2769,7 @@ export default function SettingModels() {
                               src={modelImage}
                               alt={item.name}
                               className="h-4 w-4"
-                              style={
-                                needsInvert(item.id)
-                                  ? { filter: 'invert(1)' }
-                                  : undefined
-                              }
+                              style={needsInvert(item.id)}
                             />
                           ) : (
                             <Key className="h-4 w-4 text-ds-icon-neutral-muted-default" />
@@ -2822,6 +2826,7 @@ export default function SettingModels() {
                                   src={modelImage}
                                   alt={group.label}
                                   className="h-4 w-4"
+                                  style={needsInvert(row.provider_name)}
                                 />
                               ) : (
                                 <Server className="h-4 w-4 text-ds-icon-neutral-muted-default" />
@@ -2870,11 +2875,7 @@ export default function SettingModels() {
                               src={modelImage}
                               alt={model.name}
                               className="h-4 w-4"
-                              style={
-                                needsInvert(`local-${model.id}`)
-                                  ? { filter: 'invert(1)' }
-                                  : undefined
-                              }
+                              style={needsInvert(`local-${model.id}`)}
                             />
                           ) : (
                             <Server className="h-4 w-4 text-ds-icon-neutral-muted-default" />

@@ -57,3 +57,11 @@ brain/*.spec
 
 *.png 
 *.md
+
+# Regenerate with `npm --prefix agent-ui run icons:file-extensions`.
+# The generated artifacts ARE committed, so they must not be swept up by the
+# blanket `*.md` rule above.
+!agent-ui/src/assets/fileIcons.LICENSE.md
+
+# Offline cache for the Simple Icons fetch script (regenerable, not shipped).
+.cache/file-icons/

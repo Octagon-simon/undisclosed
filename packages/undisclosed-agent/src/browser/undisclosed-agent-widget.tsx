@@ -12,6 +12,8 @@ import {
   OpenerService,
   open,
 } from '@theia/core/lib/browser';
+import { inject as injectCore } from '@theia/core/shared/inversify';
+import { ThemeService } from '@theia/core/lib/browser/theming';
 import URI from '@theia/core/lib/common/uri';
 import { Endpoint } from '@theia/core/lib/browser/endpoint';
 import { WorkspaceService } from '@theia/workspace/lib/browser';
@@ -66,6 +68,10 @@ type MountFn = (
         cb: (info: ActiveEditorInfo | null) => void
       ): () => void;
       getActiveEditor?(): ActiveEditorInfo | null;
+      getTheme?(): { id?: string; type: 'light' | 'dark'; label?: string };
+      onThemeChanged?(
+        cb: (theme: { id?: string; type: 'light' | 'dark'; label?: string }) => void
+      ): () => void;
     };
   }
 ) => AgentPanelHandle;
@@ -179,6 +185,11 @@ export class UndisclosedAgentWidget extends BaseWidget {
   @inject(EditorManager)
   protected readonly editorManager!: EditorManager;
 
+  /** Theia's theme service: the panel renders on Theia's surfaces, so its
+   *  literal type governs logo inversion (dark mark on dark surface). */
+  @injectCore(ThemeService)
+  protected readonly themeService!: ThemeService;
+
   protected host!: HTMLDivElement;
   protected handle?: AgentPanelHandle;
 
@@ -205,6 +216,23 @@ export class UndisclosedAgentWidget extends BaseWidget {
           ? { startLine: sel.start.line + 1, endLine: sel.end.line + 1 }
           : null,
     };
+  }
+
+  /**
+   * Snapshot Theia's active color theme. The panel sits on Theia's surfaces
+   * (theme.css remaps --ds-* onto --theia-*), so this is the authoritative
+   * "is the surface dark?" answer. Only 'light' is light: Theia's remaining
+   * types ('dark', 'hc', 'hcLight') all resolve to a dark surface for the panel,
+   * which is what the logo-inversion rule keys off.
+   */
+  private hostThemeInfo(): {
+    id?: string;
+    type: 'light' | 'dark';
+    label?: string;
+  } {
+    const theme = this.themeService.getCurrentTheme();
+    const type: 'light' | 'dark' = theme.type === 'light' ? 'light' : 'dark';
+    return { id: theme.id, type, label: theme.label };
   }
 
   /**
@@ -389,6 +417,19 @@ export class UndisclosedAgentWidget extends BaseWidget {
           onActiveEditorChanged: (cb: (info: ActiveEditorInfo | null) => void) => {
             const sub = this.editorManager.onActiveEditorChanged(() =>
               cb(this.activeEditorInfo())
+            );
+            return () => sub.dispose();
+          },
+          // The editor's ACTIVE color theme IS the surface the panel renders on
+          // (theme.css remaps --ds-* to --theia-*), so it is the authoritative
+          // answer to "is this dark?". Without it the panel trusted its stored
+          // appearance and shipped dark-fill logos onto a dark editor.
+          getTheme: () => this.hostThemeInfo(),
+          onThemeChanged: (
+            cb: (theme: { id?: string; type: 'light' | 'dark'; label?: string }) => void
+          ) => {
+            const sub = this.themeService.onDidColorThemeChange(() =>
+              cb(this.hostThemeInfo())
             );
             return () => sub.dispose();
           },
