@@ -16,8 +16,8 @@
 
 Two collections, both on-device MiniLM embeddings, both fail-soft:
 
-    eigent_episodes   episode summaries (§7, §10)
-    eigent_memories   structured memory records (§6, §11)
+    undisclosed_episodes   episode summaries (§7, §10)
+    undisclosed_memories   structured memory records (§6, §11)
 
 Chroma is an **index, never the application-level authority** (§31): every
 document carries the durable application id plus provenance metadata, so a hit
@@ -44,8 +44,15 @@ from app.memory.hybrid.schema import Episode, StructuredMemory
 
 logger = logging.getLogger("memory.hybrid.vector")
 
-_EPISODE_COLLECTION = "eigent_episodes"
-_MEMORY_COLLECTION = "eigent_memories"
+_EPISODE_COLLECTION = "undisclosed_episodes"
+_MEMORY_COLLECTION = "undisclosed_memories"
+
+# Pre-rename names. Chroma is only an index, but a one-time copy keeps an
+# existing local index usable instead of silently orphaning it.
+_LEGACY_COLLECTIONS = {
+    "undisclosed_episodes": "eigent_episodes",
+    "undisclosed_memories": "eigent_memories",
+}
 
 _lock = threading.Lock()
 _collections: dict[str, Any] = {}
@@ -54,6 +61,43 @@ _disabled = False
 
 def _root() -> Path:
     return Path.home() / ".undisclosed" / "memory" / "semantic"
+
+
+def _migrate_legacy(client: Any, name: str) -> None:
+    """Copy a pre-rename collection into ``name`` once, then drop the old one.
+
+    Best-effort: a missing collection or an older chroma API is swallowed, so a
+    rename can never break indexing.
+    """
+
+    legacy = _LEGACY_COLLECTIONS.get(name)
+    if not legacy:
+        return
+    try:
+        old = client.get_collection(legacy)
+        if old is None or old.count() == 0:
+            return
+        got = old.get()
+        ids = got.get("ids") or []
+        if not ids:
+            return
+        kwargs: dict[str, Any] = {"ids": ids}
+        if got.get("documents"):
+            kwargs["documents"] = got["documents"]
+        if got.get("metadatas"):
+            kwargs["metadatas"] = got["metadatas"]
+        client.get_or_create_collection(name).upsert(**kwargs)
+        client.delete_collection(legacy)
+        logger.info(
+            "hybrid vector migrated %s -> %s (%d docs)",
+            legacy,
+            name,
+            len(ids),
+        )
+    except Exception as exc:  # noqa: BLE001 - fail soft
+        logger.warning(
+            "hybrid vector migration %s -> %s skipped: %s", legacy, name, exc
+        )
 
 
 def _get_collection(name: str) -> Any | None:
@@ -77,6 +121,7 @@ def _get_collection(name: str) -> Any | None:
             root = _root()
             root.mkdir(parents=True, exist_ok=True)
             client = chromadb.PersistentClient(path=str(root))
+            _migrate_legacy(client, name)
             collection = client.get_or_create_collection(name)
             _collections[name] = collection
             logger.info("hybrid vector %s ready at %s", name, root)

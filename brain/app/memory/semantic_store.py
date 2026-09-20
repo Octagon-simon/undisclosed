@@ -39,7 +39,10 @@ from typing import Any
 logger = logging.getLogger("memory.semantic")
 
 # chromadb collection name (must be 3-512 chars of [a-zA-Z0-9._-]).
-_COLLECTION = "eigent_facts"
+_COLLECTION = "undisclosed_facts"
+
+# Pre-rename name; copied in place once so existing facts are not orphaned.
+_LEGACY_COLLECTIONS = {"undisclosed_facts": "eigent_facts"}
 
 _lock = threading.Lock()
 _collection: Any | None = None
@@ -48,6 +51,43 @@ _disabled = False
 
 def _semantic_root() -> Path:
     return Path.home() / ".undisclosed" / "memory" / "semantic"
+
+
+def _migrate_legacy(client: Any, name: str) -> None:
+    """Copy the pre-rename collection into ``name`` once, then drop the old one.
+
+    Best-effort and fail-soft: a missing collection or an older chroma API is
+    swallowed, so the rename never breaks semantic memory.
+    """
+
+    legacy = _LEGACY_COLLECTIONS.get(name)
+    if not legacy:
+        return
+    try:
+        old = client.get_collection(legacy)
+        if old is None or old.count() == 0:
+            return
+        got = old.get()
+        ids = got.get("ids") or []
+        if not ids:
+            return
+        kwargs: dict[str, Any] = {"ids": ids}
+        if got.get("documents"):
+            kwargs["documents"] = got["documents"]
+        if got.get("metadatas"):
+            kwargs["metadatas"] = got["metadatas"]
+        client.get_or_create_collection(name).upsert(**kwargs)
+        client.delete_collection(legacy)
+        logger.info(
+            "semantic memory migrated %s -> %s (%d facts)",
+            legacy,
+            name,
+            len(ids),
+        )
+    except Exception as exc:  # noqa: BLE001 - fail soft
+        logger.warning(
+            "semantic migration %s -> %s skipped: %s", legacy, name, exc
+        )
 
 
 def _get_collection() -> Any | None:
@@ -68,6 +108,7 @@ def _get_collection() -> Any | None:
             root = _semantic_root()
             root.mkdir(parents=True, exist_ok=True)
             client = chromadb.PersistentClient(path=str(root))
+            _migrate_legacy(client, _COLLECTION)
             _collection = client.get_or_create_collection(_COLLECTION)
             logger.info("Semantic memory ready at %s", root)
             return _collection
