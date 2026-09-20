@@ -239,3 +239,56 @@ class TestWorkingMemoryAndMeta:
         assert hybrid.read_covered_through_turn(
             ids["user_key"], ids["space_id"], ids["project_id"]
         ) == 12
+
+
+class TestProvenanceGate:
+    """§4/§41.8: a derived memory must retain source ids it can actually back up."""
+
+    def _upsert(self, *, sources, key="database", value="PostgreSQL"):
+        return MemoryOp(
+            op="UPSERT",
+            type="decision",
+            key=key,
+            value=value,
+            source_message_ids=sources,
+        )
+
+    def _apply(self, hybrid, ids, op, *, valid):
+        return hybrid.apply_ops(
+            ids["user_key"],
+            ids["space_id"],
+            ids["project_id"],
+            [op],
+            conversation_id=ids["conversation_id"],
+            now="t",
+            valid_source_ids=valid,
+        )
+
+    def test_op_citing_an_unknown_message_is_dropped(self, hybrid, ids):
+        self._apply(
+            hybrid, ids, self._upsert(sources=["msg_invented"]),
+            valid={"msg_1", "msg_2"},
+        )
+        assert (
+            hybrid.read_active_memories(
+                ids["user_key"], ids["space_id"], ids["project_id"]
+            )
+            == []
+        )
+
+    def test_op_with_no_sources_is_dropped_when_validating(self, hybrid, ids):
+        self._apply(hybrid, ids, self._upsert(sources=[]), valid={"msg_1"})
+        assert (
+            hybrid.read_active_memories(
+                ids["user_key"], ids["space_id"], ids["project_id"]
+            )
+            == []
+        )
+
+    def test_op_with_a_known_source_is_kept_with_provenance(self, hybrid, ids):
+        self._apply(hybrid, ids, self._upsert(sources=["msg_1"]), valid={"msg_1"})
+        active = hybrid.read_active_memories(
+            ids["user_key"], ids["space_id"], ids["project_id"]
+        )
+        assert [m.value for m in active] == ["PostgreSQL"]
+        assert active[0].source_message_ids == ["msg_1"]

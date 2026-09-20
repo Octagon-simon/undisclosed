@@ -451,7 +451,7 @@ def retrieve(
         superseded = hybrid_store.read_memories(
             user_key, space_id, project_id, status="superseded"
         )
-        return _lookup_memories(
+        active_hits, superseded_hits = _lookup_memories(
             active,
             superseded,
             query,
@@ -459,6 +459,23 @@ def retrieve(
             resolved_project_id=resolved_project_id,
             conversation_id=conversation_id,
         )
+        # Blend the semantic index into the memory ranking when the plan wants
+        # it (§15-17): the structured lookup above is term-based, so similarity
+        # catches a memory that shares no keyword with the question. Fail-soft.
+        if lane_plan.use_semantic and active_hits:
+            try:
+                semantic = dict(
+                    vector.query_memories(
+                        user_key, query, k=max(semantic_top_k() * 4, 8)
+                    )
+                )
+            except Exception:  # noqa: BLE001 - index is best-effort
+                semantic = {}
+            for item in active_hits:
+                similarity = semantic.get(item.id)
+                if similarity:
+                    item.scores["semantic"] = similarity
+        return active_hits, superseded_hits
 
     def _run(
         lane_plan: router.RetrievalPlan,
@@ -847,7 +864,7 @@ def _apply_ops_by_scope(
         bucket = buckets.get(scope_type) or []
         if not bucket:
             continue
-        target.apply_ops(
+        applied = target.apply_ops(
             user_key,
             space_id,
             project_id,
@@ -860,6 +877,14 @@ def _apply_ops_by_scope(
             user_id=user_id,
         )
         counts[scope_type] = len(bucket)
+        # Index just the records this batch wrote (updated_at == now) so the
+        # semantic index carries the same provenance as the durable record
+        # (§5, §31). Best-effort: an index failure never loses the memory.
+        for memory in applied or []:
+            if memory.status == "active" and memory.updated_at == now:
+                vector.index_memory(
+                    user_key, space_id, project_id, conversation_id, memory
+                )
     return counts
 
 
@@ -971,11 +996,12 @@ def process_run_end(
                 user_key, space_id, project_id, episodes
             )
             for episode in episodes:
+                # Index the whole record so a hit carries provenance (§4, §5).
                 vector.index_episode(
                     user_key,
                     space_id,
                     project_id,
-                    episode.id,
+                    episode,
                     episode.source_text(),
                 )
             summary["episodes"] = len(episodes)
