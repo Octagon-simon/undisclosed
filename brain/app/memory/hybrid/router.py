@@ -54,6 +54,12 @@ _CONTINUATION = (
     "continue", "go on", "keep going", "do that", "do it", "same thing",
     "change it", "the first option", "the second option", "and then",
     "next", "carry on", "proceed",
+    # Multi-word pointers back, as used in the spec's own examples (§28, §36:
+    # "Continue that work."). Kept explicit so a request that *names* a project
+    # ("continue the Mac app", §12) is NOT swallowed as a bare continuation.
+    "continue that work", "continue the work", "continue this", "continue that",
+    "continue the same", "carry on with that", "keep working on that",
+    "the previous one", "same as before", "change this", "do the same",
 )
 
 
@@ -77,7 +83,8 @@ def is_continuation(query: str) -> bool:
     q = T.collapse(query or "").lower()
     if not q:
         return True
-    if q in _CONTINUATION:
+    # Trailing sentence punctuation must not stop "Continue that work." matching.
+    if q.rstrip(" .!?,;") in _CONTINUATION:
         return True
     # A very short utterance with no content term is a continuation/pronoun turn.
     return len(T.tokenize(q)) == 0
