@@ -24,7 +24,7 @@ const httpProxy = require('http-proxy') as {
 };
 
 /**
- * `/api` proxy target. In STANDALONE eigent-theia (dev + the packaged desktop
+ * `/api` proxy target. In STANDALONE Undisclosed (dev + the packaged desktop
  * app) the brain itself serves the `/api/v1/*` surface (providers, spaces,
  * history, chat-platform), so `/api` must go to the BRAIN — not the legacy
  * `:3001` cloud proxy, which doesn't exist here (hitting it gives "agent proxy
