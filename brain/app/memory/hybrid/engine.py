@@ -88,6 +88,7 @@ from app.memory.hybrid.schema import (
 )
 from app.memory.hybrid.scope import GlobalMemoryStore
 from app.memory.hybrid.storage import HybridStore
+from app.memory.local_store import LocalMemoryStore
 
 logger = logging.getLogger("memory.hybrid.engine")
 
@@ -1111,6 +1112,35 @@ def drain_memory_jobs(
             continue
         store.complete(user_key, job.id, now=_utc_now())
         completed += 1
+    return completed
+
+
+def recover_memory_jobs(
+    store: LocalMemoryStore | None = None, *, limit_per_user: int = 5
+) -> int:
+    """Drain due memory jobs for every user on disk (§20).
+
+    Meant to run once at start-up: it returns abandoned ``processing`` jobs to
+    the pool and runs a bounded number of due jobs per user, so a run whose
+    extraction was interrupted by a restart still lands (otherwise it would
+    only be picked up when that user next sends a message). Best-effort: any
+    per-user failure logs and is skipped. Returns how many jobs completed.
+    """
+
+    base = store or LocalMemoryStore()
+    users_root = base.root / "users"
+    try:
+        users = sorted(p.name for p in users_root.iterdir() if p.is_dir())
+    except OSError:
+        return 0
+    completed = 0
+    for user_key in users:
+        try:
+            completed += drain_memory_jobs(
+                HybridStore(base), user_key, limit=limit_per_user
+            )
+        except Exception:  # noqa: BLE001 - one bad user must not stop recovery
+            logger.debug("hybrid: job recovery failed", exc_info=True)
     return completed
 
 

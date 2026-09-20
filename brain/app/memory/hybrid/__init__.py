@@ -56,6 +56,7 @@ from app.memory.hybrid.engine import (
     drain_memory_jobs,
     load_events,
     process_run_end,
+    recover_memory_jobs,
     retrieve,
     schedule_process_run_end,
 )
@@ -113,6 +114,7 @@ __all__ = [
     "process_run_end",
     "project",
     "ranking",
+    "recover_memory_jobs",
     "resolver",
     "retrieve",
     "router",

@@ -13,6 +13,7 @@
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
 
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,8 +29,41 @@ try:
 except Exception:  # pragma: no cover - defensive
     pass
 
+def _start_hybrid_job_recovery() -> None:
+    """Re-run durable memory jobs stranded by a restart (memory spec §20).
+
+    Best-effort and off the main thread: extraction may call a model, so it must
+    never delay the app becoming ready. Gated by
+    ``UNDISCLOSED_HYBRID_JOB_RECOVERY`` (defaults to the master hybrid switch).
+    """
+
+    try:
+        from app.memory.hybrid import config as hybrid_config
+
+        if not hybrid_config.recover_jobs_on_startup():
+            return
+
+        import threading
+
+        from app.memory.hybrid import engine as hybrid_engine
+
+        threading.Thread(
+            target=hybrid_engine.recover_memory_jobs,
+            name="hybrid-job-recovery",
+            daemon=True,
+        ).start()
+    except Exception:  # noqa: BLE001 - recovery must never block boot
+        pass
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    _start_hybrid_job_recovery()
+    yield
+
+
 # Initialize FastAPI with title
-api = FastAPI(title="Undisclosed Multi-Agent System API")
+api = FastAPI(title="Undisclosed Multi-Agent System API", lifespan=_lifespan)
 
 
 @api.get("/")

@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from app.memory.events import ConversationEvent
-from app.memory.hybrid import engine, jobs
+from app.memory.hybrid import config, engine, jobs
 from app.memory.hybrid.jobs import MemoryJobStore, extraction_key
 
 IDS = {
@@ -144,6 +144,17 @@ class TestJobStore:
         assert extraction_key("c1", "r1") != extraction_key("c1", "r2")
 
 
+class TestRecoveryFlag:
+    def test_default_follows_the_master_hybrid_switch(self, monkeypatch):
+        monkeypatch.delenv("UNDISCLOSED_HYBRID_JOB_RECOVERY", raising=False)
+        monkeypatch.delenv("UNDISCLOSED_HYBRID_MEMORY", raising=False)
+        assert config.recover_jobs_on_startup() is False
+        monkeypatch.setenv("UNDISCLOSED_HYBRID_MEMORY", "1")
+        assert config.recover_jobs_on_startup() is True
+        monkeypatch.setenv("UNDISCLOSED_HYBRID_JOB_RECOVERY", "0")
+        assert config.recover_jobs_on_startup() is False
+
+
 class TestDurableSchedule:
     def _inline(self, monkeypatch):
         monkeypatch.setattr(engine, "background_pipeline", lambda: False)
@@ -253,6 +264,43 @@ class TestRestartRecovery:
         completed = engine.drain_memory_jobs(hybrid, ids["user_key"])
         assert completed == 1
         assert js.get(ids["user_key"], job.id).state == "completed"
+
+    def test_startup_recovery_runs_pending_jobs_for_every_user(self, store):
+        def _seed_user(user_key: str) -> None:
+            store.append_conversation(
+                user_key,
+                "s",
+                "p",
+                ConversationEvent(
+                    event_id="evt_1",
+                    run_id="run1",
+                    timestamp="t",
+                    role="user",
+                    content="we'll use PostgreSQL for the database",
+                    source="chat",
+                    visibility="context",
+                    hash="sha256:x",
+                ),
+            )
+            MemoryJobStore(store).enqueue(
+                idempotency_key=extraction_key("p", "run1"),
+                user_key=user_key,
+                space_id="s",
+                project_id="p",
+                conversation_id="p",
+                run_id="run1",
+                now="2026-01-01T00:00:00+00:00",
+            )
+
+        for user in ("u1", "u2"):
+            _seed_user(user)
+        completed = engine.recover_memory_jobs(store)
+        assert completed == 2
+        for user in ("u1", "u2"):
+            job = MemoryJobStore(store).find_by_key(
+                user, extraction_key("p", "run1")
+            )
+            assert job is not None and job.state == "completed"
 
     def test_failed_extraction_is_recorded_not_raised(self, hybrid, ids, monkeypatch):
         js = MemoryJobStore(hybrid.base)

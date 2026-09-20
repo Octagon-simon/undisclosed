@@ -182,6 +182,17 @@ def durable_jobs() -> bool:
     return _env_flag("UNDISCLOSED_HYBRID_DURABLE_JOBS", True)
 
 
+def recover_jobs_on_startup() -> bool:
+    """Drain durable memory jobs once at Brain start-up (§20).
+
+    Defaults to the master hybrid switch: when the hybrid layer is on, a restart
+    must not silently strand a pending extraction. Override with
+    ``UNDISCLOSED_HYBRID_JOB_RECOVERY=0/1``.
+    """
+
+    return _env_flag("UNDISCLOSED_HYBRID_JOB_RECOVERY", enabled())
+
+
 def background_pipeline() -> bool:
     """Run the run-end pipeline on a background thread (off the response path).
 
