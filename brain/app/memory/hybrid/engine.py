@@ -49,6 +49,7 @@ from app.memory.hybrid import (
     router,
     vector,
 )
+from app.memory.hybrid import jobs as jobs_mod
 from app.memory.hybrid import resolver as resolver_mod
 from app.memory.hybrid import scope as scope_mod
 from app.memory.hybrid import text as T
@@ -57,6 +58,7 @@ from app.memory.hybrid.config import (
     LLM_EXTRACTION_OFF,
     LLM_EXTRACTION_WRITE,
     background_pipeline,
+    durable_jobs,
     exact_top_k,
     extraction_enabled,
     lexical_top_k,
@@ -78,6 +80,7 @@ from app.memory.hybrid.schema import (
     Episode,
     EpisodeDraft,
     ExtractionResult,
+    MemoryJob,
     MemoryOp,
     RetrievalResult,
     RetrievedItem,
@@ -1071,6 +1074,46 @@ def process_run_end(
     return summary
 
 
+def drain_memory_jobs(
+    hybrid_store: HybridStore, user_key: str, *, limit: int = 5
+) -> int:
+    """Recover and run a user's due durable jobs (§20, §21).
+
+    Safe to call on every run end and at start-up. It first returns abandoned
+    ``processing`` jobs (a crashed worker's claim) to the pool, then claims and
+    runs up to ``limit`` due jobs. A job failure is recorded on the job itself,
+    never raised. Returns how many jobs completed.
+    """
+
+    store = jobs_mod.MemoryJobStore(hybrid_store.base)
+    try:
+        store.recover_stale(user_key, now=_utc_now())
+    except Exception:  # noqa: BLE001 - recovery is best-effort
+        logger.debug("hybrid: stale job recovery failed", exc_info=True)
+
+    completed = 0
+    for _ in range(max(1, limit)):
+        job = store.claim(user_key, now=_utc_now())
+        if job is None:
+            break
+        try:
+            process_run_end(
+                hybrid_store,
+                user_key=job.user_key,
+                space_id=job.space_id,
+                project_id=job.project_id,
+                conversation_id=job.conversation_id,
+                state=job.run_state or "done",
+            )
+        except Exception as exc:  # noqa: BLE001 - record and move on
+            store.fail(user_key, job.id, error=str(exc), now=_utc_now())
+            logger.warning("hybrid: memory job failed", exc_info=True)
+            continue
+        store.complete(user_key, job.id, now=_utc_now())
+        completed += 1
+    return completed
+
+
 def schedule_process_run_end(
     hybrid_store: HybridStore,
     *,
@@ -1079,12 +1122,15 @@ def schedule_process_run_end(
     project_id: str,
     conversation_id: str,
     state: str = "done",
+    run_id: str = "",
 ) -> None:
-    """Run :func:`process_run_end` off the response path (§28).
+    """Run the end-of-run memory pipeline off the response path (§21, §28).
 
-    ``on_run_end`` is synchronous, so when background mode is on we hand the
-    work to a daemon thread. Failures are swallowed and logged; memory work must
-    never surface to the user.
+    With durable jobs on (default) the work is first written to the durable job
+    table, then a worker drains the user's due jobs -- so a crash mid-extraction
+    loses nothing and a retry cannot double-write (§20, §33). With the flag off,
+    or when the durable write itself fails, it falls back to running the
+    pipeline directly so a memory is never lost to bookkeeping.
     """
 
     if not extraction_enabled():
@@ -1099,32 +1145,55 @@ def schedule_process_run_end(
             " is off; the model pass will run on the response path"
         )
 
-    if not background_pipeline():
+    now = _utc_now()
+    durable = durable_jobs()
+    job: MemoryJob | None = None
+    if durable:
         try:
-            process_run_end(
-                hybrid_store,
+            job = jobs_mod.MemoryJobStore(hybrid_store.base).enqueue(
+                idempotency_key=jobs_mod.extraction_key(
+                    conversation_id, run_id or now
+                ),
                 user_key=user_key,
                 space_id=space_id,
                 project_id=project_id,
                 conversation_id=conversation_id,
-                state=state,
+                run_id=run_id,
+                run_state=state,
+                now=now,
             )
-        except Exception:  # noqa: BLE001
-            logger.warning("hybrid: run-end pipeline failed", exc_info=True)
-        return
+        except Exception:  # noqa: BLE001 - fall back to a direct run
+            logger.debug("hybrid: job enqueue failed", exc_info=True)
+            job = None
+        if job is not None and job.state == "completed":
+            # This exact work already ran; nothing to do (§33).
+            return
+
+    def _run_directly() -> None:
+        process_run_end(
+            hybrid_store,
+            user_key=user_key,
+            space_id=space_id,
+            project_id=project_id,
+            conversation_id=conversation_id,
+            state=state,
+        )
 
     def _worker() -> None:
         try:
-            process_run_end(
-                hybrid_store,
-                user_key=user_key,
-                space_id=space_id,
-                project_id=project_id,
-                conversation_id=conversation_id,
-                state=state,
-            )
+            if durable:
+                drain_memory_jobs(hybrid_store, user_key)
+                if job is None:
+                    # Durable stage unavailable: never lose the run's memory.
+                    _run_directly()
+            else:
+                _run_directly()
         except Exception:  # noqa: BLE001
             logger.warning("hybrid: run-end pipeline failed", exc_info=True)
+
+    if not background_pipeline():
+        _worker()
+        return
 
     threading.Thread(
         target=_worker, name="hybrid-memory-pipeline", daemon=True

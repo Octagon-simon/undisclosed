@@ -730,6 +730,7 @@ class MemoryService:
                     project_id=run_context.project_id,
                     conversation_id=run_context.project_id,
                     state=state,
+                    run_id=run_context.run_id,
                 )
             except Exception:  # noqa: BLE001
                 logger.warning(

@@ -238,6 +238,59 @@ class ConversationRef:
 
 
 @dataclass
+class MemoryJob:
+    """A durable, retryable unit of post-run memory work (§20, §21, §33).
+
+    Today extraction is a ``schedule_process_run_end`` background task: if the
+    process dies, the work is simply lost. A durable job record makes it
+    recoverable -- a worker *claims* it, and a restart can find it still
+    ``pending``/``processing`` and finish it. ``idempotency_key`` is what stops
+    a retry from double-writing: it is derived from the source range +
+    extractor version, so the same work can never enqueue twice (§33).
+    """
+
+    id: str
+    idempotency_key: str
+    user_key: str = ""
+    space_id: str = ""
+    project_id: str = ""
+    conversation_id: str = ""
+    state: str = "pending"  # pending|processing|completed|failed|retrying
+    attempts: int = 0
+    max_attempts: int = 3
+    run_id: str = ""
+    # The run outcome this job carries (done/failed/cancelled). Persisted so a
+    # job recovered after a restart still updates working memory faithfully.
+    run_state: str = "done"
+    created_at: str = ""
+    updated_at: str = ""
+    claimed_at: str = ""
+    next_attempt_at: str = ""
+    last_error: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, payload: Any) -> MemoryJob | None:
+        cleaned = _clean(cls, payload)
+        if cleaned is None:
+            return None
+        if not str(cleaned.get("id") or "").strip():
+            return None
+        try:
+            return cls(**cleaned)
+        except (TypeError, ValueError):
+            return None
+
+    def is_terminal(self) -> bool:
+        return self.state in ("completed", "failed")
+
+    def is_claimable(self) -> bool:
+        return self.state in ("pending", "retrying")
+
+
+@dataclass
 class MemoryOp:
     """A proposed mutation the application validates before applying (§12).
 

@@ -171,6 +171,17 @@ def extraction_enabled() -> bool:
     return _env_flag("UNDISCLOSED_HYBRID_EXTRACTION", True)
 
 
+def durable_jobs() -> bool:
+    """Route post-run extraction through the durable, retryable job table (§21).
+
+    Default ON: a lost background thread used to lose the memory for that run
+    entirely; a durable job survives a restart and is retried. Set
+    ``UNDISCLOSED_HYBRID_DURABLE_JOBS=0`` to fall back to the plain thread.
+    """
+
+    return _env_flag("UNDISCLOSED_HYBRID_DURABLE_JOBS", True)
+
+
 def background_pipeline() -> bool:
     """Run the run-end pipeline on a background thread (off the response path).
 
