@@ -141,6 +141,11 @@ def ranking_weights() -> dict[str, float]:
         "entity": _env_float("UNDISCLOSED_HYBRID_W_ENTITY", 0.10),
         "importance": _env_float("UNDISCLOSED_HYBRID_W_IMPORTANCE", 0.05),
         "recency": _env_float("UNDISCLOSED_HYBRID_W_RECENCY", 0.10),
+        # Project/entity match and memory-type match (§17). Both signals default
+        # to 0.0 when a caller does not supply them, so these weights are inert
+        # unless something sets them.
+        "project": _env_float("UNDISCLOSED_HYBRID_W_PROJECT", 0.15),
+        "type": _env_float("UNDISCLOSED_HYBRID_W_TYPE", 0.05),
     }
 
 

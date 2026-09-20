@@ -49,8 +49,10 @@ from app.memory.hybrid import (
     router,
     vector,
 )
+from app.memory.hybrid import resolver as resolver_mod
 from app.memory.hybrid import scope as scope_mod
 from app.memory.hybrid import text as T
+from app.memory.hybrid.project import ProjectStore
 from app.memory.hybrid.config import (
     LLM_EXTRACTION_OFF,
     LLM_EXTRACTION_WRITE,
@@ -68,6 +70,7 @@ from app.memory.hybrid.config import (
     token_estimate,
 )
 from app.memory.hybrid.schema import (
+    LEVEL_BROAD,
     LEVEL_RECENT,
     SCOPE_CONVERSATION,
     SCOPE_GLOBAL,
@@ -139,6 +142,7 @@ def _memory_item(memory: StructuredMemory) -> RetrievedItem:
         text=f"{memory.key} = {memory.value}",
         source_message_ids=list(memory.source_message_ids),
         status=memory.status,
+        memory_type=memory.type,
         scores={"importance": memory.confidence},
     )
     # Tag reach + origin so the context builder can present a cross-session hit
@@ -205,16 +209,73 @@ def _cross_session_memories(
     return list(by_id.values())[:_MAX_CROSS_SESSION_MEMORIES]
 
 
+# §17 memory-type match: which *kind* of memory a question is asking for. A
+# "what do I prefer" question should rank a stored preference above a decision
+# that happens to share a keyword.
+_TYPE_CUES = (
+    ("preference", ("prefer", "preferred", "style", "convention", "preference")),
+    ("decision", ("decide", "decided", "decision", "chose", "chosen", "settled")),
+    ("constraint", ("must", "require", "required", "constraint", "limit")),
+    ("goal", ("goal", "objective", "plan to", "want to", "aiming")),
+    ("fact", ("what is", "what's", "which", "how many", "what version")),
+)
+
+
+def type_intent(query: str) -> str:
+    """The memory type a question is about, or "" when it is not type-specific."""
+
+    q = (query or "").lower()
+    for memory_type, cues in _TYPE_CUES:
+        if any(cue in q for cue in cues):
+            return memory_type
+    return ""
+
+
+def _project_match(
+    memory: StructuredMemory,
+    *,
+    current_project_id: str,
+    resolved_project_id: str,
+    conversation_id: str,
+) -> float:
+    """How well a record's scope matches the thread being answered (§12, §17).
+
+    Follows the §12 retrieval hierarchy: current-project memory ranks above a
+    resolved *other* project, which ranks above a global (user-level) fact,
+    which still ranks above an unrelated project. This is the signal that keeps
+    an unrelated project's decision from outranking the local one.
+    """
+
+    if memory.scope_type == SCOPE_GLOBAL:
+        return 0.6
+    if memory.scope_type == SCOPE_CONVERSATION:
+        return 0.8 if memory.scope_id in ("", conversation_id) else 0.2
+    if memory.scope_id:
+        if memory.scope_id == current_project_id:
+            return 1.0
+        if resolved_project_id and memory.scope_id == resolved_project_id:
+            return 0.9
+        return 0.3
+    # Legacy project record with no scope_id: fall back to its provenance thread.
+    return 1.0 if memory.conversation_id == conversation_id else 0.3
+
+
 def _lookup_memories(
     active: list[StructuredMemory],
     superseded: list[StructuredMemory],
     query: str,
+    *,
+    current_project_id: str = "",
+    resolved_project_id: str = "",
+    conversation_id: str = "",
 ) -> tuple[list[RetrievedItem], list[RetrievedItem]]:
     """Match memories whose key or value shares a term/entity with the query.
 
     Returns ``(active_hits, superseded_context)`` where superseded context is
     the history of any key currently being asked about, so the model can
-    distinguish "was X" from "is X" (§11, §36).
+    distinguish "was X" from "is X" (§11, §36). Each hit is stamped with the
+    §17 ``project_match`` / ``type_match`` signals so reranking can prefer the
+    relevant scope and memory type.
     """
 
     query_terms = T.terms(query)
@@ -222,13 +283,24 @@ def _lookup_memories(
     if not query_terms and not query_entities:
         return [], []
 
+    wanted_type = type_intent(query)
     active_hits: list[RetrievedItem] = []
     matched_keys: set[str] = set()
     for memory in active:
         haystack = f"{memory.key} {memory.value}"
         hits = query_terms & T.terms(haystack)
         if hits or query_entities & T.entities(haystack):
-            active_hits.append(_memory_item(memory))
+            item = _memory_item(memory)
+            item.scores["project_match"] = _project_match(
+                memory,
+                current_project_id=current_project_id,
+                resolved_project_id=resolved_project_id,
+                conversation_id=conversation_id,
+            )
+            item.scores["type_match"] = (
+                1.0 if wanted_type and memory.type == wanted_type else 0.0
+            )
+            active_hits.append(item)
             matched_keys.add(memory.key)
 
     superseded_hits: list[RetrievedItem] = []
@@ -279,6 +351,7 @@ def retrieve(
     query: str,
     token_budget: int,
     events: list[ConversationEvent] | None = None,
+    explicit_project_id: str = "",
 ) -> tuple[RetrievalResult, list[ConversationEvent]]:
     """Route + run retrieval lanes concurrently + rerank (§15-22)."""
 
@@ -292,6 +365,24 @@ def retrieve(
     recent_events = _recent_window(events, recent_token_budget())
     max_turn = len(events)
 
+    # §14 project resolution: connect this thread to the recurring project it is
+    # about, so widening + reranking read the right project. Only worth doing
+    # when the plan actually wants history; a continuation stays in-thread.
+    resolution = resolver_mod.ProjectResolution()
+    if plan.level != LEVEL_RECENT:
+        try:
+            resolution = resolver_mod.resolve(
+                ProjectStore(stored),
+                user_key,
+                query=query,
+                conversation_id=conversation_id,
+                explicit_project_id=explicit_project_id,
+                link=False,
+            )
+        except Exception:  # noqa: BLE001 - resolution is best-effort
+            logger.debug("hybrid: project resolution failed", exc_info=True)
+    resolved_project_id = resolution.project_id if resolution.confident else ""
+
     result = RetrievalResult(
         plan=plan,
         working_memory=hybrid_store.read_working_memory(
@@ -299,11 +390,8 @@ def retrieve(
         ),
     )
 
-    episode_items: list[RetrievedItem] = []
-    message_items: list[RetrievedItem] = []
-
-    def _semantic() -> list[RetrievedItem]:
-        if not plan.use_semantic:
+    def _semantic(lane_plan: router.RetrievalPlan) -> list[RetrievedItem]:
+        if not lane_plan.use_semantic:
             return []
         hits = vector.query_episodes(
             user_key, project_id, query, k=semantic_top_k()
@@ -321,16 +409,16 @@ def retrieve(
                 items.append(_episode_item(episode, similarity))
         return items
 
-    def _lexical() -> list[RetrievedItem]:
+    def _lexical(lane_plan: router.RetrievalPlan) -> list[RetrievedItem]:
         items: list[RetrievedItem] = []
-        if plan.use_lexical:
+        if lane_plan.use_lexical:
             items.extend(
                 _message_item(turn, event, score)
                 for turn, score, event in lexical.search(
                     events, query, k=lexical_top_k()
                 )
             )
-        if plan.use_exact:
+        if lane_plan.use_exact:
             items.extend(
                 _message_item(turn, event, score)
                 for turn, score, event in lexical.exact_matches(
@@ -339,15 +427,17 @@ def retrieve(
             )
         return items
 
-    def _structured() -> tuple[list[RetrievedItem], list[RetrievedItem]]:
-        if not plan.use_memory:
+    def _structured(
+        lane_plan: router.RetrievalPlan,
+    ) -> tuple[list[RetrievedItem], list[RetrievedItem]]:
+        if not lane_plan.use_memory:
             return [], []
         active = hybrid_store.read_active_memories(user_key, space_id, project_id)
         # Widen to the user's other sessions only when the request actually calls
         # for history (§12). A continuation ("continue", "that") stays inside the
         # thread: pulling unrelated global/project memory into it is exactly the
         # irrelevant-recall failure §36 warns about.
-        if plan.level != LEVEL_RECENT:
+        if lane_plan.level != LEVEL_RECENT:
             seen = {m.id for m in active}
             for memory in _cross_session_memories(
                 hybrid_store,
@@ -361,21 +451,60 @@ def retrieve(
         superseded = hybrid_store.read_memories(
             user_key, space_id, project_id, status="superseded"
         )
-        return _lookup_memories(active, superseded, query)
+        return _lookup_memories(
+            active,
+            superseded,
+            query,
+            current_project_id=project_id,
+            resolved_project_id=resolved_project_id,
+            conversation_id=conversation_id,
+        )
 
-    if plan.level == LEVEL_RECENT:
-        # Continuation: no history search, but working memory still loads (done
-        # above). This is the §38 "remain dormant" path.
-        active_hits, superseded_hits = _structured()
-    else:
+    def _run(
+        lane_plan: router.RetrievalPlan,
+    ) -> tuple[
+        list[RetrievedItem],
+        list[RetrievedItem],
+        list[RetrievedItem],
+        list[RetrievedItem],
+    ]:
+        if lane_plan.level == LEVEL_RECENT:
+            # Continuation: no history search, but working memory still loads
+            # (done above). This is the §38 "remain dormant" path.
+            active_hits, superseded_hits = _structured(lane_plan)
+            return [], [], active_hits, superseded_hits
         with ThreadPoolExecutor(max_workers=3) as pool:
-            semantic_future = pool.submit(_semantic)
-            lexical_future = pool.submit(_lexical)
-            structured_future = pool.submit(_structured)
-            episode_items = semantic_future.result()
-            message_items = lexical_future.result()
-            active_hits, superseded_hits = structured_future.result()
+            semantic_future = pool.submit(_semantic, lane_plan)
+            lexical_future = pool.submit(_lexical, lane_plan)
+            structured_future = pool.submit(_structured, lane_plan)
+            return (
+                semantic_future.result(),
+                lexical_future.result(),
+                *structured_future.result(),
+            )
 
+    episode_items, message_items, active_hits, superseded_hits = _run(plan)
+
+    # §22/§25 evidence escalation: a targeted lookup ("what commit hash") that
+    # found nothing widens once to raw historical evidence rather than silently
+    # answering from nothing. Bounded to a single pass.
+    escalated = False
+    if (
+        plan.level not in (LEVEL_RECENT, LEVEL_BROAD)
+        and not (episode_items or message_items or active_hits)
+    ):
+        widened = router.escalate(plan, found=False)
+        if widened.level != plan.level:
+            plan = widened
+            escalated = True
+            (
+                episode_items,
+                message_items,
+                active_hits,
+                superseded_hits,
+            ) = _run(plan)
+
+    result.plan = plan
     result.episodes = ranking.rerank(
         episode_items, query, max_turn=max_turn, top_k=rerank_top_k()
     )
@@ -388,7 +517,10 @@ def retrieve(
     result.messages = ranking.rerank(
         list(by_id.values()), query, max_turn=max_turn, top_k=rerank_top_k()
     )
-    result.active_memories = [ranking.score_item(m, query) for m in active_hits]
+    # Rank memories with the §17 project/type signals the lookup stamped on each.
+    result.active_memories = ranking.rerank(
+        active_hits, query, max_turn=max_turn
+    )
     result.superseded_memories = [
         ranking.score_item(m, query) for m in superseded_hits
     ]
@@ -399,6 +531,8 @@ def retrieve(
         "query": T.truncate(query, 200),
         "level": plan.level,
         "reasons": plan.reasons,
+        "escalated": escalated,
+        "project_resolution": resolution.to_dict(),
         "episodes": [e.id for e in result.episodes],
         "messages": [m.id for m in result.messages],
         "memories": [m.id for m in result.active_memories],
@@ -452,6 +586,7 @@ def build_context(
     query: str,
     token_budget: int,
     events: list[ConversationEvent] | None = None,
+    explicit_project_id: str = "",
 ) -> str:
     """Retrieve + assemble the tagged context block. Empty string when nothing."""
 
@@ -464,6 +599,7 @@ def build_context(
         query=query,
         token_budget=token_budget,
         events=events,
+        explicit_project_id=explicit_project_id,
     )
     rendered = assembler.assemble(
         result, recent_events=recent_events, token_budget=token_budget
@@ -760,6 +896,24 @@ def process_run_end(
     summary: dict[str, Any] = {"episodes": 0, "memory_ops": 0, "state": state}
     if not events:
         return summary
+
+    # §3/§9: keep the project registry + conversation->project link current so a
+    # later thread can resolve back to this project. Runs even in `off` mode --
+    # it is bookkeeping, not extraction. Best-effort; never blocks a turn.
+    try:
+        project_store = ProjectStore(base)
+        project_store.ensure(
+            user_key, project_id=project_id, space_id=space_id, now=now
+        )
+        project_store.link_conversation(
+            user_key,
+            conversation_id=conversation_id,
+            project_id=project_id,
+            space_id=space_id,
+            now=now,
+        )
+    except Exception:  # noqa: BLE001 - registry is best-effort
+        logger.debug("hybrid: project registry update failed", exc_info=True)
 
     mode = llm_extraction_mode()
     summary["llm_extraction"] = mode

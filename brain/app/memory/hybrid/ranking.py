@@ -45,9 +45,16 @@ def score_item(
     semantic: float = 0.0,
     lexical: float = 0.0,
     recency: float = 0.0,
+    project_match: float = 0.0,
+    type_match: float = 0.0,
     weights: dict[str, float] | None = None,
 ) -> RetrievedItem:
-    """Return ``item`` annotated with per-signal scores and a blended total."""
+    """Return ``item`` annotated with per-signal scores and a blended total.
+
+    ``project_match`` / ``type_match`` are the §17 project/entity and memory-type
+    signals: they default to 0.0, so a caller that does not supply them (or a
+    kind of item that cannot carry them) ranks exactly as before.
+    """
 
     w = weights or ranking_weights()
     topic = T.keyword_overlap(item.text, query)
@@ -63,6 +70,8 @@ def score_item(
         "entity": round(entity, 4),
         "importance": round(importance, 4),
         "recency": round(recency, 4),
+        "project_match": round(project_match, 4),
+        "type_match": round(type_match, 4),
     }
     total = (
         w.get("semantic", 0.0) * semantic
@@ -71,6 +80,8 @@ def score_item(
         + w.get("entity", 0.0) * entity
         + w.get("importance", 0.0) * importance
         + w.get("recency", 0.0) * recency
+        + w.get("project", 0.0) * project_match
+        + w.get("type", 0.0) * type_match
     )
     merged = dict(item.scores)
     merged.update(breakdown)
@@ -104,6 +115,10 @@ def rerank(
             semantic=item.scores.get("semantic", 0.0),
             lexical=item.scores.get("lexical", 0.0),
             recency=recency_score(item.turn, max_turn),
+            # Project/type signals are set by the caller on the item before
+            # reranking (they need scope/origin context ranking does not have).
+            project_match=item.scores.get("project_match", 0.0),
+            type_match=item.scores.get("type_match", 0.0),
         )
         for item in items
     ]

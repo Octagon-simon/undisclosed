@@ -50,6 +50,10 @@ SCOPE_PROJECT = "project"
 SCOPE_CONVERSATION = "conversation"
 MEMORY_SCOPES = (SCOPE_GLOBAL, SCOPE_PROJECT, SCOPE_CONVERSATION)
 
+# Lifecycle for a durable project entity (§3): an archived project keeps its
+# memory but stops competing in project resolution.
+PROJECT_STATUSES = ("active", "archived")
+
 # Retrieval escalation levels (§22).
 LEVEL_RECENT = 1
 LEVEL_MEMORY = 2
@@ -152,6 +156,81 @@ class StructuredMemory:
         cleaned["source_message_ids"] = _as_str_list(
             cleaned.get("source_message_ids")
         )
+        try:
+            return cls(**cleaned)
+        except (TypeError, ValueError):
+            return None
+
+
+@dataclass
+class Project:
+    """A durable entity that groups conversations (§3, §14, §29).
+
+    A project is *any* recurring subject that naturally spans more than one
+    thread ("the Mac app", "CheflyMenu"), not necessarily a software repo. It is
+    the bridge that lets a brand-new conversation find the right previous
+    threads instead of searching every conversation equally (§3).
+
+    ``space_id`` is carried alongside ``id`` because in this on-disk layout a
+    project id is only unique within a space (``<user>/spaces/<s>/projects/<p>``
+    -- see :meth:`app.memory.local_store.LocalMemoryStore.project_path`), so a
+    resolution that returns only a project id could not be navigated to.
+    """
+
+    id: str
+    user_id: str = ""
+    name: str = ""
+    description: str = ""
+    status: str = "active"  # active | archived
+    space_id: str = ""
+    created_at: str = ""
+    updated_at: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, payload: Any) -> Project | None:
+        cleaned = _clean(cls, payload)
+        if cleaned is None:
+            return None
+        if not str(cleaned.get("id") or "").strip():
+            return None
+        try:
+            return cls(**cleaned)
+        except (TypeError, ValueError):
+            return None
+
+
+@dataclass
+class ConversationRef:
+    """A conversation's optional link to a project (§3, §13).
+
+    Today the conversation id equals the project id in this store, so the link
+    is often implicit. Modelling it explicitly is what lets a *future* thread
+    resolve into an existing project (or a project hold many threads) without a
+    schema change, and gives the resolver a durable "this thread was already
+    about project X" signal that survives restarts (§20).
+    """
+
+    id: str
+    user_id: str = ""
+    project_id: str = ""
+    space_id: str = ""
+    title: str = ""
+    created_at: str = ""
+    updated_at: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, payload: Any) -> ConversationRef | None:
+        cleaned = _clean(cls, payload)
+        if cleaned is None:
+            return None
+        if not str(cleaned.get("id") or "").strip():
+            return None
         try:
             return cls(**cleaned)
         except (TypeError, ValueError):
@@ -363,6 +442,7 @@ class RetrievedItem:
     status: str = ""
     scope: str = ""  # "global" | "project" | "conversation" (§2)
     origin_project_id: str = ""  # thread the evidence came from (§31)
+    memory_type: str = ""  # memory items: fact|preference|decision|... (§17)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
