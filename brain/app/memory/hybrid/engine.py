@@ -49,6 +49,7 @@ from app.memory.hybrid import (
     router,
     vector,
 )
+from app.memory.hybrid import scope as scope_mod
 from app.memory.hybrid import text as T
 from app.memory.hybrid.config import (
     LLM_EXTRACTION_OFF,
@@ -68,6 +69,9 @@ from app.memory.hybrid.config import (
 )
 from app.memory.hybrid.schema import (
     LEVEL_RECENT,
+    SCOPE_CONVERSATION,
+    SCOPE_GLOBAL,
+    SCOPE_PROJECT,
     Episode,
     EpisodeDraft,
     ExtractionResult,
@@ -76,11 +80,17 @@ from app.memory.hybrid.schema import (
     RetrievedItem,
     StructuredMemory,
 )
+from app.memory.hybrid.scope import GlobalMemoryStore
 from app.memory.hybrid.storage import HybridStore
 
 logger = logging.getLogger("memory.hybrid.engine")
 
 _MAX_EVENTS = 2000
+
+# Upper bound on records pulled in from outside the current thread (§12, §27).
+# Cross-session retrieval widens the candidate set; it must never become a dump,
+# so ranking + the token budget trim from here rather than the other way round.
+_MAX_CROSS_SESSION_MEMORIES = 100
 
 
 def _utc_now() -> str:
@@ -123,7 +133,7 @@ def _recent_window(
 
 
 def _memory_item(memory: StructuredMemory) -> RetrievedItem:
-    return RetrievedItem(
+    item = RetrievedItem(
         kind="memory",
         id=memory.id,
         text=f"{memory.key} = {memory.value}",
@@ -131,6 +141,68 @@ def _memory_item(memory: StructuredMemory) -> RetrievedItem:
         status=memory.status,
         scores={"importance": memory.confidence},
     )
+    # Tag reach + origin so the context builder can present a cross-session hit
+    # as evidence from another thread rather than current state (§12, §18).
+    item.scope = memory.scope_type or SCOPE_PROJECT
+    if item.scope == SCOPE_PROJECT:
+        item.origin_project_id = memory.scope_id or memory.conversation_id
+    elif item.scope == SCOPE_CONVERSATION:
+        item.origin_project_id = memory.conversation_id
+    return item
+
+
+def _cross_session_memories(
+    hybrid_store: HybridStore,
+    *,
+    user_key: str,
+    space_id: str,
+    project_id: str,
+) -> list[StructuredMemory]:
+    """Active memory from outside the current thread (§11, §12).
+
+    Two sources, both best-effort:
+
+    * ``global`` memory, read from the user root through
+      :class:`~app.memory.hybrid.scope.GlobalMemoryStore`;
+    * the user's *other* projects, so a decision made in one thread is
+      discoverable from a new one.
+
+    Capped so a long history cannot be pulled wholesale into one prompt. Any read
+    error yields ``[]`` -- retrieval degrades to the current project.
+    """
+
+    out: list[StructuredMemory] = []
+    try:
+        global_store = GlobalMemoryStore(hybrid_store.base)
+        out.extend(
+            global_store.read_active_memories(user_key, space_id, project_id)
+        )
+    except Exception:  # noqa: BLE001 - best-effort
+        logger.debug("hybrid: global memory read failed", exc_info=True)
+
+    try:
+        for other_space, other_project in scope_mod.iter_user_projects(
+            hybrid_store, user_key
+        ):
+            if other_space == space_id and other_project == project_id:
+                continue
+            try:
+                out.extend(
+                    hybrid_store.read_active_memories(
+                        user_key, other_space, other_project
+                    )
+                )
+            except Exception:  # noqa: BLE001 - skip one unreadable project
+                continue
+    except Exception:  # noqa: BLE001 - best-effort
+        logger.debug("hybrid: cross-project memory read failed", exc_info=True)
+
+    by_id: dict[str, StructuredMemory] = {}
+    for memory in out:
+        current = by_id.get(memory.id)
+        if current is None or memory.updated_at >= current.updated_at:
+            by_id[memory.id] = memory
+    return list(by_id.values())[:_MAX_CROSS_SESSION_MEMORIES]
 
 
 def _lookup_memories(
@@ -271,6 +343,21 @@ def retrieve(
         if not plan.use_memory:
             return [], []
         active = hybrid_store.read_active_memories(user_key, space_id, project_id)
+        # Widen to the user's other sessions only when the request actually calls
+        # for history (§12). A continuation ("continue", "that") stays inside the
+        # thread: pulling unrelated global/project memory into it is exactly the
+        # irrelevant-recall failure §36 warns about.
+        if plan.level != LEVEL_RECENT:
+            seen = {m.id for m in active}
+            for memory in _cross_session_memories(
+                hybrid_store,
+                user_key=user_key,
+                space_id=space_id,
+                project_id=project_id,
+            ):
+                if memory.id not in seen:
+                    seen.add(memory.id)
+                    active.append(memory)
         superseded = hybrid_store.read_memories(
             user_key, space_id, project_id, status="superseded"
         )
@@ -315,6 +402,12 @@ def retrieve(
         "episodes": [e.id for e in result.episodes],
         "messages": [m.id for m in result.messages],
         "memories": [m.id for m in result.active_memories],
+        "cross_session_memories": [
+            m.id
+            for m in result.active_memories
+            if m.scope == SCOPE_GLOBAL
+            or (m.origin_project_id and m.origin_project_id != project_id)
+        ],
         "scores": {
             "episodes": [e.score for e in result.episodes],
             "messages": [m.score for m in result.messages],
@@ -581,6 +674,59 @@ def _llm_turn_pass(
     return deterministic_ops
 
 
+def _apply_ops_by_scope(
+    hybrid_store: HybridStore,
+    ops: list[MemoryOp],
+    *,
+    user_key: str,
+    space_id: str,
+    project_id: str,
+    conversation_id: str,
+    now: str,
+    valid_source_ids: set[str] | None = None,
+) -> dict[str, int]:
+    """Route each proposal to the store that owns its scope (§2, §23).
+
+    Project and conversation records land in the project sidecar; ``global``
+    records land at the user root through :class:`GlobalMemoryStore`, so a
+    durable preference is recoverable from any thread. Every bucket still goes
+    through the same validated ``apply_ops`` mutation gate -- scope routing only
+    decides *where* a record lives, never *whether* it is allowed in.
+    """
+
+    buckets = scope_mod.partition_by_scope(
+        ops,
+        user_key=user_key,
+        project_id=project_id,
+        conversation_id=conversation_id,
+    )
+    global_store = GlobalMemoryStore(hybrid_store.base)
+    targets = (
+        (SCOPE_GLOBAL, global_store, user_key, user_key),
+        (SCOPE_CONVERSATION, hybrid_store, conversation_id, ""),
+        (SCOPE_PROJECT, hybrid_store, project_id, ""),
+    )
+    counts: dict[str, int] = {}
+    for scope_type, target, scope_id, user_id in targets:
+        bucket = buckets.get(scope_type) or []
+        if not bucket:
+            continue
+        target.apply_ops(
+            user_key,
+            space_id,
+            project_id,
+            bucket,
+            conversation_id=conversation_id,
+            now=now,
+            valid_source_ids=valid_source_ids,
+            scope_type=scope_type,
+            scope_id=scope_id,
+            user_id=user_id,
+        )
+        counts[scope_type] = len(bucket)
+    return counts
+
+
 # ----- End-of-run pipeline (§28, §45) -----
 
 
@@ -710,16 +856,18 @@ def process_run_end(
     if mode == LLM_EXTRACTION_WRITE:
         ops = [*ops, *llm_ops]
     if ops:
-        hybrid_store.apply_ops(
-            user_key,
-            space_id,
-            project_id,
+        scope_counts = _apply_ops_by_scope(
+            hybrid_store,
             ops,
+            user_key=user_key,
+            space_id=space_id,
+            project_id=project_id,
             conversation_id=conversation_id,
             now=now,
             valid_source_ids=_known_message_ids(events),
         )
         summary["memory_ops"] = len(ops)
+        summary["memory_ops_by_scope"] = scope_counts
 
     # 3. Working memory (§14).
     previous = hybrid_store.read_working_memory(user_key, space_id, project_id)

@@ -42,6 +42,14 @@ SCHEMA_VERSION: int = 1
 MEMORY_TYPES = ("fact", "preference", "decision", "constraint", "goal")
 MEMORY_STATUSES = ("active", "superseded", "deleted")
 
+# Explicit memory scope (``memory-cross-session-feature.md`` §2, §6, §23). Scope
+# is what lets a brand-new thread tell "this belongs to this one chat" apart from
+# "this is a durable user-level fact" and "this belongs to a recurring project".
+SCOPE_GLOBAL = "global"
+SCOPE_PROJECT = "project"
+SCOPE_CONVERSATION = "conversation"
+MEMORY_SCOPES = (SCOPE_GLOBAL, SCOPE_PROJECT, SCOPE_CONVERSATION)
+
 # Retrieval escalation levels (§22).
 LEVEL_RECENT = 1
 LEVEL_MEMORY = 2
@@ -105,7 +113,17 @@ class Episode:
 
 @dataclass
 class StructuredMemory:
-    """A versioned durable fact/preference/decision/constraint/goal (§10-11)."""
+    """A versioned durable fact/preference/decision/constraint/goal (§10-11).
+
+    ``scope_type``/``scope_id`` make the memory's reach explicit (§2, §6): a
+    ``global`` record is user-level and recoverable from any thread, a
+    ``project`` record spans the threads of one project (``scope_id`` = the
+    project id), and a ``conversation`` record stays in its own thread
+    (``scope_id`` = the conversation id). ``conversation_id`` is retained as
+    provenance: it names the thread the record was first learned in, so a
+    cross-session hit can be traced back to the conversation that produced it
+    (§4, §31).
+    """
 
     id: str
     conversation_id: str
@@ -118,6 +136,10 @@ class StructuredMemory:
     source_message_ids: list[str] = field(default_factory=list)
     created_at: str = ""
     updated_at: str = ""
+    scope_type: str = SCOPE_PROJECT
+    scope_id: str = ""
+    user_id: str = ""
+    importance: float = 0.5
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -151,7 +173,19 @@ class MemoryOp:
     memory_id: str = ""
     reason: str = ""
     confidence: float = 0.7
+    # How much the memory matters for retrieval ranking (§17). The proposal
+    # carries it so the deterministic mutation gate can stamp the durable
+    # record without re-deriving it from the conversation.
+    importance: float = 0.5
     source_message_ids: list[str] = field(default_factory=list)
+    # The extraction layer classifies scope explicitly (§23): "I prefer
+    # TypeScript" is proposed as ``global``, "for this one prototype use SQLite"
+    # as ``conversation``. Empty means "decide deterministically at write time"
+    # (see ``app.memory.hybrid.scope.resolve_op_scope``); the write path fills
+    # ``scope_id``/``user_id`` from the chosen scope, so proposals never need to
+    # know the user/project/conversation ids themselves.
+    scope_type: str = ""
+    scope_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -327,6 +361,8 @@ class RetrievedItem:
     scores: dict[str, float] = field(default_factory=dict)
     turn: int | None = None
     status: str = ""
+    scope: str = ""  # "global" | "project" | "conversation" (§2)
+    origin_project_id: str = ""  # thread the evidence came from (§31)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

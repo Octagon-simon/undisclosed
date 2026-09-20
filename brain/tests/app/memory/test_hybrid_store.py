@@ -152,6 +152,61 @@ class TestMemoryOps:
         assert hybrid.read_memories(*u) == []
 
 
+class TestMemoryScope:
+    """Scope stamping on UPSERT (§2, §6, §23 of the cross-session feature)."""
+
+    def _upsert(self, value: str, key: str = "database") -> MemoryOp:
+        return MemoryOp(
+            op="UPSERT",
+            type="decision",
+            key=key,
+            value=value,
+            importance=0.9,
+            source_message_ids=["m1"],
+        )
+
+    def test_default_scope_is_project(self, hybrid, ids):
+        u = ids["user_key"], ids["space_id"], ids["project_id"]
+        hybrid.apply_ops(*u, [self._upsert("PostgreSQL")],
+                         conversation_id="c", now="t1")
+        memory = hybrid.read_active_memories(*u)[0]
+        assert memory.scope_type == "project"
+        assert memory.importance == 0.9
+
+    def test_global_scope_is_stamped_with_user(self, hybrid, ids):
+        u = ids["user_key"], ids["space_id"], ids["project_id"]
+        hybrid.apply_ops(
+            *u,
+            [self._upsert("concise commits", key="commit_style")],
+            conversation_id="c",
+            now="t1",
+            scope_type="global",
+            scope_id="user_42",
+            user_id="user_42",
+        )
+        memory = hybrid.read_active_memories(*u)[0]
+        assert memory.scope_type == "global"
+        assert memory.scope_id == "user_42"
+        assert memory.user_id == "user_42"
+
+    def test_scope_carries_into_the_next_version(self, hybrid, ids):
+        u = ids["user_key"], ids["space_id"], ids["project_id"]
+        hybrid.apply_ops(
+            *u, [self._upsert("SQLite")],
+            conversation_id="c", now="t1", scope_type="project",
+            scope_id="proj_a", user_id="user_42",
+        )
+        hybrid.apply_ops(
+            *u, [self._upsert("PostgreSQL")],
+            conversation_id="c", now="t2", scope_type="project",
+            scope_id="proj_a", user_id="user_42",
+        )
+        active = hybrid.read_active_memories(*u)[0]
+        assert active.version == 2
+        assert active.scope_id == "proj_a"
+        assert active.user_id == "user_42"
+
+
 class TestWorkingMemoryAndMeta:
     def test_working_memory_roundtrip(self, hybrid, ids):
         payload = WorkingMemory(

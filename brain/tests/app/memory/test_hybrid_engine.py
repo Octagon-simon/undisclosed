@@ -298,3 +298,173 @@ class TestRetrieval:
         rows = read_jsonl_file(log_path)
         assert rows
         assert "evidence_found" in rows[-1]
+
+
+class TestScopeRouting:
+    """Scope decides *where* an op lands; the mutation gate still owns *whether* (§2, §23)."""
+
+    def _upsert(self, value, *, key="database", type_="decision"):
+        from app.memory.hybrid.schema import MemoryOp
+
+        return MemoryOp(
+            op="UPSERT",
+            type=type_,
+            key=key,
+            value=value,
+            source_message_ids=["m1"],
+        )
+
+    def test_ops_are_routed_to_their_scope_store(self, hybrid, ids):
+        from app.memory.hybrid.scope import GlobalMemoryStore
+
+        ops = [
+            self._upsert("PostgreSQL"),
+            self._upsert("concise commits", key="commit_style", type_="preference"),
+            self._upsert("SQLite for this prototype", type_="fact"),
+        ]
+        counts = engine._apply_ops_by_scope(
+            hybrid,
+            ops,
+            user_key=ids["user_key"],
+            space_id=ids["space_id"],
+            project_id=ids["project_id"],
+            conversation_id=ids["conversation_id"],
+            now="t1",
+        )
+        assert counts == {"global": 1, "conversation": 1, "project": 1}
+
+        project = hybrid.read_active_memories(
+            ids["user_key"], ids["space_id"], ids["project_id"]
+        )
+        by_value = {m.value: m for m in project}
+        assert by_value["PostgreSQL"].scope_type == "project"
+        assert by_value["SQLite for this prototype"].scope_type == "conversation"
+
+        at_root = GlobalMemoryStore(hybrid.base).read_active_memories(
+            ids["user_key"], ids["space_id"], ids["project_id"]
+        )
+        assert [m.value for m in at_root] == ["concise commits"]
+        assert at_root[0].user_id == ids["user_key"]
+
+
+class TestCrossSessionRetrieval:
+    def _seed(self, hybrid, ids, *, space_id, project_id, value, key="database"):
+        from app.memory.hybrid.schema import MemoryOp
+
+        hybrid.apply_ops(
+            ids["user_key"],
+            space_id,
+            project_id,
+            [
+                MemoryOp(
+                    op="UPSERT",
+                    type="decision",
+                    key=key,
+                    value=value,
+                    source_message_ids=["m1"],
+                )
+            ],
+            conversation_id=project_id,
+            now="t9",
+            scope_type="project",
+            scope_id=project_id,
+        )
+
+    def test_memory_from_another_project_is_retrieved(self, hybrid, ids):
+        self._seed(
+            hybrid,
+            ids,
+            space_id="space_other",
+            project_id="project_other",
+            value="PostgreSQL",
+        )
+        result, _ = engine.retrieve(
+            hybrid,
+            user_key=ids["user_key"],
+            space_id=ids["space_id"],
+            project_id=ids["project_id"],
+            conversation_id=ids["conversation_id"],
+            query="what database did we decide on",
+            token_budget=4000,
+        )
+        hits = [m for m in result.active_memories if m.text == "database = PostgreSQL"]
+        assert hits, "cross-session hit should surface"
+        assert hits[0].origin_project_id == "project_other"
+        assert hits[0].scope == "project"
+
+    def test_global_preference_is_retrieved_from_a_new_thread(self, hybrid, ids):
+        from app.memory.hybrid.scope import GlobalMemoryStore
+
+        GlobalMemoryStore(hybrid.base).apply_ops(
+            ids["user_key"],
+            ids["space_id"],
+            ids["project_id"],
+            [
+                # Build via the engine helper so scope stamping matches the write path.
+            ],
+            conversation_id=ids["conversation_id"],
+            now="t1",
+        ) if False else None
+        from app.memory.hybrid.schema import MemoryOp
+
+        GlobalMemoryStore(hybrid.base).apply_ops(
+            ids["user_key"],
+            ids["space_id"],
+            ids["project_id"],
+            [
+                MemoryOp(
+                    op="UPSERT",
+                    type="preference",
+                    key="commit_style",
+                    value="concise commit messages",
+                    source_message_ids=["m1"],
+                )
+            ],
+            conversation_id=ids["conversation_id"],
+            now="t1",
+            scope_type="global",
+            scope_id=ids["user_key"],
+            user_id=ids["user_key"],
+        )
+        result, _ = engine.retrieve(
+            hybrid,
+            user_key=ids["user_key"],
+            space_id=ids["space_id"],
+            project_id=ids["project_id"],
+            conversation_id=ids["conversation_id"],
+            query="what is my commit message preference",
+            token_budget=4000,
+        )
+        hits = [
+            m
+            for m in result.active_memories
+            if m.text == "commit_style = concise commit messages"
+        ]
+        assert hits
+        assert hits[0].scope == "global"
+        assert hits[0].origin_project_id == ""
+
+    def test_continuation_does_not_widen_cross_session(self, hybrid, ids):
+        self._seed(
+            hybrid,
+            ids,
+            space_id="space_other",
+            project_id="project_other",
+            value="PostgreSQL",
+        )
+        result, _ = engine.retrieve(
+            hybrid,
+            user_key=ids["user_key"],
+            space_id=ids["space_id"],
+            project_id=ids["project_id"],
+            conversation_id=ids["conversation_id"],
+            query="continue",
+            token_budget=4000,
+        )
+        from app.memory.hybrid.schema import LEVEL_RECENT
+
+        assert result.plan.level == LEVEL_RECENT
+        assert result.diagnostics["cross_session_memories"] == []
+        assert not any(
+            m.text == "database = PostgreSQL" for m in result.active_memories
+        )

@@ -41,6 +41,7 @@ from typing import Any
 from app.memory.hybrid import canonical
 from app.memory.hybrid.schema import (
     MEMORY_TYPES,
+    SCOPE_PROJECT,
     Episode,
     MemoryOp,
     StructuredMemory,
@@ -73,8 +74,19 @@ class HybridStore:
 
     # ----- Paths -----
 
+    def _dir(self, user_key: str, space_id: str, project_id: str) -> Path:
+        """Directory the sidecars live in.
+
+        Overridden by :class:`~app.memory.hybrid.scope.GlobalMemoryStore` to point
+        at the user root instead of a project dir, so user-level ("global") memory
+        can reuse the same records, validation and mutation gate as project
+        memory (§2, §23).
+        """
+
+        return self._store.project_path(user_key, space_id, project_id)
+
     def _path(self, user_key: str, space_id: str, project_id: str, name: str) -> Path:
-        return self._store.project_path(user_key, space_id, project_id) / name
+        return self._dir(user_key, space_id, project_id) / name
 
     # ----- Episodes -----
 
@@ -215,6 +227,9 @@ class HybridStore:
         conversation_id: str,
         now: str,
         valid_source_ids: set[str] | None = None,
+        scope_type: str = SCOPE_PROJECT,
+        scope_id: str = "",
+        user_id: str = "",
     ) -> list[StructuredMemory]:
         """Validate + apply a batch of proposed ops (§12).
 
@@ -263,7 +278,13 @@ class HybridStore:
                 name = (op.op or "").upper()
                 if name == "UPSERT":
                     self._apply_upsert(
-                        by_id, op, conversation_id=conversation_id, now=now
+                        by_id,
+                        op,
+                        conversation_id=conversation_id,
+                        now=now,
+                        scope_type=scope_type,
+                        scope_id=scope_id,
+                        user_id=user_id,
                     )
                 elif name in {"SUPERSEDE", "DELETE", "MERGE"}:
                     self._apply_targeted(by_id, op, name, now=now)
@@ -294,6 +315,9 @@ class HybridStore:
         *,
         conversation_id: str,
         now: str,
+        scope_type: str = SCOPE_PROJECT,
+        scope_id: str = "",
+        user_id: str = "",
     ) -> None:
         value = (op.value or "").strip()
         if not value:
@@ -301,6 +325,17 @@ class HybridStore:
         key = canonical.normalize_key(op.key) or canonical.normalize_key(op.type)
         existing = self._existing_active(by_id, op.type, key)
         sources = list(op.source_message_ids)
+        # A brand-new record inherits the scope of the write (§2, §6, §23): a
+        # global write lands user-level, a project write lands project-level,
+        # and a conversation write stays in its thread. ``origin_project_id`` is
+        # kept on the record so a cross-session hit can be traced back to the
+        # conversation that first produced it (§4, §31).
+        stamp = {
+            "scope_type": scope_type,
+            "scope_id": scope_id,
+            "user_id": user_id,
+            "importance": max(existing.importance if existing else 0.0, op.importance),
+        }
         if existing is None:
             record = StructuredMemory(
                 id=_new_id("mem"),
@@ -314,6 +349,7 @@ class HybridStore:
                 source_message_ids=sources,
                 created_at=now,
                 updated_at=now,
+                **stamp,
             )
             by_id[record.id] = record
             return
@@ -351,6 +387,7 @@ class HybridStore:
             source_message_ids=sources,
             created_at=now,
             updated_at=now,
+            **stamp,
         )
         by_id[record.id] = record
 
