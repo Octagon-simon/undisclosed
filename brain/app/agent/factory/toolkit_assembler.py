@@ -321,6 +321,7 @@ async def _build_single_agent_browser(
             options.cdp_browsers,
             toolkit_session_id,
             options.task_id,
+            getattr(options, "project_id", None),
         )
         if selected_browser is None:
             selected_browser = options.cdp_browsers[0]

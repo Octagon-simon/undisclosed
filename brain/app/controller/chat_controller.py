@@ -822,6 +822,24 @@ async def human_reply(id: str, data: HumanReply, request: Request):
             "This task is no longer waiting for a human reply. Please send a new message.",
         ) from exc
 
+    # The tool is now unblocked and the agent resumes the SAME turn — but the
+    # `/human-reply` endpoint emits nothing to the live SSE stream, so the UI
+    # (which just cleared the ask box) sees a silent gap until the agent's next
+    # work event and looks stuck. Re-emit the current todo_state, which the
+    # frontend maps to status RUNNING (chatStore: todo_state -> setStatus
+    # RUNNING). This flips the UI back to "working" immediately AND resets the
+    # SSE idle-timeout clock so a slow reply can't have reaped the turn. Fully
+    # best-effort: never let a UI signal failure affect the reply.
+    try:
+        live_agent = getattr(task_lock, "single_agent", None)
+        todo_tk = getattr(live_agent, "_observable_todo_toolkit", None)
+        if todo_tk is not None:
+            todo_tk.emit_todo_state()
+    except Exception:  # pragma: no cover - defensive
+        chat_logger.debug(
+            "post-human-reply working signal failed", extra={"task_id": id}
+        )
+
     task_lock.add_conversation(
         "human_reply",
         {"agent": data.agent, "reply": data.reply},

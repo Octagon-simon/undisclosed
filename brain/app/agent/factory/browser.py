@@ -79,6 +79,7 @@ class CdpBrowserPoolManager:
         self._occupied_ports: dict[int, str] = {}
         self._session_to_port: dict[str, int] = {}
         self._session_to_task: dict[str, str | None] = {}
+        self._session_to_project: dict[str, str | None] = {}
         self._lock = threading.Lock()
 
     def acquire_browser(
@@ -86,6 +87,7 @@ class CdpBrowserPoolManager:
         cdp_browsers: list[dict],
         session_id: str,
         task_id: str | None = None,
+        project_id: str | None = None,
     ) -> dict | None:
         """Acquire an available browser from the pool.
 
@@ -98,12 +100,55 @@ class CdpBrowserPoolManager:
             Browser configuration dict or None if all occupied.
         """
         with self._lock:
+            # REUSE first: if this task OR conversation (project) already holds a
+            # browser, hand back the SAME one (re-keyed to the new session id)
+            # instead of spawning another Chromium. Without this, every new
+            # chat/turn acquired a fresh port and launched yet another browser —
+            # the "7+ browsers pile up" bug. Matching on project_id dedups a new
+            # chat in the same conversation (which gets a new task_id). Reuse
+            # can't over-allocate, so it's safe.
+            for existing_sid in list(self._session_to_port.keys()):
+                same_task = (
+                    task_id is not None
+                    and self._session_to_task.get(existing_sid) == task_id
+                )
+                same_project = (
+                    project_id is not None
+                    and self._session_to_project.get(existing_sid) == project_id
+                )
+                if not (same_task or same_project):
+                    continue
+                port = self._session_to_port.get(existing_sid)
+                if port is None:
+                    continue
+                match = next(
+                    (b for b in cdp_browsers if b.get("port") == port), None
+                )
+                if match is None:
+                    continue
+                # Re-key the occupancy from the old session id to the new one.
+                if existing_sid != session_id:
+                    self._session_to_port.pop(existing_sid, None)
+                    self._session_to_task.pop(existing_sid, None)
+                    self._session_to_project.pop(existing_sid, None)
+                self._occupied_ports[port] = session_id
+                self._session_to_port[session_id] = port
+                self._session_to_task[session_id] = task_id
+                self._session_to_project[session_id] = project_id
+                logger.info(
+                    f"Reusing browser on port {port} for task={task_id} "
+                    f"project={project_id} (session {session_id}) instead of "
+                    f"launching another."
+                )
+                return match
+
             for browser in cdp_browsers:
                 port = browser.get("port")
                 if port and port not in self._occupied_ports:
                     self._occupied_ports[port] = session_id
                     self._session_to_port[session_id] = port
                     self._session_to_task[session_id] = task_id
+                    self._session_to_project[session_id] = project_id
                     logger.info(
                         f"Acquired browser on port {port} for session "
                         f"{session_id}. Occupied: "
@@ -126,6 +171,7 @@ class CdpBrowserPoolManager:
                 del self._occupied_ports[port]
                 self._session_to_port.pop(session_id, None)
                 self._session_to_task.pop(session_id, None)
+                self._session_to_project.pop(session_id, None)
                 logger.info(
                     f"Released browser on port {port} from session "
                     f"{session_id}. Occupied: "
@@ -158,6 +204,7 @@ class CdpBrowserPoolManager:
                     released_ports.append(port)
                 self._session_to_port.pop(session_id, None)
                 self._session_to_task.pop(session_id, None)
+                self._session_to_project.pop(session_id, None)
             if released_ports:
                 logger.info(
                     f"Released {len(released_ports)} browser(s) for "

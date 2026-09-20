@@ -53,6 +53,10 @@ _CORE_TOOLKIT_MARKERS: tuple[str, ...] = (
     "memory",
     "note",
     "message",
+    # Skills are user-attachable from the chatbox (a `#skill-name` pill); the
+    # skill tools must ALWAYS be present so the agent can load an attached skill
+    # this turn instead of the router filtering them out.
+    "skill",
     # Reach the cached repo digest (understand_project) instead of blind-grepping
     # a project it already explored; and general search.
     "project context",

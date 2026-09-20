@@ -15,6 +15,7 @@
 import asyncio
 import logging
 import os
+import sys
 
 from camel.toolkits import MCPToolkit
 
@@ -164,10 +165,50 @@ async def get_mcp_tools(
                 "MCP_REMOTE_CONFIG_DIR", os.path.expanduser("~/.mcp-auth")
             )
 
+    # Bound the connect so a single misbehaving server can't wedge the whole
+    # chat. The failure mode: a server needing interactive OAuth (e.g. Asana)
+    # prints an authorize URL and its mcp-remote subprocess sits at "Waiting for
+    # authorization…"; `connect()` then never returns. In a HEADLESS env (Docker,
+    # or Linux with no DISPLAY) nobody can complete that OAuth, so we fail fast
+    # and skip MCP for this turn rather than hang forever. On a desktop host a
+    # browser can pop for auth, so we allow longer. Tunable via env.
+    def _headless() -> bool:
+        try:
+            from app.hands.capabilities import _is_running_in_docker
+
+            if _is_running_in_docker():
+                return True
+        except Exception:
+            pass
+        return sys.platform.startswith("linux") and not os.environ.get("DISPLAY")
+
+    connect_timeout = float(
+        env("MCP_CONNECT_TIMEOUT_HEADLESS", "20")
+        if _headless()
+        else env("MCP_CONNECT_TIMEOUT", "90")
+    )
+
     mcp_toolkit = None
     try:
         mcp_toolkit = MCPToolkit(config_dict=config_dict, timeout=180)
-        await mcp_toolkit.connect()
+        try:
+            await asyncio.wait_for(
+                mcp_toolkit.connect(), timeout=connect_timeout
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "MCP connect exceeded %.0fs — a server is likely awaiting "
+                "interactive OAuth we can't complete here (headless=%s). "
+                "Skipping MCP tools for this turn so the chat isn't wedged; "
+                "authorize or disable that server to enable its tools.",
+                connect_timeout,
+                _headless(),
+            )
+            try:
+                await asyncio.wait_for(mcp_toolkit.disconnect(), timeout=5)
+            except Exception:
+                pass  # never let cleanup block the turn either
+            return []
 
         logger.info(
             f"Successfully connected to MCP toolkit with "

@@ -96,55 +96,54 @@ def _sanitize_message_list(messages: object) -> object:
 
 def _patch_anthropic_sdk() -> None:
     """Sanitize assistant messages at the Anthropic SDK boundary — the LAST
-    point before the request leaves, covering every path (streaming via
-    create(stream=True), non-streaming, prefills, cache_control wrapping, and
-    any CAMEL version) regardless of how the messages list was built. This is
-    the belt to the converter patch's suspenders: the converter patch can miss
-    if CAMEL renames its method or appends a message after conversion; this
-    can't."""
+    point before the request leaves, covering every path regardless of how the
+    messages list was built. Wraps BOTH `create` (the actual completion) AND
+    `count_tokens` (CAMEL's token counter calls
+    `self.client.messages.count_tokens(messages=...)` before every request —
+    Anthropic validates those messages identically, so a trailing-whitespace
+    assistant turn 400s there FIRST, which is the path `create`-only patching
+    missed). Belt to the converter patch's suspenders; independent of CAMEL."""
     try:
         import anthropic.resources.messages.messages as _am
     except Exception:  # pragma: no cover - anthropic layout changed
         logger.debug("anthropic Messages module not importable; SDK patch skipped")
         return
 
-    patched_any = False
+    def _make(orig):
+        # Plain def works for BOTH sync and async: we only mutate kwargs
+        # synchronously before delegating; an async method returns an awaitable
+        # that the caller awaits unchanged.
+        def wrapper(self, *args, **kwargs):
+            msgs = kwargs.get("messages")
+            if msgs is not None:
+                try:
+                    kwargs["messages"] = _sanitize_message_list(msgs)
+                except Exception:  # pragma: no cover - never break sends
+                    logger.debug(
+                        "SDK-boundary messages sanitize failed", exc_info=True
+                    )
+            return orig(self, *args, **kwargs)
+
+        wrapper._undisclosed_ws_patched = True
+        return wrapper
+
+    patched = []
     for cls_name in ("Messages", "AsyncMessages"):
         cls = getattr(_am, cls_name, None)
         if cls is None:
             continue
-        orig_create = getattr(cls, "create", None)
-        if orig_create is None or getattr(
-            orig_create, "_undisclosed_ws_patched", False
-        ):
-            continue
+        for method_name in ("create", "count_tokens"):
+            orig = getattr(cls, method_name, None)
+            if orig is None or getattr(orig, "_undisclosed_ws_patched", False):
+                continue
+            setattr(cls, method_name, _make(orig))
+            patched.append(f"{cls_name}.{method_name}")
 
-        def _make(orig):
-            # Plain def works for BOTH sync and async: we only mutate kwargs
-            # synchronously before delegating; the async `create` returns an
-            # awaitable that the caller awaits unchanged.
-            def create(self, *args, **kwargs):
-                msgs = kwargs.get("messages")
-                if msgs is not None:
-                    try:
-                        kwargs["messages"] = _sanitize_message_list(msgs)
-                    except Exception:  # pragma: no cover - never break sends
-                        logger.debug(
-                            "SDK-boundary messages sanitize failed",
-                            exc_info=True,
-                        )
-                return orig(self, *args, **kwargs)
-
-            create._undisclosed_ws_patched = True
-            return create
-
-        setattr(cls, "create", _make(orig_create))
-        patched_any = True
-
-    if patched_any:
+    if patched:
         logger.info(
-            "Patched Anthropic SDK Messages.create (sync+async) to sanitize "
-            "assistant messages at the request boundary"
+            "Patched Anthropic SDK to sanitize assistant messages at the "
+            "request boundary: %s",
+            ", ".join(patched),
         )
 
 

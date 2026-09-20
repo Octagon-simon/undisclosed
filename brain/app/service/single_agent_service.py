@@ -428,6 +428,79 @@ async def _caption_images(agent: Any, images: list[Any]) -> str | None:
     return None
 
 
+_ANNOUNCE_MARKERS: tuple[str, ...] = (
+    "i'll ",
+    "i will ",
+    "let me ",
+    "let me start",
+    "let me look",
+    "let me check",
+    "let me take a look",
+    "i'll start",
+    "i'll begin",
+    "i'll take a look",
+    "i'll look",
+    "i'll check",
+    "i'm going to",
+    "i am going to",
+    "first, i'll",
+    "let's start",
+    "going to start by",
+    "now let me",
+    "now i'll",
+    "now i will",
+    "now i'm going",
+    "now, let me",
+    "next, i'll",
+    "next i'll",
+    "let me now",
+)
+
+# Requests that are chat, not work — never nudge these even if the reply is short.
+_CHATTY_MESSAGES: frozenset[str] = frozenset(
+    {
+        "hi",
+        "hii",
+        "hey",
+        "hello",
+        "yo",
+        "how are you",
+        "how are you?",
+        "thanks",
+        "thank you",
+        "ok",
+        "okay",
+        "cool",
+        "nice",
+        "great",
+    }
+)
+
+
+def _looks_like_announce_and_stop(content: str, question: str) -> bool:
+    """True when a turn produced ONLY an intent preamble (e.g. "I'll start by
+    looking at the files…") with no work delivered, on a message that asked for
+    work. Used to auto-continue ONCE instead of stalling until the user
+    re-prompts. Conservative on purpose: short reply + future-intent phrasing +
+    a non-chatty request. An error reply (e.g. a 429 dump) won't match the
+    markers, so we never nudge on errors."""
+    if not content:
+        return False
+    c = content.strip().lower()
+    if not c or len(c) > 400:  # a substantive answer isn't announce-and-stop
+        return False
+    has_marker = any(m in c for m in _ANNOUNCE_MARKERS)
+    # Also catch fragmentary "about to do the next step" preambles that trail
+    # off into a colon, e.g. "Now the host side:" — very short, ends with ':'.
+    colon_fragment = c.endswith(":") and len(c) < 90
+    if not (has_marker or colon_fragment):
+        return False
+    q = (question or "").strip().lower().rstrip("!.")
+    if q in _CHATTY_MESSAGES or len(q) < 3:
+        return False
+    return True
+
+
 _ACK_INSTRUCTION = (
     "You are the assistant about to start working on the user's request. Reply "
     "with ONE short, warm, natural sentence (max ~16 words) that acknowledges "
@@ -688,9 +761,16 @@ async def _response_content(
         _hook_tasks: list[asyncio.Task] = []
         _logged_first_reasoning = False
         _dbg_chunk_no = 0
+        _soft_error: Any = None
         async for chunk in response:
             last_chunk = chunk
             _info = getattr(chunk, "info", None) or {}
+            # A model-call failure is surfaced by CAMEL as a chunk with an
+            # `error` in info AND the error text as content (NOT a raised
+            # exception). Capture it so the caller can route the turn through the
+            # failure path instead of persisting the error string as the answer.
+            if _info.get("error"):
+                _soft_error = _info.get("error")
             _tc = _info.get("tool_calls") or []
             _tc_count = len(_tc) if isinstance(_tc, (list, tuple)) else 0
             if _tc_count > _seen_tool_calls:
@@ -799,10 +879,23 @@ async def _response_content(
             },
             task_id=task_id,
         )
+        if task_lock is not None and _soft_error:
+            try:
+                task_lock.soft_error = _soft_error
+            except Exception:  # pragma: no cover - defensive
+                pass
         return answer, extract_tokens(last_chunk), answer_reasoning, streamed
 
     msg = getattr(response, "msg", None)
     usage_tokens = extract_tokens(response)
+    # Non-streaming path: same soft-error signal lives on response.info.
+    if task_lock is not None:
+        _ns_info = getattr(response, "info", None) or {}
+        if _ns_info.get("error"):
+            try:
+                task_lock.soft_error = _ns_info.get("error")
+            except Exception:  # pragma: no cover - defensive
+                pass
     reasoning = reasoning_of(msg)
     if msg is not None and getattr(msg, "content", None):
         return msg.content, usage_tokens, reasoning, False
@@ -995,6 +1088,12 @@ async def single_agent_solve(
                 turn_agent.reset()
             except Exception:  # pragma: no cover - defensive
                 logger.warning("per-turn agent reset failed", exc_info=True)
+        # Clear any soft (model-call) error from a prior turn so it can't leak
+        # into this one's success/failure routing.
+        try:
+            task_lock.soft_error = None
+        except Exception:  # pragma: no cover - defensive
+            pass
         # Every turn is now effectively fresh, so the compact background context
         # is rebuilt and injected as a system record each time.
         is_fresh_agent = True
@@ -1109,7 +1208,30 @@ async def single_agent_solve(
             "LANGUAGE: Write your reply in the SAME language as the user's "
             "current message (default English). Never switch languages "
             "mid-conversation — a task result, tool error, or long turn is NOT "
-            "a reason to answer in a different language than the user used."
+            "a reason to answer in a different language than the user used.\n"
+            "ASKING THE USER: When you genuinely need information only the user "
+            "can give — a missing value, a choice between options you listed, a "
+            "credential — you MUST call the ask_human_via_gui(question) tool. Do "
+            "NOT ask the question in plain text and end your turn: a plain-text "
+            "question ends the turn, so the user's reply arrives as a brand-new "
+            "message and you end up re-answering or repeating your question "
+            "verbatim instead of continuing. Calling ask_human_via_gui keeps the "
+            "turn open so their answer comes straight back to you and you act on "
+            "it. (Only ask when truly blocked — otherwise pick a sensible "
+            "default and proceed.)\n"
+            "SKILLS: A token like #skill-name in the user's message is a SKILL "
+            "the user attached from the chatbox — it is an explicit instruction "
+            "to USE that skill for this task. Before doing the work, load that "
+            "skill with your skill tool (read its SKILL.md by its directory name "
+            "— the text after the #) and follow its instructions. Do NOT ignore "
+            "it or tell the user to 'load the skill' themselves; the attached "
+            "pill already means 'use this skill'.\n"
+            "CONNECTORS: Likewise, an @connector-name token (e.g. @github, "
+            "@notion) is a connected app the user attached and wants you to use "
+            "— prefer that connector's tools (its MCP/integration tools) to do "
+            "the task rather than a browser or manual steps. Both #skill and "
+            "@connector pills are explicit 'use this' instructions, not plain "
+            "text to echo back."
         )
         try:
             from camel.types import OpenAIBackendRole
@@ -1160,6 +1282,20 @@ async def single_agent_solve(
             )
         else:
             step_input = prompt
+
+        # Track whether ANY tool was called this turn — the announce-and-stop
+        # detector below needs it; it also drives the presence ack.
+        _tool_called = False
+
+        async def _on_first_tool_call() -> None:
+            # Must be a COROUTINE: _response_content schedules it via
+            # asyncio.create_task(on_first_tool_call()), which requires an
+            # awaitable. _fire_ack is async, so await it here.
+            nonlocal _tool_called
+            _tool_called = True
+            if _ack_enabled_turn:
+                await _fire_ack()
+
         response = await turn_agent.astep(step_input)
         content, total_tokens, reasoning, reasoning_streamed = (
             await _response_content(
@@ -1167,9 +1303,50 @@ async def single_agent_solve(
                 task_lock=task_lock,
                 task_id=task_id,
                 stream_reasoning=_thinking_enabled(options),
-                on_first_tool_call=_fire_ack if _ack_enabled_turn else None,
+                on_first_tool_call=_on_first_tool_call,
             )
         )
+
+        # ANNOUNCE-AND-STOP recovery: the low-temp model sometimes replies with
+        # ONLY an intent preamble ("I'll start by looking at the files…") and
+        # ends the turn with ZERO tool calls, forcing the user to re-prompt for
+        # it to resume. If that happens on a request that clearly asked for WORK,
+        # nudge it ONCE to actually act. Guarded so it can never loop, never
+        # fires on greetings/short chats, and never fires on an errored turn.
+        if (not _tool_called) and _looks_like_announce_and_stop(content, question):
+            logger.info(
+                "announce-and-stop detected (0 tool calls, intent-only reply); "
+                "auto-continuing once",
+                extra={"task_id": task_id},
+            )
+            try:
+                nudge = (
+                    "Continue now. Actually perform the action you just "
+                    "described, using your tools — do NOT restate the plan. Do "
+                    "the work, then report what you changed or found."
+                )
+                response2 = await turn_agent.astep(nudge)
+                (
+                    content2,
+                    tokens2,
+                    reasoning2,
+                    reasoning_streamed2,
+                ) = await _response_content(
+                    response2,
+                    task_lock=task_lock,
+                    task_id=task_id,
+                    stream_reasoning=_thinking_enabled(options),
+                    on_first_tool_call=_on_first_tool_call,
+                )
+                if content2 and content2.strip():
+                    content = content2
+                    total_tokens += tokens2
+                    reasoning = reasoning2 or reasoning
+                    reasoning_streamed = reasoning_streamed2
+            except Exception:
+                logger.warning(
+                    "announce-and-stop auto-continue failed", exc_info=True
+                )
         # Turn is done: stop the long-task fallback timer if it's still pending
         # (short / no-tool turns never reach it → no ack). A tool-using turn has
         # already fired the ack via on_first_tool_call above.
@@ -1494,8 +1671,39 @@ async def single_agent_solve(
                     running_turn = None
                     continue
 
-                task_lock.status = Status.done
                 running_turn = None
+                # A model-call error surfaced as CONTENT (not a raised
+                # exception) — e.g. "402 Insufficient Balance", "429 rate limit".
+                # Route it exactly like a hard failure: do NOT persist it as the
+                # turn's answer (that writes the error into the transcript +
+                # rolling summary, so it pollutes context and resurfaces on later
+                # turns — the "it replayed the old error / it's cached" bug), and
+                # emit an `error` event (which the UI renders as an error, not a
+                # normal answer with copy/feedback buttons).
+                _soft_err = getattr(task_lock, "soft_error", None)
+                if _soft_err:
+                    try:
+                        task_lock.soft_error = None
+                    except Exception:  # pragma: no cover - defensive
+                        pass
+                    pause_event.clear()
+                    task_lock.status = Status.confirming
+                    _finalize_memory_for_turn(
+                        task_lock, state="failed", error=str(_soft_err)
+                    )
+                    task_lock.last_reasoning = ""
+                    yield sse_json(
+                        "error",
+                        {"message": final_result or str(_soft_err)},
+                    )
+                    _fire_hook(
+                        emit_task_failed(
+                            task_id=current_task_id, error=str(_soft_err)
+                        )
+                    )
+                    continue
+
+                task_lock.status = Status.done
                 _finalize_memory_for_turn(
                     task_lock,
                     state="done",
