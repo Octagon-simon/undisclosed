@@ -4,13 +4,22 @@
 # Replaces the old `eigent/server` docker-compose stack. The new brain is the
 # single-user, on-device FastAPI backend that eigent-theia's agent panel and
 # the vite dev proxy (port 3000 -> /api) talk to. It is standalone: persistence
-# is local files + local vector stores under $HOME/.eigent, so it does NOT need
-# the old Postgres / Redis / Celery services.
-#
-# The browser proxies /api on http://127.0.0.1:3000 to this api container via
-# host port 3001, so keep the published port at 3001.
+# is local files + local vector stores under $HOME/.undisclosed, so it does NOT
+# need the old Postgres / Redis / Celery services.
 #
 #   docker compose up -d --build api
+#
+# IMPORTANT — host port. This container must NOT publish on host :5001. Both
+# `scripts/brain.sh` (dev brain) and the packaged app's BrainLauncher own host
+# :5001, and Docker would add a THIRD listener on the same port; connections
+# then race between brains and chat hangs ("docker works but I can't chat").
+# So we publish on a distinct host port (default 3100) and point the editor's
+# proxy at it:
+#
+#   export UNDISCLOSED_PROXY_TARGET=http://127.0.0.1:3100   # before starting the app/dev server
+#
+# or put that line in .env. Override the host port with BRAIN_HOST_PORT.
+#
 # ---------------------------------------------------------------------------
 services:
   api:
@@ -20,13 +29,33 @@ services:
     container_name: eigent_theia_api
     restart: unless-stopped
     ports:
-      - '5001:5001'
+      # <host>:<container>. The container always listens on 5001 internally;
+      # only the host side must differ from the local brain's :5001.
+      - '${BRAIN_HOST_PORT:-3100}:5001'
     environment:
       - UNDISCLOSED_BRAIN_HOST=0.0.0.0
       - UNDISCLOSED_BRAIN_PORT=5001
+      # --- Optional: run the container with LOCAL semantics ------------------
+      # By default the brain detects Docker and downgrades itself
+      # (deployment=docker -> filesystem=workspace_only, no browser, and
+      # folder/workspace BINDING is disabled, so binding endpoints 412 and the
+      # agent can only touch its in-container workspace). If you mount your
+      # project and want binding + full filesystem back, opt in explicitly:
+      #
+      # - UNDISCLOSED_DEPLOYMENT_TYPE=local
+      # - UNDISCLOSED_WORKSPACE=/workspace
+      #
+      # (Browser still needs a reachable CDP endpoint; a container normally
+      # cannot provide one, so leave the browser hand off.)
     volumes:
-      # Use the host's ~/.undisclosed directory directly.
+      # Use the host's ~/.undisclosed directory directly (chat history, spaces,
+      # vector stores, task locks).
       - ~/.undisclosed:/root/.undisclosed
+      # --- Optional: mount the project you want the agent to work on ---------
+      # Pair this with UNDISCLOSED_DEPLOYMENT_TYPE=local + UNDISCLOSED_WORKSPACE
+      # above, otherwise the agent cannot reach it (workspace_only scope).
+      #
+      # - /Users/octagon/Documents/github/eigent-theia:/workspace
     healthcheck:
       test: ['CMD', 'curl', '-f', 'http://localhost:5001/health']
       interval: 30s

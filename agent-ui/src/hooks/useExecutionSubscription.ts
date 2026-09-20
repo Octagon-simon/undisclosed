@@ -121,7 +121,16 @@ export function useExecutionSubscription(enabled: boolean = true) {
   const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastCloseTimestampRef = useRef<number>(0);
   const authFailedRef = useRef<boolean>(false);
-  const maxReconnectAttempts = 5;
+  // Stable handle to the full reconnect routine. Set once `manualReconnect` is
+  // defined; used by the ping/pong watchdog and the wake/network handlers, which
+  // are created earlier or live outside this hook's render cycle.
+  const reconnectRef = useRef<(() => void) | null>(null);
+  // Retry forever. A sleep/wake, a brain restart, or a transient blip must not
+  // permanently kill the listener: the old cap of 5 gave up after ~30s and left
+  // the panel dead until a manual reload (exactly the post-wake failure the user
+  // hit). We cap the BACKOFF delay instead of the attempt count.
+  const maxReconnectAttempts = Number.POSITIVE_INFINITY;
+  const maxReconnectDelay = 30000;
   const debounceDelay = 5000; // 5 seconds debounce period
   const baseReconnectDelay = 1000;
 
@@ -168,9 +177,13 @@ export function useExecutionSubscription(enabled: boolean = true) {
         // Set timeout to wait for pong
         pongTimeoutRef.current = setTimeout(() => {
           console.warn(
-            '[ExecutionSubscription] No pong received, marking connection as unhealthy'
+            '[ExecutionSubscription] No pong received — rebuilding connection'
           );
           setWsConnectionStatusRef.current('unhealthy');
+          // A socket that is OPEN at the TCP level but never answers pings is
+          // half-open (the classic post-sleep state). Marking it "unhealthy" is
+          // not enough — tear it down and reconnect.
+          reconnectRef.current?.();
         }, PONG_TIMEOUT);
       }
     }, PING_INTERVAL);
@@ -485,8 +498,10 @@ export function useExecutionSubscription(enabled: boolean = true) {
           // Only reconnect if this is still the most recent close event
           if (lastCloseTimestampRef.current === now && enabled) {
             if (reconnectAttemptsRef.current < maxReconnectAttempts) {
-              const delay =
-                baseReconnectDelay * Math.pow(2, reconnectAttemptsRef.current);
+              const delay = Math.min(
+                baseReconnectDelay * Math.pow(2, reconnectAttemptsRef.current),
+                maxReconnectDelay
+              );
               console.log(
                 `[ExecutionSubscription] Reconnecting after debounce in ${delay}ms (attempt ${reconnectAttemptsRef.current + 1}/${maxReconnectAttempts})`
               );
@@ -567,6 +582,78 @@ export function useExecutionSubscription(enabled: boolean = true) {
       connect();
     }, 200);
   }, [disconnect, connect]);
+
+  // Keep the ref pointed at the current reconnect routine.
+  useEffect(() => {
+    reconnectRef.current = manualReconnect;
+    return () => {
+      reconnectRef.current = null;
+    };
+  }, [manualReconnect]);
+
+  // Liveness check used after the machine wakes / the tab regains focus. A
+  // socket that survived a sleep can look OPEN while its peer is long gone, and
+  // no close frame ever arrives — so `connect()`'s "already open" guard would
+  // skip it forever. Ping and, if no pong returns, rebuild the connection.
+  const probeLiveness = useCallback(() => {
+    if (!enabled || !token) {
+      return;
+    }
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      reconnectAttemptsRef.current = 0;
+      connect();
+      return;
+    }
+    try {
+      ws.send(JSON.stringify({ type: 'ping' }));
+    } catch {
+      reconnectRef.current?.();
+      return;
+    }
+    if (pongTimeoutRef.current) {
+      clearTimeout(pongTimeoutRef.current);
+    }
+    pongTimeoutRef.current = setTimeout(() => {
+      console.warn(
+        '[ExecutionSubscription] liveness ping unanswered — reconnecting'
+      );
+      reconnectRef.current?.();
+    }, PONG_TIMEOUT);
+  }, [enabled, token, connect]);
+
+  // Self-heal across sleep/wake and network changes. Without this, a resumed
+  // machine (or a dropped Wi-Fi link) leaves the listener dead until a manual
+  // reload, because the browser never fires onclose for a half-open socket.
+  useEffect(() => {
+    if (!enabled || !token) {
+      return;
+    }
+    const onOnline = () => {
+      console.log('[ExecutionSubscription] network online — forcing reconnect');
+      reconnectAttemptsRef.current = 0;
+      reconnectRef.current?.();
+    };
+    const onWake = () => {
+      if (document.visibilityState !== 'visible') {
+        return;
+      }
+      console.log(
+        '[ExecutionSubscription] visibility/focus regained — checking liveness'
+      );
+      probeLiveness();
+    };
+    window.addEventListener('online', onOnline);
+    window.addEventListener('focus', onWake);
+    window.addEventListener('pageshow', onWake);
+    document.addEventListener('visibilitychange', onWake);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('focus', onWake);
+      window.removeEventListener('pageshow', onWake);
+      document.removeEventListener('visibilitychange', onWake);
+    };
+  }, [enabled, token, probeLiveness]);
 
   // Register reconnect callback in store
   useEffect(() => {

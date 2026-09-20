@@ -21,6 +21,13 @@ LOG="$ROOT/.brain.log"
 PIDFILE="$ROOT/.brain.pid"
 RUNFILE="$ROOT/.brain.run"  # exists while the dev brain is meant to be running
 
+# Watchdog knobs. The supervisor below only respawns the brain when the PYTHON
+# PROCESS EXITS; a wedged-but-alive brain keeps the LISTEN socket and is never
+# noticed. These control the /health probe that catches that case.
+WATCH_INTERVAL="${UNDISCLOSED_BRAIN_WATCH_INTERVAL:-5}"  # seconds between probes
+WATCH_FAILS="${UNDISCLOSED_BRAIN_WATCH_FAILS:-6}"        # consecutive fails -> restart
+WATCHDOG="${UNDISCLOSED_BRAIN_WATCHDOG:-1}"              # 0 disables the watchdog
+
 # NOTE: :5001 has (at most) ONE owner at a time. In the packaged desktop app the
 # frozen `undisclosed-brain` sidecar is brought up by BrainLauncher (the Electron
 # backend) and killed with the app. This script is DEV-ONLY. `start()` therefore
@@ -89,6 +96,43 @@ start() {
   ) &
   echo $! >"$PIDFILE"
   echo "[brain] supervisor pid $(cat "$PIDFILE") — logs: $LOG (previous: $LOG.prev)"
+
+  # Health watchdog. The respawn loop above only fires when the python process
+  # EXITS. A wedged-but-alive brain (its single event loop stalled on a blocking
+  # tool, or a half-open socket after sleep/wake) keeps the :PORT LISTEN socket
+  # and accepts TCP forever while answering nothing — so the supervisor never
+  # fires and the editor sits on 502s until you kill it by hand. This probe loop
+  # detects that state and kills the port owner, letting the supervisor bring up
+  # a fresh brain. It only counts failures while SOMETHING is listening, so a
+  # normal cold start (port still closed) never trips it, and it exits as soon as
+  # its supervisor is gone (so `stop`/`restart` do not leave it behind).
+  if [ "$WATCHDOG" != "0" ]; then
+    local sup_pid
+    sup_pid="$(cat "$PIDFILE")"
+    (
+      fails=0
+      while kill -0 "$sup_pid" 2>/dev/null && [ -f "$RUNFILE" ]; do
+        sleep "$WATCH_INTERVAL"
+        kill -0 "$sup_pid" 2>/dev/null || break
+        [ -f "$RUNFILE" ] || break
+        if curl -fsS -m 4 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then
+          fails=0
+        elif [ -z "$(port_pids)" ]; then
+          fails=0  # nothing listening (still starting up) — not stuck
+        else
+          fails=$((fails + 1))
+          if [ "$fails" -ge "$WATCH_FAILS" ]; then
+            echo "[brain] watchdog: /health unresponsive on :$PORT for $fails probes; killing listener to force a fresh brain" >>"$LOG"
+            pids="$(port_pids)"
+            # shellcheck disable=SC2086
+            [ -n "$pids" ] && kill -9 $pids 2>/dev/null || true
+            fails=0
+          fi
+        fi
+      done
+    ) &
+    echo "[brain] watchdog armed (every ${WATCH_INTERVAL}s, ${WATCH_FAILS} fails -> restart)"
+  fi
 }
 
 stop() {

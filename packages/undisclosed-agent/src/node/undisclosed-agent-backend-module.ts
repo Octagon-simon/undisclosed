@@ -36,6 +36,45 @@ const BRAIN_PORT = process.env.UNDISCLOSED_BRAIN_PORT || '5001';
 const PROXY_TARGET =
   process.env.UNDISCLOSED_PROXY_TARGET || `http://localhost:${BRAIN_PORT}`;
 
+// The brain is a single-process, single-event-loop FastAPI app. During a heavy
+// agent turn it can briefly refuse/reset a connection (while the loop is busy,
+// or while the supervisor restarts a wedged one). A ONE-SHOT 502 in that window
+// is what makes the editor look "flaky": the user's /api/v1/user/* calls fail,
+// and they restart the brain by hand. So retry idempotent GETs on connect-type
+// errors to ride out a sub-few-second hiccup.
+//
+// We deliberately do NOT set proxyTimeout: the chat stream is a long-lived SSE
+// response served through this same proxy, and a global timeout would cut it
+// off mid-turn.
+const MAX_PROXY_RETRIES = Number(process.env.UNDISCLOSED_PROXY_RETRIES ?? 4);
+const PROXY_RETRY_DELAY_MS = Number(
+  process.env.UNDISCLOSED_PROXY_RETRY_DELAY_MS ?? 350
+);
+const TRANSIENT_PROXY_ERRORS = new Set([
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'EPIPE',
+  'ETIMEDOUT',
+  'EHOSTUNREACH',
+  'ECONNABORTED',
+  'ENOTFOUND',
+]);
+
+// A socket that went idle across a macOS sleep is dead, but NO FIN arrives for a
+// suspended/lost peer, so nothing tells us. Node's default agent keeps sockets
+// alive, so the FIRST proxied request after wake reuses that dead socket, the
+// connect fails, and the editor shows the 502 the user sees (on the editor's own
+// port, e.g. localhost:60268/api/v1/user/key). The brain lives on loopback,
+// where a fresh connect is ~free, so this proxy keeps no idle sockets and always
+// dials a live connection. Set UNDISCLOSED_PROXY_KEEPALIVE=1 only if
+// UNDISCLOSED_PROXY_TARGET points at a genuinely remote host.
+const PROXY_KEEPALIVE =
+  (process.env.UNDISCLOSED_PROXY_KEEPALIVE ?? '0').trim() === '1';
+const BRAIN_PROXY_AGENT = new http.Agent({
+  keepAlive: PROXY_KEEPALIVE,
+  maxSockets: 64,
+});
+
 function resolveAssetsDir(): string {
   const rel = path.join('packages', 'undisclosed-agent', 'assets', 'agent-embed');
   const nm = path.join(
@@ -107,8 +146,38 @@ export default new ContainerModule((bind) => {
           }
         });
         proxy.on('error', (...args: unknown[]) => {
-          const err = args[0] as Error;
+          const err = args[0] as NodeJS.ErrnoException;
+          const req = args[1] as
+            | (http.IncomingMessage & { __proxyRetries?: number })
+            | undefined;
           const res = args[2] as http.ServerResponse | undefined;
+          const code = err?.code;
+          const used = req?.__proxyRetries ?? 0;
+          const canRetry =
+            !!req &&
+            req.method === 'GET' &&
+            !!res &&
+            !res.headersSent &&
+            !!code &&
+            TRANSIENT_PROXY_ERRORS.has(code) &&
+            used < MAX_PROXY_RETRIES;
+          if (canRetry) {
+            req.__proxyRetries = used + 1;
+            // eslint-disable-next-line no-console
+            console.warn(
+              `[undisclosed-agent] /api proxy ${code} — retry ` +
+                `${req.__proxyRetries}/${MAX_PROXY_RETRIES} ${req.url}`
+            );
+            setTimeout(() => {
+              if (!res!.headersSent) {
+                proxy.web(req!, res!, {
+                  target: PROXY_TARGET,
+                  agent: BRAIN_PROXY_AGENT,
+                });
+              }
+            }, PROXY_RETRY_DELAY_MS);
+            return;
+          }
           if (res && !res.headersSent) {
             res.statusCode = 502;
             res.end(`agent proxy error: ${err.message}`);
@@ -124,7 +193,7 @@ export default new ContainerModule((bind) => {
             proxy.web(
               req as unknown as http.IncomingMessage,
               res as unknown as http.ServerResponse,
-              { target: PROXY_TARGET }
+              { target: PROXY_TARGET, agent: BRAIN_PROXY_AGENT }
             );
           }
         );

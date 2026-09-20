@@ -165,7 +165,16 @@ def detect_capabilities(config: dict | None = None) -> BrainCapabilities:
     if deployment in DEPLOYMENT_FULL:
         # local/cloud VM -> full capabilities
         in_docker = _is_running_in_docker()
-        if in_docker:
+        # Escape hatch: a container on your OWN machine (docker-compose, mounted
+        # project folder) can run with LOCAL semantics by setting
+        # UNDISCLOSED_DEPLOYMENT_TYPE=local explicitly. Without this, the Docker
+        # auto-detect below always wins, so `deployment_type` is forced to
+        # "docker" and workspace/folder binding (which requires deployment ==
+        # "local") can never be enabled — the agent then 412s on folder binding
+        # and is restricted to the in-container workspace. An explicit "local"
+        # keeps full filesystem + binding; the operator is responsible for
+        # mounting what the agent should see.
+        if in_docker and deployment != "local":
             logger.info("Brain running in Docker, using limited capabilities")
             deployment = "docker"
             caps = BrainCapabilities(
@@ -177,6 +186,27 @@ def detect_capabilities(config: dict | None = None) -> BrainCapabilities:
                     env("UNDISCLOSED_WORKSPACE", "~/.undisclosed/workspace")
                 ).expanduser(),
                 deployment_type="docker",
+            )
+        elif in_docker:
+            # Explicit local override inside a container — keep full/local
+            # semantics so folder binding works. Browser still depends on a
+            # reachable CDP endpoint, which a container usually cannot provide.
+            logger.info(
+                "Brain in Docker but UNDISCLOSED_DEPLOYMENT_TYPE=local — "
+                "keeping local (full) capabilities"
+            )
+            has_browser = _probe_cdp_browser()
+            if not has_browser:
+                has_browser = _can_launch_local_cdp_browser()
+            caps = BrainCapabilities(
+                has_terminal=_has_terminal_shell(),
+                has_browser=has_browser,
+                filesystem_scope="full",
+                mcp_mode="all",
+                workspace_root=Path(
+                    env("UNDISCLOSED_WORKSPACE", "~/.undisclosed/workspace")
+                ).expanduser(),
+                deployment_type="local",
             )
         else:
             # local/desktop: browser hand when CDP is configured/reachable,

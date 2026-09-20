@@ -92,7 +92,7 @@ ENV PATH="/app/.venv/bin:$PATH"
 # `python main.py`, which starts uvicorn internally on UNDISCLOSED_BRAIN_PORT (default
 # 5001). We bind 0.0.0.0 so Docker can publish it.
 ENV UNDISCLOSED_BRAIN_HOST=0.0.0.0
-EXPOSE 5678
+EXPOSE 5001
 
 # Reset the entrypoint — don't invoke `uv`.
 ENTRYPOINT []

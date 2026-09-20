@@ -1097,9 +1097,20 @@ class ListenChatAgent(ChatAgent):
                     # Check if this is a sync tool to avoid run_in_executor
                     # (which breaks ContextVar)
                     if hasattr(tool, "is_async") and not tool.is_async:
-                        # Sync tool: call directly to preserve ContextVar
-                        # in same thread
-                        result = tool(**args)
+                        # Sync tool: run it OFF the event loop. Blocking tools
+                        # (shell_exec's subprocess.run, git/diff/file scans)
+                        # otherwise stall the single uvicorn loop for the whole
+                        # command, so every OTHER request — the editor's
+                        # /api/v1/user/* calls and /health — hangs until it
+                        # returns, which the desktop app surfaces as a 502 from
+                        # its /api proxy (the "brain went dead, restart it"
+                        # symptom).
+                        # asyncio.to_thread copies the current context, so the
+                        # process_task ContextVar set just above still
+                        # propagates (that is the ContextVar the old
+                        # run_in_executor note was worried about — to_thread
+                        # keeps it, run_in_executor does not).
+                        result = await asyncio.to_thread(tool, **args)
                         # Handle case where sync call returns a coroutine
                         if asyncio.iscoroutine(result):
                             result = await result
@@ -1118,9 +1129,12 @@ class ListenChatAgent(ChatAgent):
                     result = await tool(**args)
 
                 else:
-                    # Fallback: sync call - call directly in current context
-                    # DO NOT use run_in_executor to preserve ContextVar
-                    result = tool(**args)
+                    # Fallback: sync tool. Run it in a worker thread so a
+                    # blocking call cannot stall the event loop, which would
+                    # make concurrent requests (editor /api, /health) hang.
+                    # asyncio.to_thread copies the context, so ContextVars are
+                    # preserved (unlike run_in_executor).
+                    result = await asyncio.to_thread(tool, **args)
                     # Handle case where synchronous call returns a coroutine
                     if asyncio.iscoroutine(result):
                         result = await result
