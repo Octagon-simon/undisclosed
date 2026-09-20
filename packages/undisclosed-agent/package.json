@@ -2,7 +2,7 @@
   "name": "undisclosed-agent",
   "version": "0.0.1",
   "private": true,
-  "description": "Undisclosed agent panel as a Theia extension (ReactWidget in the right dock). Hosts the on-device agent UI. Agentic features powered by Eigent.ai.",
+  "description": "Undisclosed agent panel as a Theia extension (ReactWidget in the right dock). Hosts the on-device agent UI. Agentic features powered by Undisclosed.",
   "license": "Apache-2.0",
   "theiaExtensions": [
     {

@@ -1,8 +1,8 @@
 {
   "private": true,
-  "name": "eigent-theia",
+  "name": "undisclosed",
   "version": "0.0.1",
-  "description": "Eigent's editor-first shell, built as a custom Eclipse Theia product. The code editor is the primary surface; Eigent's agent + features are added as native Theia contributions (Antigravity model).",
+  "description": "Undisclosed's editor-first shell, built as a custom Eclipse Theia product. The code editor is the primary surface; Undisclosed's agent + features are added as native Theia contributions (Antigravity model).",
   "license": "Apache-2.0",
   "engines": {
     "node": ">=18 <=20"

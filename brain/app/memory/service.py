@@ -40,6 +40,9 @@ from typing import Any, Literal
 
 from app.memory import rolling_summary
 from app.memory.context_builder import ContextMode, ProjectContextBuilder
+from app.memory.hybrid import config as hybrid_config
+from app.memory.hybrid import engine as hybrid_engine
+from app.memory.hybrid.storage import HybridStore
 from app.memory.events import (
     ConversationEvent,
     MemoryArtifact,
@@ -139,6 +142,34 @@ def build_durable_context_for_task_lock(
         if token_budget is not None
         else _default_memory_token_budget()
     )
+
+    # Hybrid path (§19, §45): when enabled, the hybrid engine runs the routed,
+    # parallel retrieval and assembles a tagged context block. Best-effort: an
+    # empty/failed result falls through to the durable-bundle path below.
+    if hybrid_config.enabled():
+        hybrid_fragment = _build_hybrid_context_section(
+            store=service.store,
+            user_key=user_key,
+            space_id=run_context.space_id,
+            project_id=run_context.project_id,
+            query=current_user_prompt or "",
+            token_budget=budget,
+        )
+        if hybrid_fragment:
+            facts_section = (
+                _build_semantic_recall_section(
+                    user_key=user_key,
+                    space_id=run_context.space_id,
+                    project_id=run_context.project_id,
+                    query=current_user_prompt,
+                )
+                if include_semantic
+                else None
+            )
+            if facts_section:
+                return f"{hybrid_fragment}\n\n{facts_section}"
+            return hybrid_fragment
+
     try:
         builder = ProjectContextBuilder(service.store)
         bundle = builder.build(
@@ -205,6 +236,42 @@ def _build_semantic_recall_section(
     lines.extend(f"- {f}" for f in facts)
     lines.append("</remembered_facts>")
     return "\n".join(lines)
+
+
+def _build_hybrid_context_section(
+    *,
+    store: LocalMemoryStore,
+    user_key: str,
+    space_id: str,
+    project_id: str,
+    query: str,
+    token_budget: int,
+) -> str | None:
+    """Run the hybrid retrieval + assembler for one turn. None on failure/empty.
+
+    Kept as a thin wrapper so the durable-context entry point stays readable and
+    the hybrid layer can be exercised in isolation by tests.
+    """
+
+    try:
+        hybrid_store = HybridStore(store)
+        rendered = hybrid_engine.build_context(
+            hybrid_store,
+            user_key=user_key,
+            space_id=space_id,
+            project_id=project_id,
+            conversation_id=project_id,
+            query=query,
+            token_budget=token_budget,
+        )
+    except Exception:  # noqa: BLE001 — best-effort read
+        logger.warning(
+            "memory.hybrid: context build failed; falling back",
+            extra={"project_id": project_id},
+            exc_info=True,
+        )
+        return None
+    return rendered or None
 
 
 def read_rolling_summary_for_task_lock(task_lock: Any) -> str | None:
@@ -651,6 +718,29 @@ class MemoryService:
                 },
                 exc_info=True,
             )
+
+        # Hybrid pipeline (§28): boundary-aware eviction into episodes, memory
+        # extraction, working-memory update, then embed — off the response path.
+        if hybrid_config.enabled():
+            try:
+                hybrid_engine.schedule_process_run_end(
+                    HybridStore(self._store),
+                    user_key=user_key,
+                    space_id=run_context.space_id,
+                    project_id=run_context.project_id,
+                    conversation_id=run_context.project_id,
+                    state=state,
+                )
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "memory.service.on_run_end: hybrid pipeline failed",
+                    extra={
+                        "project_id": run_context.project_id,
+                        "run_id": run_context.run_id,
+                        "state": state,
+                    },
+                    exc_info=True,
+                )
 
     def register_runtime_log_artifact(
         self,

@@ -571,3 +571,55 @@ class LocalMemoryStore:
             / "summary.md"
         )
         _atomic_write_text(path, text)
+
+
+# ----- Generic sidecar helpers -------------------------------------------
+#
+# The hybrid memory layer (app.memory.hybrid) keeps its own JSON sidecars under
+# the same Project directory (episodes.json, memories.json, ...). These
+# thin public wrappers reuse the atomic-write + per-path-lock machinery above so
+# every writer in the memory tree shares one durability story.
+
+
+def read_json_file(path: Path) -> Any | None:
+    """Read a JSON file, returning None when missing/malformed."""
+
+    return _read_json(path)
+
+
+def write_json_file(path: Path, payload: Any) -> None:
+    """Atomically write ``payload`` as JSON, creating parents on demand."""
+
+    _atomic_write_json(path, payload)
+
+
+def update_json_file(
+    path: Path,
+    mutator: Callable[[Any | None], Any | None],
+) -> Any | None:
+    """Atomic read-modify-write of a JSON file under its per-path lock.
+
+    ``mutator`` receives the parsed payload (or None) and returns the new
+    payload; returning None skips the write. Returns whatever the mutator
+    returned. Used by the hybrid store to keep read-modify-write sequences
+    (versioning, supersession) race-free within a Brain process.
+    """
+
+    with _path_lock(path):
+        payload = _read_json(path)
+        updated = mutator(payload)
+        if updated is not None:
+            _atomic_write_json(path, updated)
+        return updated
+
+
+def append_jsonl_file(path: Path, payload: Any) -> None:
+    """Append one JSON line to ``path`` under its per-path lock."""
+
+    _append_jsonl(path, payload)
+
+
+def read_jsonl_file(path: Path) -> list[dict[str, Any]]:
+    """Read every JSON object line from ``path``, skipping malformed lines."""
+
+    return _read_jsonl_lines(path)

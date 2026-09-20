@@ -26,7 +26,8 @@ import logging
 from camel.toolkits import FunctionTool
 
 from app.agent.toolkit.abstract_toolkit import AbstractToolkit
-from app.memory import LocalMemoryStore, semantic_store
+from app.memory import LocalMemoryStore, hybrid, semantic_store
+from app.memory.hybrid.storage import HybridStore
 from app.memory.rolling_summary import RollingSummary
 from app.service.task import Agents
 
@@ -270,12 +271,85 @@ class MemoryToolkit(AbstractToolkit):
             lines.append(line)
         return "\n".join(lines)
 
+    def recall_history(self, query: str) -> str:
+        """Recall earlier conversation by meaning and by exact detail.
+
+        Hybrid retrieval over THIS conversation: semantic episode search +
+        lexical search over the raw messages + active structured memory. Prefer
+        this over ``recall_conversation`` when the user asks about a whole
+        earlier topic/discussion ("how did we design the auth system") or an
+        exact historical detail ("what port did we settle on", "what exact
+        timeout"). It returns verbatim source messages when they exist, and says
+        so plainly when nothing was found rather than inventing a detail.
+
+        Args:
+            query (str): What to recall about.
+
+        Returns:
+            str: Retrieved episodes, exact evidence, and active memory, or a
+            note that nothing relevant was found.
+        """
+        query = (query or "").strip()
+        if not query:
+            return "Nothing to look up (empty query)."
+        if not self.user_key or not self.space_id:
+            return "No earlier history is available for this conversation."
+
+        try:
+            store = self._store_or_default()
+            hybrid_store = HybridStore(store)
+            events = hybrid.engine.load_events(
+                store, self.user_key, self.space_id, self.api_task_id
+            )
+            if not events:
+                return "No earlier messages found for this conversation."
+            result, _recent = hybrid.engine.retrieve(
+                hybrid_store,
+                user_key=self.user_key,
+                space_id=self.space_id,
+                project_id=self.api_task_id,
+                conversation_id=self.api_task_id,
+                query=query,
+                token_budget=4000,
+                events=events,
+            )
+        except Exception:  # noqa: BLE001 — recall is best-effort
+            logger.warning("recall_history failed", exc_info=True)
+            return "Could not search earlier history right now."
+
+        blocks: list[str] = []
+        if result.episodes:
+            lines = ["Relevant earlier episodes:"]
+            lines.extend(f"- {item.text.strip()}" for item in result.episodes)
+            blocks.append("\n".join(lines))
+        if result.messages:
+            lines = ["Exact evidence from earlier messages:"]
+            lines.extend(f"- {item.text.strip()}" for item in result.messages)
+            blocks.append("\n".join(lines))
+        if result.active_memories:
+            lines = ["Active memory:"]
+            lines.extend(
+                f"- {item.text.strip()}" for item in result.active_memories
+            )
+            if result.superseded_memories:
+                lines.append("Superseded (historical, not current):")
+                lines.extend(
+                    f"- {item.text.strip()}"
+                    for item in result.superseded_memories
+                )
+            blocks.append("\n".join(lines))
+
+        if not blocks:
+            return "No relevant earlier history was found for that query."
+        return "\n\n".join(blocks)
+
     def get_tools(self) -> list[FunctionTool]:
         return [
             FunctionTool(self.remember_fact),
             FunctionTool(self.recall_facts),
             FunctionTool(self.recall_conversation),
             FunctionTool(self.recall_turns),
+            FunctionTool(self.recall_history),
         ]
 
     @classmethod

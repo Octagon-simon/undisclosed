@@ -1,9 +1,9 @@
 {
-  "name": "eigent",
+  "name": "undisclosed-agent-ui",
   "version": "1.0.2",
   "main": "dist-electron/main/index.js",
-  "description": "Eigent",
-  "author": "Eigent.AI",
+  "description": "Undisclosed agent UI (the shared React agent surface bundled into the Theia agent panel and the Electron app).",
+  "author": "Undisclosed",
   "license": "MIT",
   "private": true,
   "debug": {

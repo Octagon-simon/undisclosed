@@ -60,6 +60,10 @@ from app.memory.service import (
     read_rolling_summary_for_task_lock,
 )
 
+# Hybrid conversational memory (``hybrid_memory.md``). Additive + env-gated;
+# imported last so its modules can rely on the core store/schema above.
+from app.memory import hybrid  # noqa: E402
+
 __all__ = [
     "SCHEMA_VERSION",
     "AgentContextBundle",
@@ -84,6 +88,7 @@ __all__ = [
     "canonical_user_id",
     "finalize_task_lock_run_memory",
     "get_memory_service",
+    "hybrid",
     "memory_root",
     "project_dir",
     "read_rolling_summary_for_task_lock",
