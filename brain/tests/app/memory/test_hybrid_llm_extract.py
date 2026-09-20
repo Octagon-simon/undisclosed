@@ -293,6 +293,56 @@ class TestExtract:
             llm_extract.extract(self._events(), completer=_completer(raw)) is None
         )
 
+    def test_explicit_scope_is_parsed(self):
+        raw = self._payload(
+            [
+                {
+                    "op": "UPSERT",
+                    "type": "preference",
+                    "key": "commit_style",
+                    "value": "concise commits",
+                    "scopeType": "global",
+                    "sourceMessageIds": ["evt_1_user"],
+                }
+            ]
+        )
+        result = llm_extract.extract(self._events(), completer=_completer(raw))
+        assert result is not None
+        assert [op.scope_type for op in result.memory_ops] == ["global"]
+
+    def test_unknown_scope_falls_back_to_deterministic_inference(self):
+        raw = self._payload(
+            [
+                {
+                    "op": "UPSERT",
+                    "type": "decision",
+                    "key": "database",
+                    "value": "PostgreSQL",
+                    "scopeType": "galactic",
+                    "sourceMessageIds": ["evt_1_user"],
+                }
+            ]
+        )
+        result = llm_extract.extract(self._events(), completer=_completer(raw))
+        assert result is not None
+        assert [op.scope_type for op in result.memory_ops] == [""]
+
+    def test_absence_of_scope_leaves_it_unset(self):
+        raw = self._payload(
+            [
+                {
+                    "op": "UPSERT",
+                    "type": "decision",
+                    "key": "database",
+                    "value": "PostgreSQL",
+                    "sourceMessageIds": ["evt_1_user"],
+                }
+            ]
+        )
+        result = llm_extract.extract(self._events(), completer=_completer(raw))
+        assert result is not None
+        assert [op.scope_type for op in result.memory_ops] == [""]
+
 
 class TestApplyOpsProvenance:
     def _op(self, source_ids: list[str]) -> MemoryOp:

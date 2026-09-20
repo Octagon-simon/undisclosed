@@ -49,6 +49,7 @@ from app.memory.hybrid import config
 from app.memory.hybrid import extractor
 from app.memory.hybrid import text as T
 from app.memory.hybrid.schema import (
+    MEMORY_SCOPES,
     MEMORY_TYPES,
     EpisodeDraft,
     ExtractionResult,
@@ -83,6 +84,14 @@ Rules:
 - "key" is a short, stable, lower_snake_case noun for the concept
   (e.g. "database", "deployment_target", "test_runner"), never a sentence.
 - "value" is short and concrete, never a prose paragraph.
+- Set "scopeType" on every op to how far the memory should reach:
+  - "global" for a durable preference or fact about the USER themselves
+    ("I prefer TypeScript", "I always use conventional commits");
+  - "conversation" for an explicitly temporary or one-off choice
+    ("for this prototype", "just this once", "for now");
+  - "project" (the default) for a decision, constraint or fact about THIS
+    project ("for this project, use PostgreSQL").
+  Never promote a temporary choice to "global"; when unsure, use "project".
 - Prefer a few high-confidence ops over many speculative ones. An empty list is
   a perfectly good answer.
 - Respond with a single JSON object and NOTHING else: no markdown fence, no
@@ -100,7 +109,8 @@ JSON shape:
   },
   "memoryOps": [
     {"op": "UPSERT", "type": "decision", "key": "database",
-     "value": "PostgreSQL", "reason": "<why>", "sourceMessageIds": ["msg_12"]}
+     "value": "PostgreSQL", "scopeType": "project", "reason": "<why>",
+     "sourceMessageIds": ["msg_12"]}
   ]
 }
 """
@@ -296,6 +306,17 @@ def _coerce_op(
 
     if not isinstance(payload, dict):
         return None
+    # §23: the model classifies scope explicitly. An unknown/absent value is
+    # left empty so the deterministic rules in app.memory.hybrid.scope decide at
+    # write time rather than trusting a bad label.
+    scope_type = str(
+        payload.get("scope_type")
+        or payload.get("scopeType")
+        or payload.get("scope")
+        or ""
+    ).strip().lower()
+    if scope_type not in MEMORY_SCOPES:
+        scope_type = ""
     op = MemoryOp(
         op=str(payload.get("op") or "").strip().upper(),
         type=str(payload.get("type") or "").strip().lower(),
@@ -306,6 +327,7 @@ def _coerce_op(
         ),
         reason=str(payload.get("reason") or "").strip(),
         confidence=_coerce_float(payload.get("confidence"), 0.6),
+        scope_type=scope_type,
         source_message_ids=_coerce_ids(
             payload.get("source_message_ids") or payload.get("sourceMessageIds")
         ),
