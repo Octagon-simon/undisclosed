@@ -63,5 +63,11 @@ brain/*.spec
 # blanket `*.md` rule above.
 !agent-ui/src/assets/fileIcons.LICENSE.md
 
+# Repo documentation under docs/ IS committed — re-include it despite the
+# blanket `*.md` rule above. The `docs/` directory itself is not ignored (only
+# `*.md` files are), so no parent directory needs re-including first.
+!docs/
+!docs/**/*.md
+
 # Offline cache for the Simple Icons fetch script (regenerable, not shipped).
 .cache/file-icons/
