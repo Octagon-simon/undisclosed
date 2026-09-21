@@ -58,8 +58,32 @@ def _start_hybrid_job_recovery() -> None:
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
+    _register_main_event_loop()
     _start_hybrid_job_recovery()
     yield
+
+
+def _register_main_event_loop() -> None:
+    """Register the uvicorn event loop so worker threads can schedule onto it.
+
+    Sync tools run off the loop (``asyncio.to_thread`` in ListenChatAgent), but
+    their ``@listen_toolkit`` wrappers emit the toolkit activate/deactivate
+    events that draw the tool cards in the UI. Those wrappers can only reach the
+    loop through ``event_loop_utils``, which needs a registered reference and
+    otherwise drops the event ("No event loop available for async task
+    scheduling"). Nothing used to call ``set_main_event_loop``, so every event
+    from a worker thread was silently discarded.
+
+    Best-effort: never block boot on it.
+    """
+    try:
+        import asyncio
+
+        from app.utils.event_loop_utils import set_main_event_loop
+
+        set_main_event_loop(asyncio.get_running_loop())
+    except Exception:  # noqa: BLE001 - registration must never block boot
+        pass
 
 
 # Initialize FastAPI with title

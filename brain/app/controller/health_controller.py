@@ -37,7 +37,7 @@ async def health_check(detail: bool = Query(False)):
     """Health check endpoint for verifying backend
     is ready to accept requests."""
     logger.debug("Health check requested")
-    response = HealthResponse(status="ok", service="eigent")
+    response = HealthResponse(status="ok", service="undisclosed")
     if detail:
         hands = get_environment_hands()
         capabilities = hands.get_capability_manifest()
