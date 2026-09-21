@@ -203,6 +203,60 @@ def background_pipeline() -> bool:
     return _env_flag("UNDISCLOSED_HYBRID_BACKGROUND", True)
 
 
+# ----- Project resolution semantics (§14) -----
+#
+# §14 lists "semantic similarity against project descriptions" alongside lexical
+# matching in the resolver. The signal is additive: unrelated projects score 0,
+# so a tree whose projects carry no description resolves exactly as the lexical
+# resolver always did. Default follows the master hybrid switch -- the whole
+# layer only runs when hybrid memory is on -- and can be forced with
+# ``UNDISCLOSED_HYBRID_PROJECT_SEMANTIC``.
+
+
+def project_semantic_enabled() -> bool:
+    """Whether the resolver blends semantic similarity into project ranking."""
+
+    return _env_flag("UNDISCLOSED_HYBRID_PROJECT_SEMANTIC", enabled())
+
+
+def project_semantic_weight() -> float:
+    """How much a full semantic match adds to the lexical score (default 0.6).
+
+    Added on top of the lexical score and clamped to 1.0, so semantic can lift a
+    project past the confidence floor on its own but cannot by itself exceed a
+    project the request names outright.
+    """
+
+    return max(0.0, min(1.0, _env_float("UNDISCLOSED_HYBRID_W_PROJECT_SEMANTIC", 0.6)))
+
+
+def project_semantic_cosine_floor() -> float:
+    """Cosine at/below which two texts count as unrelated (default 0.35).
+
+    Raw MiniLM cosine is never 0 for unrelated sentences, so without this floor
+    a naive blend would nudge every project. ``project_semantic`` subtracts the
+    floor and rescales, keeping unrelated descriptions honestly at zero.
+    """
+
+    return max(0.0, min(0.95, _env_float("UNDISCLOSED_HYBRID_PROJECT_SEMANTIC_FLOOR", 0.35)))
+
+
+def project_semantic_max_projects() -> int:
+    """Cap on descriptions embedded per resolution (default 50).
+
+    Bounds embedding work on an account with many projects; the most recently
+    updated projects are embedded first.
+    """
+
+    return max(1, _env_int("UNDISCLOSED_HYBRID_PROJECT_SEMANTIC_MAX", 50))
+
+
+def project_semantic_min_chars() -> int:
+    """Minimum description length worth embedding (default 12 chars)."""
+
+    return max(0, _env_int("UNDISCLOSED_HYBRID_PROJECT_SEMANTIC_MIN_CHARS", 12))
+
+
 # ----- Optional LLM extraction pass (§9, §12, §29-30) -----
 #
 # hybrid_memory.md treats extraction as a *model* job; the shipped extractor is

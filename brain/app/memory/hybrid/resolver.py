@@ -27,8 +27,16 @@ Signals, strongest first:
 1. an explicit project id from the UI / conversation metadata (confidence 1.0);
 2. a conversation already linked to a project -- the link is durable, so this
    survives a restart (confidence 0.9);
-3. lexical overlap between the request and a project's name/description;
+3. lexical overlap between the request and a project's name/description, with
+   semantic similarity to the project *description* blended in (§14);
 4. a single active project on the account (there is nothing else it could be).
+
+The fourth signal, semantic similarity, is what lets "continue the app that
+tracks what I eat" find a project described as "meal planning and nutrition
+tracker" when none of the words overlap: lexical matching cannot, embeddings
+can. It is computed by :mod:`app.memory.hybrid.project_semantic` and blended on
+top of the lexical score, so it can lift a project past the confidence floor but
+never overrides a project the request names outright.
 
 The resolver never raises: an unreadable registry degrades to "unresolved",
 which callers treat as "search broadly".
@@ -40,7 +48,9 @@ import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
+from app.memory.hybrid import project_semantic
 from app.memory.hybrid import text as T
+from app.memory.hybrid.config import project_semantic_weight
 from app.memory.hybrid.project import ProjectStore
 from app.memory.hybrid.schema import Project
 
@@ -108,11 +118,30 @@ def name_score(query: str, project: Project) -> float:
 
 
 def score_projects(
-    query: str, projects: list[Project]
+    query: str,
+    projects: list[Project],
+    *,
+    semantic: dict[str, float] | None = None,
 ) -> list[tuple[Project, float]]:
-    """Every project scored against ``query``, best first."""
+    """Every project scored against ``query``, best first.
 
-    scored = [(project, name_score(query, project)) for project in projects]
+    ``semantic`` maps ``project_id -> similarity`` in 0..1 from
+    :mod:`app.memory.hybrid.project_semantic`. It is blended *on top of* the
+    lexical score, weighted by ``project_semantic_weight`` and clamped to 1.0,
+    so a description hit can lift a project past the confidence floor when the
+    request shares no words with its name/description -- but it can never push a
+    project above one the request names outright, because a named project
+    already scores high lexically (§14). Missing map -> pure lexical scoring.
+    """
+
+    weight = project_semantic_weight()
+    semantic = semantic or {}
+    scored: list[tuple[Project, float]] = []
+    for project in projects:
+        lexical = name_score(query, project)
+        if weight > 0.0 and lexical < 1.0:
+            lexical = min(1.0, lexical + weight * semantic.get(project.id, 0.0))
+        scored.append((project, lexical))
     scored.sort(key=lambda pair: pair[1], reverse=True)
     return scored
 
@@ -183,6 +212,24 @@ def resolve(
         return ProjectResolution(reason="no_query" if not query.strip() else "no_projects")
 
     scored = score_projects(query, discovered)
+    # Best *lexical* score before any semantic help. The gate below only fires
+    # when lexical matching alone failed to clear the floor; when a project is
+    # named outright, semantic is skipped entirely (no embedding cost, and a
+    # named project always outranks a description-only hit).
+    best_lexical = scored[0][1] if scored else 0.0
+    # §14: when no project is named lexically, blend in semantic similarity to
+    # project *descriptions*. Gated on the lexical result on purpose -- the common
+    # case (the request names the project) never pays the embedding cost, and a
+    # project the request names outright always outranks a description-only hit.
+    # ``semantic_scores`` never raises and returns {} when the signal is off or
+    # the model is unavailable, so this is a no-op on a tree whose projects carry
+    # no descriptions (they resolve exactly as the lexical resolver did).
+    semantic_used = False
+    if best_lexical < CONFIDENCE_FLOOR:
+        semantic = project_semantic.semantic_scores(query, discovered)
+        if semantic:
+            scored = score_projects(query, discovered, semantic=semantic)
+            semantic_used = True
     candidates = [
         (project.id, round(score, 3)) for project, score in scored[:5]
     ]
@@ -196,11 +243,14 @@ def resolve(
                 space_id=best.space_id,
                 now=when,
             )
+        # When every project scored below the floor lexically, the winner can
+        # only have cleared it with semantic help, so label the reason honestly
+        # (§43 records it) rather than calling a description hit a name match.
         return ProjectResolution(
             project_id=best.id,
             space_id=best.space_id,
             confidence=best_score,
-            reason="name_match",
+            reason="semantic_match" if semantic_used else "name_match",
             candidates=candidates,
         )
 
