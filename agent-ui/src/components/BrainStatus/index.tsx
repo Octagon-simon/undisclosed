@@ -44,10 +44,29 @@ async function probe(url: string, timeoutMs = 2500): Promise<boolean> {
 export function BrainStatus() {
   const [state, setState] = useState<BrainState>('checking');
   const mounted = useRef(true);
+  // Only re-bootstrap on a DEAD→LIVE recovery, not on a normal live launch
+  // (mount already bootstrapped then). Set once we've observed a dead probe.
+  const sawDead = useRef(false);
 
   const check = useCallback(async () => {
     const ok = await probe(BRAIN_HEALTH_URL);
     if (!mounted.current) return;
+    if (!ok) {
+      sawDead.current = true;
+    } else if (sawDead.current) {
+      // Brain recovered after being down: re-run workspace bootstrap so a null
+      // activeSpaceId (from a load that failed while it was dead) recovers and
+      // History/refresh work again without a full app relaunch.
+      sawDead.current = false;
+      const reboot = (
+        window as unknown as { __UNDISCLOSED_REBOOTSTRAP__?: () => Promise<void> }
+      ).__UNDISCLOSED_REBOOTSTRAP__;
+      if (reboot) {
+        void reboot().catch(() => {
+          /* best-effort recovery */
+        });
+      }
+    }
     // Don't stomp the transient "restarting" label with a stale dead-probe.
     setState((prev) => (prev === 'restarting' && !ok ? 'restarting' : ok ? 'live' : 'dead'));
   }, []);
@@ -69,8 +88,14 @@ export function BrainStatus() {
     } catch {
       /* backend may not expose the route in this build — fall through to polling */
     }
-    // Poll until it comes back (up to ~30s), then resume normal polling.
-    const deadline = Date.now() + 30_000;
+    // Poll until it answers. The frozen brain binary has a SLOW cold start
+    // (~20-40s: it imports camel/chromadb/etc. before binding /health), so a
+    // short window made the pill flash "offline" while the brain was still
+    // booting — then the background poll caught it and flipped to "live"
+    // ("restarting → offline → live"). Keep showing "restarting" for the whole
+    // window so the state reflects reality; the background check() also promotes
+    // to "live" the moment it answers, so we never get stuck.
+    const deadline = Date.now() + 90_000;
     while (Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 1500));
       if (!mounted.current) return;
@@ -79,6 +104,7 @@ export function BrainStatus() {
         return;
       }
     }
+    // Only after a genuinely long wait do we call it dead (real failure).
     if (mounted.current) setState('dead');
   }, []);
 

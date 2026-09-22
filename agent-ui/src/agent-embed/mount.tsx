@@ -155,7 +155,16 @@ export function mountAgentPanel(
   //    space_root_path even before bootstrapWorkspace finishes (it isn't awaited,
   //    so a conversation started immediately would otherwise miss the folder).
   setOpenFolderRoot(config.workspaceRoot);
-  void bootstrapWorkspace(config.userId ?? undefined, config.workspaceRoot);
+  const runBootstrap = () =>
+    bootstrapWorkspace(config.userId ?? undefined, config.workspaceRoot);
+  void runBootstrap();
+  // Expose a re-bootstrap so recovery paths (e.g. the brain coming back to life
+  // after being dead at launch) can re-hydrate spaces + the active project.
+  // Without this, a brain that was down at mount left activeSpaceId null → the
+  // History panel stayed empty and its Refresh button disabled forever.
+  (
+    window as unknown as { __UNDISCLOSED_REBOOTSTRAP__?: () => Promise<void> }
+  ).__UNDISCLOSED_REBOOTSTRAP__ = runBootstrap;
 
   // Scope marker: the agent stylesheet scopes its global resets under this
   // class (see vite.config.agent-embed.ts) so they don't leak into the host.

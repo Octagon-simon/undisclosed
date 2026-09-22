@@ -78,10 +78,24 @@ export default function AgentPanelHistory({
   // landed after History was already open (mirrors the Usage overview button).
   const [isRefreshing, setIsRefreshing] = useState(false);
   const handleRefresh = useCallback(async () => {
-    if (!activeSpaceId || isRefreshing) return;
+    if (isRefreshing) return;
     setIsRefreshing(true);
     try {
-      await useSpaceStore.getState().syncProjectsFromServer(activeSpaceId);
+      if (activeSpaceId) {
+        await useSpaceStore.getState().syncProjectsFromServer(activeSpaceId);
+      } else {
+        // No active space (e.g. the brain was down at launch so bootstrap
+        // failed). Re-run workspace bootstrap to resolve spaces + the active
+        // project, then this panel re-renders with the recovered space.
+        const reboot = (
+          window as unknown as {
+            __UNDISCLOSED_REBOOTSTRAP__?: () => Promise<void>;
+          }
+        ).__UNDISCLOSED_REBOOTSTRAP__;
+        if (reboot) {
+          await reboot();
+        }
+      }
     } finally {
       setIsRefreshing(false);
     }
@@ -135,7 +149,7 @@ export default function AgentPanelHistory({
         <button
           type="button"
           onClick={handleRefresh}
-          disabled={isRefreshing || !activeSpaceId}
+          disabled={isRefreshing}
           className="flex items-center gap-1 rounded-md px-2 py-1 text-label-xs text-[var(--theia-descriptionForeground,var(--theia-foreground))] outline-none transition-colors hover:bg-[var(--theia-list-hoverBackground)] disabled:opacity-50"
         >
           {isRefreshing ? (

@@ -61,6 +61,9 @@ export class BrainLauncher implements BackendApplicationContribution {
 
   /** Set once onStop() begins; suppresses exit-triggered respawn. */
   private stopping = false;
+  /** Pending exit-triggered respawn timer, so restart()/onStop() can cancel it
+   *  and not race a user-initiated spawn for the same port. */
+  private respawnTimer: NodeJS.Timeout | undefined;
   /** Health watchdog interval handle (unref'd; cleared on stop). */
   private watchdogTimer: NodeJS.Timeout | undefined;
   /** Consecutive failed /health probes since the last success. */
@@ -148,6 +151,19 @@ export class BrainLauncher implements BackendApplicationContribution {
    * onStop() is tearing the app down.
    */
   private spawnChild(bin: string, port: string): void {
+    // Never double-bind: if something already LISTENS on :port (a racing
+    // watchdog respawn, a user-initiated restart, or a standalone brain), do NOT
+    // spawn a second one — macOS lets two processes bind the same port on
+    // different addresses, which makes chat nondeterministic and leaves an
+    // orphan. Adopt the existing owner instead.
+    if (portInUse(Number(port))) {
+      // eslint-disable-next-line no-console
+      console.log(
+        `[brain-launcher] :${port} already has a listener — not spawning a ` +
+          'second brain (adopting the existing owner).'
+      );
+      return;
+    }
     // eslint-disable-next-line no-console
     console.log(`[brain-launcher] starting brain: ${bin} on :${port}`);
 
@@ -203,7 +219,8 @@ export class BrainLauncher implements BackendApplicationContribution {
         `[brain-launcher] respawning brain in ${BrainLauncher.RESPAWN_MS}ms ` +
           `(restart ${this.restartCount}/${BrainLauncher.MAX_RESTARTS})`
       );
-      setTimeout(() => {
+      this.respawnTimer = setTimeout(() => {
+        this.respawnTimer = undefined;
         if (!this.stopping) {
           this.spawnChild(bin, port);
         }
@@ -342,6 +359,10 @@ export class BrainLauncher implements BackendApplicationContribution {
     if (this.watchdogTimer) {
       clearInterval(this.watchdogTimer);
       this.watchdogTimer = undefined;
+    }
+    if (this.respawnTimer) {
+      clearTimeout(this.respawnTimer);
+      this.respawnTimer = undefined;
     }
     const proc = this.proc;
     if (!proc || proc.exitCode !== null || !proc.pid) {
@@ -493,6 +514,15 @@ export class BrainLauncher implements BackendApplicationContribution {
     // Reset the crash-loop budget: a user-initiated restart is intentional.
     this.restartCount = 0;
     this.stopping = false;
+
+    // 0) Cancel any pending exit-triggered respawn so the watchdog does not race
+    //    our spawn for :port (that double-bind is what made a click report
+    //    "Spawning…" yet the brain that came up was the watchdog's, not ours —
+    //    and the next click 503 on a port still held by the racing instance).
+    if (this.respawnTimer) {
+      clearTimeout(this.respawnTimer);
+      this.respawnTimer = undefined;
+    }
 
     // 1) Tear down a child we own (if any).
     try {
