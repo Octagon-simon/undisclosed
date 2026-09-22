@@ -461,6 +461,14 @@ export class BrainLauncher implements BackendApplicationContribution {
    */
   static current: BrainLauncher | undefined;
 
+  /** True when this launcher can actually spawn a brain (a frozen binary is
+   *  present — i.e. the packaged app). False in a dev build, where the brain is
+   *  run from source via scripts/brain.sh; the restart route falls through to
+   *  the script in that case. */
+  canManage(): boolean {
+    return this.resolveBinary() !== undefined;
+  }
+
   /**
    * Resurrect the brain on demand (agent-panel Restart button). Works for the
    * PACKAGED app — the case scripts/brain.sh can't cover: kill any child we own,

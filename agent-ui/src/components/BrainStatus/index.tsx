@@ -15,9 +15,17 @@ type BrainState = 'checking' | 'live' | 'dead' | 'restarting';
 // at /health (NOT under the /api proxy). Direct fetch works in dev + packaged
 // (the brain sets permissive CORS on localhost).
 const BRAIN_HEALTH_URL = 'http://localhost:5001/health';
-// Served by the Theia backend (undisclosed-agent backend module), same origin as
-// the panel — reachable even while the brain is down.
-const BRAIN_RESTART_URL = '/undisclosed-agent/brain/restart';
+// Served by the Theia backend (undisclosed-agent backend module). Must be an
+// ABSOLUTE url: the packaged app runs the panel from a file:// page, so a
+// relative '/undisclosed-agent/...' resolves to file:///… and 404s
+// (ERR_FILE_NOT_FOUND). mount.tsx stashes the real backend origin on window.
+function brainRestartUrl(): string {
+  const origin = (
+    window as unknown as { __UNDISCLOSED_BACKEND_ORIGIN__?: string }
+  ).__UNDISCLOSED_BACKEND_ORIGIN__;
+  const base = origin && /^https?:\/\//.test(origin) ? origin : '';
+  return `${base}/undisclosed-agent/brain/restart`;
+}
 const POLL_MS = 4000;
 
 async function probe(url: string, timeoutMs = 2500): Promise<boolean> {
@@ -57,7 +65,7 @@ export function BrainStatus() {
   const restart = useCallback(async () => {
     setState('restarting');
     try {
-      await fetch(BRAIN_RESTART_URL, { method: 'POST' });
+      await fetch(brainRestartUrl(), { method: 'POST' });
     } catch {
       /* backend may not expose the route in this build — fall through to polling */
     }

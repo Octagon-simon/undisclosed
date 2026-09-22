@@ -235,7 +235,14 @@ export default new ContainerModule((bind) => {
             //    brain (and take over the port after the user stops an external
             //    one). This is the case scripts/brain.sh can't cover.
             const launcher = BrainLauncher.current;
-            if (launcher && typeof launcher.restart === 'function') {
+            // Only drive BrainLauncher when it can actually spawn a brain (a
+            // packaged app with a frozen binary). In a DEV build it can't, so
+            // fall through to scripts/brain.sh instead of returning its failure.
+            if (
+              launcher &&
+              typeof launcher.canManage === 'function' &&
+              launcher.canManage()
+            ) {
               try {
                 const r = await launcher.restart();
                 res.status(r.ok ? 202 : 503).json(r);

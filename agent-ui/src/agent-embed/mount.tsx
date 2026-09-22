@@ -101,6 +101,15 @@ export function mountAgentPanel(
       : {}),
   });
 
+  // Expose the Theia BACKEND origin (proxyBaseUrl) so components can hit native
+  // backend routes with an ABSOLUTE url. In the packaged app the panel runs from
+  // a file:// page, so a RELATIVE '/undisclosed-agent/...' resolves to file:///…
+  // and 404s — the brain-restart button needs the real backend origin.
+  if (config.proxyBaseUrl) {
+    (window as unknown as { __UNDISCLOSED_BACKEND_ORIGIN__?: string }).__UNDISCLOSED_BACKEND_ORIGIN__ =
+      config.proxyBaseUrl.replace(/\/+$/, '');
+  }
+
   // 2) Seed auth (token + user id + email) so buildBrainHeaders attaches the
   //    Bearer and the /chat payload has a valid email (the Brain requires it).
   if (config.token !== undefined || config.email !== undefined) {

@@ -62,6 +62,7 @@ from app.hands.interface import IHands
 from app.memory import (
     build_durable_context_for_task_lock,
     finalize_task_lock_run_memory,
+    read_rolling_summary_for_task_lock,
 )
 from app.model.chat import Chat, NewAgent, Status, TaskContent, sse_json
 from app.model.subscription_runtime import is_subscription_auth
@@ -80,6 +81,7 @@ from app.service.task import (
     ImprovePayload,
     TaskLock,
     delete_task_lock,
+    get_task_lock,
     set_current_task_id,
 )
 from app.utils.agent_memory import (
@@ -441,14 +443,20 @@ def build_context_for_workforce(
         mode="workforce_coordinator",
         current_user_prompt=task_content or "",
     )
+    # Cumulative rolling conversation summary — the SAME one single-agent injects
+    # each turn (read_rolling_summary_for_task_lock). Without this, workforce had
+    # no compact "what we've done so far" and, when asked to retry/continue, the
+    # coordinator asked the user to restate the goal instead of recalling it.
+    rolling = ""
+    try:
+        rolling = read_rolling_summary_for_task_lock(task_lock) or ""
+    except Exception:  # pragma: no cover - best-effort
+        rolling = ""
     in_process = build_conversation_context(
         task_lock, header="=== CONVERSATION HISTORY ==="
     )
-    if durable and in_process:
-        return durable + "\n\n" + in_process
-    if durable:
-        return durable + "\n\n"
-    return in_process
+    parts = [p for p in (durable, rolling.strip(), in_process) if p]
+    return "\n\n".join(parts)
 
 
 @sync_step
@@ -743,15 +751,31 @@ async def step_solve(options: Chat, request: Request, task_lock: TaskLock):
                         ", providing direct answer "
                         "without workforce"
                     )
-                    conv_ctx = build_conversation_context(
-                        task_lock, header="=== Previous Conversation ==="
-                    )
+                    # Use the FULL memory context (durable facts like the user's
+                    # name + rolling summary + conversation), not just raw
+                    # history — a simple question like "what is my name" is
+                    # answered HERE (never reaches the workforce), so without the
+                    # facts the question_agent said "I don't know your name" even
+                    # though single-agent (same facts) answers correctly. Falls
+                    # back to plain conversation context if the memory build
+                    # fails.
+                    try:
+                        conv_ctx = build_context_for_workforce(
+                            task_lock, options, task_content=question
+                        )
+                    except Exception:  # noqa: BLE001
+                        conv_ctx = None
+                    if not conv_ctx:
+                        conv_ctx = build_conversation_context(
+                            task_lock, header="=== Previous Conversation ==="
+                        )
                     simple_answer_prompt = (
-                        f"{conv_ctx}"
+                        f"{conv_ctx}\n\n"
                         f"User Query: {question}\n\n"
-                        "Provide a direct, helpful "
-                        "answer to this simple "
-                        "question."
+                        "Answer directly using the memory/context above when it "
+                        "is relevant (e.g. the user's name or prior work). Do "
+                        "NOT claim you lack access to profile information or that "
+                        "you're stateless — that context IS your memory."
                     )
 
                     try:
@@ -1475,17 +1499,30 @@ async def step_solve(options: Chat, request: Request, task_lock: TaskLock):
                                 " direct answer without "
                                 "workforce"
                             )
-                            conv_ctx = build_conversation_context(
-                                task_lock,
-                                header="=== Previous Conversation ===",
-                            )
+                            # Full memory context (facts + summary), not just raw
+                            # history — same reason as the initial simple path.
+                            try:
+                                conv_ctx = build_context_for_workforce(
+                                    task_lock,
+                                    options,
+                                    task_content=new_task_content,
+                                )
+                            except Exception:  # noqa: BLE001
+                                conv_ctx = None
+                            if not conv_ctx:
+                                conv_ctx = build_conversation_context(
+                                    task_lock,
+                                    header="=== Previous Conversation ===",
+                                )
                             simple_answer_prompt = (
-                                f"{conv_ctx}"
+                                f"{conv_ctx}\n\n"
                                 "User Query: "
                                 f"{new_task_content}"
-                                "\n\nProvide a direct, "
-                                "helpful answer to this "
-                                "simple question."
+                                "\n\nAnswer directly using the memory/context "
+                                "above when relevant (e.g. the user's name or "
+                                "prior work). Do NOT claim you lack profile "
+                                "access or are stateless — that context IS your "
+                                "memory."
                             )
 
                             try:
@@ -2645,18 +2682,58 @@ async def construct_workforce(
     # Define agent creation functions
     # ========================================================================
 
+    def _memory_tools_for_workforce() -> tuple[list, list[str]]:
+        """MemoryToolkit tools (recall_conversation / recall_turns / …) so the
+        coordinator can ACTIVELY recall earlier turns instead of asking the user
+        to restate the goal. Single-agent has this; workforce didn't. Fail-soft:
+        returns ([], []) on any error so the workforce still builds."""
+        try:
+            from app.agent.toolkit.memory_toolkit import MemoryToolkit
+            from app.memory.paths import canonical_user_id
+
+            try:
+                mem_user_key = canonical_user_id(
+                    options.user_id, email=options.email
+                )
+            except Exception:  # noqa: BLE001
+                mem_user_key = None
+            mt = MemoryToolkit(
+                api_task_id=options.project_id,
+                user_key=mem_user_key,
+                space_id=options.space_id,
+            )
+            return list(mt.get_tools()), [MemoryToolkit.toolkit_name()]
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "workforce memory tools unavailable; continuing without recall",
+                exc_info=True,
+            )
+            return [], []
+
     def _create_coordinator_and_task_agents() -> list[ListenChatAgent]:
         """Create coordinator and task agents (sync, runs in thread pool)."""
+        mem_tools, mem_tool_names = _memory_tools_for_workforce()
         return [
             agent_model(
                 key,
                 prompt,
                 options,
-                [],
+                list(mem_tools),
+                tool_names=list(mem_tool_names),
             )
             for key, prompt in {
                 Agents.coordinator_agent: f"""
 You are a helpful coordinator.
+- You HAVE persistent memory of this user and project that survives restarts and
+  spans sessions: a running summary of the conversation is provided to you, and
+  the `recall_conversation` / `recall_turns` tools fetch earlier turns on demand.
+  NEVER claim you are stateless or that you "don't retain information across
+  sessions" — that is false here. If you're unsure what was discussed, CALL a
+  recall tool before answering.
+- If the user refers to earlier context ("retry", "continue", "the original
+  goal", "what we discussed", "my name"), do NOT ask them to restate it — call
+  `recall_conversation` (or `recall_turns`) to pull the earlier turns first,
+  then act on what you recover.
 - You are now working in system {platform.system()} with architecture
 {platform.machine()} at working directory \
 `{working_directory}`. All local file operations \
@@ -2784,6 +2861,50 @@ the current date.
     ) = results
 
     coordinator_agent, task_agent = coord_task_agents
+
+    # Inject the durable memory bundle (remembered facts like the user's name +
+    # the cumulative conversation summary) into EVERY worker as a SYSTEM memory
+    # record. The coordinator context deliberately does NOT reach workers
+    # (undisclosed_make_sub_tasks: "will NOT be passed to subtasks or worker
+    # agents"), so a worker asked "what's my name" had zero memory and answered
+    # "I don't know" — even though single-agent (which injects the same bundle)
+    # answers correctly. This mirrors single_agent_service's system-record inject.
+    try:
+        _task_lock = get_task_lock(options.project_id)
+        _mem_ctx = build_context_for_workforce(
+            _task_lock, options, task_content=options.question
+        )
+        if _mem_ctx and _mem_ctx.strip():
+            from camel.messages import BaseMessage as _BaseMessage
+            from camel.types import OpenAIBackendRole as _Role
+
+            _note = _BaseMessage.make_system_message(
+                role_name="System",
+                content=(
+                    "Durable memory for this user + project (facts you've saved,"
+                    " like their name, and a summary of the conversation so far)."
+                    " Use it to answer questions about the user or prior work;"
+                    " do NOT claim you don't know or that you're stateless.\n\n"
+                    + _mem_ctx.strip()
+                ),
+            )
+            for _w in (
+                developer,
+                searcher,
+                documenter,
+                multi_modaler,
+                new_worker_agent,
+            ):
+                try:
+                    _w.update_memory(_note, _Role.SYSTEM)
+                except Exception:  # pragma: no cover - defensive
+                    logger.debug(
+                        "worker memory-context inject failed", exc_info=True
+                    )
+    except Exception:  # noqa: BLE001 - never block workforce on memory
+        logger.warning(
+            "workforce worker memory injection skipped", exc_info=True
+        )
 
     # ========================================================================
     # Create Workforce instance and add workers (must be sequential)
