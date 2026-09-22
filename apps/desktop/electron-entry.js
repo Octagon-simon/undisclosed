@@ -16,6 +16,46 @@
 // if unset, so an explicit override still wins.
 const path = require('path');
 
+// Load the same .env the brain reads (repo `.env` + `~/.undisclosed/.env`) into
+// the Electron main process, so LAUNCHER-side vars — read by BrainLauncher /
+// the backend module, which don't dotenv-load like the Python brain does — can
+// live in one file (e.g. UNDISCLOSED_BRAIN_SELF_HOSTED, UNDISCLOSED_BRAIN_PORT).
+// Minimal parser, no dependency. Does NOT override an already-set OS env var.
+(function loadDotEnv() {
+  const fs = require('fs');
+  const os = require('os');
+  const candidates = [
+    path.join(os.homedir(), '.undisclosed', '.env'),
+    path.resolve(__dirname, '.env'),
+    path.resolve(process.cwd(), '.env'),
+  ];
+  for (const file of candidates) {
+    let text;
+    try {
+      text = fs.readFileSync(file, 'utf8');
+    } catch {
+      continue; // file absent — fine
+    }
+    for (const raw of text.split(/\r?\n/)) {
+      const line = raw.trim();
+      if (!line || line.startsWith('#')) continue;
+      const eq = line.indexOf('=');
+      if (eq <= 0) continue;
+      const key = line.slice(0, eq).trim();
+      let val = line.slice(eq + 1).trim();
+      if (
+        (val.startsWith('"') && val.endsWith('"')) ||
+        (val.startsWith("'") && val.endsWith("'"))
+      ) {
+        val = val.slice(1, -1);
+      }
+      if (process.env[key] === undefined) {
+        process.env[key] = val;
+      }
+    }
+  }
+})();
+
 if (!process.env.THEIA_DEFAULT_PLUGINS) {
   // This file sits at the app root (Resources/app) in the packaged app, next to
   // the bundled `plugins/` dir (matches THEIA_APP_PROJECT_PATH the generated

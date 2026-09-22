@@ -29,6 +29,16 @@ try:
 except Exception:  # pragma: no cover - defensive
     pass
 
+# tiktoken can't discover its encoding plugins in the frozen PyInstaller brain
+# ("Unknown encoding o200k_base. Plugins found: []"), breaking token counting +
+# commit-message generation. Force-register the encodings at startup.
+try:
+    from app.utils.tiktoken_encoding_patch import apply as _apply_tiktoken_patch
+
+    _apply_tiktoken_patch()
+except Exception:  # pragma: no cover - defensive
+    pass
+
 def _start_hybrid_job_recovery() -> None:
     """Re-run durable memory jobs stranded by a restart (memory spec §20).
 

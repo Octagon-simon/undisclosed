@@ -44,7 +44,7 @@ export function LiveReasoning() {
 
   return (
     <div className="mx-auto mb-2 w-full max-w-[600px] px-2">
-      <div className="rounded-xl border border-solid border-ds-border-neutral-default-default bg-ds-bg-neutral-muted-default px-3 py-2">
+      <div className="rounded-xl border border-solid border-ds-border-neutral-default-default bg-ds-bg-neutral-muted-default px-sm py-sm mx-sm">
         <div className="flex items-center gap-1.5 text-label-xs font-medium text-ds-text-neutral-subtle-default">
           <Brain size={13} className="animate-pulse" aria-hidden />
           Thinking…

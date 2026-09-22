@@ -106,10 +106,35 @@ export class BrainLauncher implements BackendApplicationContribution {
     return BrainLauncher.posixGroups() ? -pid : pid;
   }
 
+  /**
+   * When the user opts to SELF-HOST the brain (run it themselves via
+   * scripts/brain.sh / their own dev server), the packaged app must NOT spawn
+   * or manage the frozen brain. Set UNDISCLOSED_BRAIN_SELF_HOSTED=1 (or
+   * MANAGE_BRAIN=0). Then onStart is a no-op, the watchdog never runs, and the
+   * restart route falls through to scripts/brain.sh instead of BrainLauncher.
+   */
+  private static selfHosted(): boolean {
+    const v = (
+      process.env.UNDISCLOSED_BRAIN_SELF_HOSTED ??
+      (process.env.UNDISCLOSED_MANAGE_BRAIN === '0' ? '1' : '')
+    )
+      .trim()
+      .toLowerCase();
+    return v === '1' || v === 'true' || v === 'yes' || v === 'on';
+  }
+
   onStart(): void {
     // Expose this instance so the backend REST route can service a
     // user-triggered brain restart from the agent panel.
     BrainLauncher.current = this;
+    if (BrainLauncher.selfHosted()) {
+      // eslint-disable-next-line no-console
+      console.log(
+        '[brain-launcher] UNDISCLOSED_BRAIN_SELF_HOSTED set — not managing a ' +
+          'brain; run it yourself (e.g. ./scripts/brain.sh start on :5001).'
+      );
+      return;
+    }
     const bin = this.resolveBinary();
     if (!bin) {
       // eslint-disable-next-line no-console
@@ -487,7 +512,9 @@ export class BrainLauncher implements BackendApplicationContribution {
    *  run from source via scripts/brain.sh; the restart route falls through to
    *  the script in that case. */
   canManage(): boolean {
-    return this.resolveBinary() !== undefined;
+    // In self-hosted mode we deliberately don't spawn/own a brain, so the
+    // restart route should use scripts/brain.sh, not BrainLauncher.
+    return !BrainLauncher.selfHosted() && this.resolveBinary() !== undefined;
   }
 
   /**
