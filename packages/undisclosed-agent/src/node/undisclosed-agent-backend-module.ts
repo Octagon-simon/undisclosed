@@ -4,10 +4,36 @@
 import { ContainerModule } from '@theia/core/shared/inversify';
 import { BackendApplicationContribution } from '@theia/core/lib/node';
 import express from '@theia/core/shared/express';
+import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as http from 'http';
 import * as path from 'path';
 import { BrainLauncher } from './brain-launcher';
+
+/**
+ * Resolve `scripts/brain.sh` from the repo (dev + standalone-brain setups).
+ * Returns undefined if not found (e.g. a packaged app without the scripts dir).
+ */
+function findBrainScript(): string | undefined {
+  const resourcesPath = (
+    process as NodeJS.Process & { resourcesPath?: string }
+  ).resourcesPath;
+  const candidates = [
+    path.resolve(process.cwd(), 'scripts', 'brain.sh'),
+    path.resolve(process.cwd(), '..', 'scripts', 'brain.sh'),
+    path.join(__dirname, '..', '..', '..', '..', 'scripts', 'brain.sh'),
+    resourcesPath
+      ? path.join(resourcesPath, 'scripts', 'brain.sh')
+      : '',
+  ].filter(Boolean);
+  return candidates.find((p) => {
+    try {
+      return fs.existsSync(p);
+    } catch {
+      return false;
+    }
+  });
+}
 
 // http-proxy ships as a transitive dep (no @types); minimal typing.
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -195,6 +221,61 @@ export default new ContainerModule((bind) => {
               res as unknown as http.ServerResponse,
               { target: PROXY_TARGET, agent: BRAIN_PROXY_AGENT }
             );
+          }
+        );
+
+        // Resurrect the brain from the agent panel (the renderer can't spawn a
+        // process; the backend can). Runs `scripts/brain.sh restart` for the
+        // dev / standalone-brain setup. This is what removes the quit-app →
+        // restart-brain → relaunch-app dance.
+        app.post(
+          '/undisclosed-agent/brain/restart',
+          async (_req: express.Request, res: express.Response) => {
+            // 1) PACKAGED app: drive BrainLauncher, which can spawn the frozen
+            //    brain (and take over the port after the user stops an external
+            //    one). This is the case scripts/brain.sh can't cover.
+            const launcher = BrainLauncher.current;
+            if (launcher && typeof launcher.restart === 'function') {
+              try {
+                const r = await launcher.restart();
+                res.status(r.ok ? 202 : 503).json(r);
+                return;
+              } catch (err) {
+                // fall through to the script path
+                // eslint-disable-next-line no-console
+                console.error(
+                  `[undisclosed-agent] BrainLauncher.restart failed: ${(err as Error).message}`
+                );
+              }
+            }
+            // 2) DEV / standalone-brain: run scripts/brain.sh restart.
+            const script = findBrainScript();
+            if (!script) {
+              res.status(501).json({
+                ok: false,
+                detail:
+                  'No frozen brain (dev) and scripts/brain.sh not found; '
+                  + 'restart the brain manually (./scripts/brain.sh restart).',
+              });
+              return;
+            }
+            try {
+              const child = spawn('bash', [script, 'restart'], {
+                cwd: path.dirname(path.dirname(script)),
+                detached: true,
+                stdio: 'ignore',
+              });
+              child.on('error', (err) =>
+                // eslint-disable-next-line no-console
+                console.error(`[undisclosed-agent] brain restart failed: ${err.message}`)
+              );
+              child.unref();
+              res.status(202).json({ ok: true, detail: 'Running brain.sh restart.' });
+            } catch (err) {
+              res
+                .status(500)
+                .json({ ok: false, detail: (err as Error).message });
+            }
           }
         );
 

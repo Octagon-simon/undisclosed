@@ -1,7 +1,33 @@
 # Grep / file-search tool efficiency — findings
 
-**Status:** investigation notes. Nothing here is implemented. This file exists so
-the finding is written down before any fix is chosen.
+**Status:** investigation notes + **P0 implemented (2026-09-21)**. The central
+model-context tool-result bound is done (see below); the rg/ignore/pagination
+rewrite is the follow-up.
+
+## Implementation status
+
+- **[DONE] P0 — central model-visible tool-result bound.** `ListenChatAgent`
+  (`app/agent/listen_chat_agent.py`) now overrides `_record_tool_calling` and
+  middle-truncates any result whose serialized form exceeds
+  `UNDISCLOSED_MAX_TOOL_RESULT_CHARS` (default 8000) — head + marker + tail —
+  BEFORE CAMEL records it into memory. Tool-agnostic (fixes grep, `search_files`,
+  `glob_files`, and any future offender); truncates content only, never splits
+  the tool_calls/tool pair. CAMEL's own `_truncate_tool_result` was near-useless
+  (only fires at ~90% of the whole context window). Needs a brain restart.
+- **[LATER] P1+ — follow the research order** (`research-ans-grep.md`):
+  2. rg-backed grep/search with a Python fallback (runtime `shutil.which('rg')`;
+     the brain's Docker image ships without rg — add `ripgrep` to `brain/Dockerfile`
+     for the fast path there). 3. default ignored dirs / binary exclusion in our
+     `FileToolkit` subclass. 4. per-line + total caps with a "N more" footer.
+     5. pagination (offset/next_offset). 6. consistent bounds for glob/search/grep
+     + drop `search_files`'s `["md"]` default & unbounded JSON. 7. prompt steer to
+     `code_query` (find_symbol/find_references/context_at) over grep. 8. MEASURE
+     the sync `_execute_tool` path before changing it. 9. caching last.
+
+---
+
+**Original status:** investigation notes. Nothing here is implemented. This file
+exists so the finding is written down before any fix is chosen.
 
 **Question investigated:** the file-search tool "works, but it's inefficient — it
 runs so many searches before finding what it wants, and even then the output is

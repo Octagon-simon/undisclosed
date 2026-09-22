@@ -164,10 +164,14 @@ export function mountAgentPanel(
   // one of our inputs we stop propagation (but NOT the default), so the
   // browser/native performs the edit on the focused input and Theia never sees
   // the key.
-  const EDIT_CHORD_KEYS = new Set(['a', 'c', 'v', 'x']);
+  const EDIT_CHORD_KEYS = new Set(['a', 'c', 'v', 'x', 'z', 'y']);
   const panelEditChordGuard = (e: KeyboardEvent) => {
-    if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return;
+    if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
     const key = e.key.toLowerCase();
+    // Undo (Cmd/Ctrl+Z) and redo (Cmd+Shift+Z / Ctrl+Y) are the ONLY chords
+    // allowed to carry Shift; a/c/v/x must not (Cmd+Shift+A etc. aren't ours).
+    const isUndoRedo = key === 'z' || key === 'y';
+    if (e.shiftKey && !isUndoRedo) return;
     if (!EDIT_CHORD_KEYS.has(key)) return;
     const t = e.target as HTMLElement | null;
     if (!t || !element.contains(t)) return;
@@ -214,8 +218,11 @@ export function mountAgentPanel(
       return;
     }
 
-    // C/X/V: stop Theia's global keybinding from hijacking the chord (but do
-    // NOT preventDefault) so the browser/native clipboard acts on the input.
+    // C/X/V and Z/Y (undo/redo): stop Theia's global keybinding from hijacking
+    // the chord (but do NOT preventDefault) so the browser/native performs the
+    // clipboard edit / undo / redo on the focused input — same reason Cmd+Z
+    // "worked in the editor but not the built app" (Monaco self-handles undo;
+    // our plain inputs need the native path, which Theia's binding was eating).
     e.stopPropagation();
   };
   window.addEventListener('keydown', panelEditChordGuard, true);

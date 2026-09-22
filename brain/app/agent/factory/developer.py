@@ -190,8 +190,15 @@ async def developer_agent(
     # instead of shipping every toolkit schema on each step. This is the same
     # token-saving mechanism the single agent uses. FAIL-SOFT: on any error it
     # returns the full tool set, so the worker is never worse off than before.
+    # Workforce workers have NO per-turn tool reconcile (the single agent does),
+    # so RAG deferral can strand a worker with only load_capability and an empty
+    # catalog — it then reports "no shell or filesystem tooling is available".
+    # Default OFF for workers (full tools); opt back in via env once the
+    # workforce loop grows a per-turn reconcile.
+    from app.agent.tool_rag import workforce_tool_rag_enabled
+
     initial_tools, system_message, tool_rag_selector = prepare_tool_rag(
-        tools, system_message
+        tools, system_message, enabled=workforce_tool_rag_enabled()
     )
 
     agent = agent_model(

@@ -712,9 +712,25 @@ async def step_solve(options: Chat, request: Request, task_lock: TaskLock):
                         ", treating as complex task"
                     )
                 else:
-                    is_complex_task = await question_confirm(
-                        question_agent, question, task_lock
-                    )
+                    try:
+                        is_complex_task = await question_confirm(
+                            question_agent, question, task_lock
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        # The complexity classifier is a model call; if it fails
+                        # (e.g. a transient provider drop that outlived the
+                        # retries in _run_agent_step) do NOT let it wedge the
+                        # whole workforce turn on "preparing to execute tasks".
+                        # Fall back to the simple-answer path, which surfaces a
+                        # response (or a graceful "trouble generating" message)
+                        # instead of hanging.
+                        logger.warning(
+                            "[NEW-QUESTION] question_confirm failed (%s); "
+                            "falling back to a direct answer so the turn does "
+                            "not hang",
+                            exc,
+                        )
+                        is_complex_task = False
                     logger.info(
                         "[NEW-QUESTION] question_confirm"
                         " result: is_complex="
@@ -2431,17 +2447,47 @@ async def _run_agent_step(agent: ListenChatAgent, prompt: str):
     provide ``astep``. Prefer ``step`` when available to preserve existing
     behavior, but run it off the event loop because real model calls are
     blocking. Fall back to ``astep``.
+
+    Retries TRANSIENT provider connection errors (e.g. OpenRouter dropping the
+    socket: ``httpx.RemoteProtocolError`` → ``openai.APIConnectionError``). This
+    call is the workforce complexity classifier (`question_confirm`); an
+    unretried drop there used to crash workforce setup and leave the UI stuck on
+    "preparing to execute tasks". The connection error happens before any
+    response, so retrying is safe.
     """
-    step_fn = getattr(agent, "step", None)
-    if callable(step_fn):
-        result = await asyncio.to_thread(step_fn, prompt)
-        return await _materialize_agent_step_result(result)
 
-    astep_fn = getattr(agent, "astep", None)
-    if callable(astep_fn):
-        return await _materialize_agent_step_result(astep_fn(prompt))
+    async def _once():
+        step_fn = getattr(agent, "step", None)
+        if callable(step_fn):
+            result = await asyncio.to_thread(step_fn, prompt)
+            return await _materialize_agent_step_result(result)
+        astep_fn = getattr(agent, "astep", None)
+        if callable(astep_fn):
+            return await _materialize_agent_step_result(astep_fn(prompt))
+        raise AttributeError("Agent has neither step nor astep")
 
-    raise AttributeError("Agent has neither step nor astep")
+    try:
+        import openai
+
+        transient = (openai.APIConnectionError, openai.APITimeoutError)
+    except Exception:  # pragma: no cover - openai always present, defensive
+        transient = tuple()
+
+    attempts = 3
+    for attempt in range(attempts):
+        try:
+            return await _once()
+        except transient as exc:  # type: ignore[misc]
+            if attempt == attempts - 1:
+                raise
+            logger.warning(
+                "Transient model connection error in _run_agent_step "
+                "(attempt %d/%d): %s — retrying",
+                attempt + 1,
+                attempts,
+                exc,
+            )
+            await asyncio.sleep(1.5 * (attempt + 1))
 
 
 def _render_subtask_report(task: Task, *, is_failure: bool) -> str:

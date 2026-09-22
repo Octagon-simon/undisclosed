@@ -1,0 +1,26 @@
+{
+  "include": ["app"],
+  "exclude": [
+    "**/.venv",
+    "**/node_modules",
+    "**/dist",
+    "**/build",
+    "**/__pycache__",
+    "**/*.bak",
+    "**/*.py.2026*"
+  ],
+  "venvPath": ".",
+  "venv": ".venv",
+  "pythonVersion": "3.11",
+  "typeCheckingMode": "basic",
+  "reportMissingImports": false,
+  "reportMissingModuleSource": false,
+  "reportGeneralTypeIssues": false,
+  "reportArgumentType": false,
+  "reportCallIssue": false,
+  "reportAttributeAccessIssue": "error",
+  "reportUndefinedVariable": "error",
+  "reportOptionalMemberAccess": false,
+  "reportIndexIssue": false,
+  "reportRedeclaration": false
+}

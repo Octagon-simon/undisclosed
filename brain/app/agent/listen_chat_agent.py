@@ -862,6 +862,70 @@ class ListenChatAgent(ChatAgent):
             self._reject_malformed_tool_args = False
         return await super()._aget_model_response(*args, **kwargs)
 
+    # --- Central model-context bound for EVERY tool result (P0) --------------
+    # CAMEL's own `_truncate_tool_result` only fires when a single result
+    # exceeds ~90% of the WHOLE context window, so moderately-large results (a
+    # 20-block `grep_files`, an unbounded `search_files` JSON, a big `glob_files`
+    # list) pass through in full, are recorded into memory, and are re-sent on
+    # every subsequent step of the turn — the "token limit exceeded" failure.
+    # We bound EVERY tool result centrally here (tool-agnostic), so no tool has
+    # to remember to truncate itself. We truncate the CONTENT only — never split
+    # the tool_calls/tool message pair (which would 400 the request). See
+    # docs/reviews/grep-tool-efficiency.md; the rg/ignore/pagination rewrite of
+    # the file tools is the follow-up patch.
+    def _max_tool_result_chars(self) -> int:
+        try:
+            return int(env("UNDISCLOSED_MAX_TOOL_RESULT_CHARS", "8000") or 8000)
+        except (TypeError, ValueError):
+            return 8000
+
+    def _bound_tool_result(self, func_name: str, result: Any) -> Any:
+        """Return `result` unchanged if its serialized form is within budget;
+        otherwise a middle-truncated STRING (head + marker + tail) that keeps
+        the one match the model needed at each end and tells it how to get more.
+        """
+        limit = self._max_tool_result_chars()
+        if isinstance(result, str):
+            text = result
+        else:
+            # Only serialize to MEASURE; keep the original object when it's small
+            # so its structure/type reaches memory unchanged.
+            try:
+                text = self._serialize_tool_result(result)
+            except Exception:  # pragma: no cover - defensive
+                return result
+        if len(text) <= limit:
+            return result
+        head = limit // 2
+        tail = limit - head
+        return (
+            text[:head]
+            + f"\n\n...[tool result from `{func_name}` truncated: "
+            f"{len(text)} chars, showing first {head} + last {tail}. Narrow the "
+            "path/pattern or request the next page for the rest]...\n\n"
+            + text[-tail:]
+        )
+
+    def _record_tool_calling(
+        self,
+        func_name: str,
+        args: dict,
+        result: Any,
+        tool_call_id: str,
+        mask_output: bool = False,
+        extra_content: Any = None,
+    ):
+        # Bound the result BEFORE CAMEL records it into model-visible memory.
+        bounded = self._bound_tool_result(func_name, result)
+        return super()._record_tool_calling(
+            func_name,
+            args,
+            bounded,
+            tool_call_id,
+            mask_output=mask_output,
+            extra_content=extra_content,
+        )
+
     def _execute_tool(
         self, tool_call_request: ToolCallRequest
     ) -> ToolCallingRecord:

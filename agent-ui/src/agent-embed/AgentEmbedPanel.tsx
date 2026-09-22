@@ -39,6 +39,7 @@ import ChatBox from '@/components/ChatBox';
 import AgentConnectors from '@/components/CodeAgentWorkspace/AgentConnectors';
 import AgentMemorySettings from '@/components/CodeAgentWorkspace/AgentMemorySettings';
 import AgentSkills from '@/components/CodeAgentWorkspace/AgentSkills';
+import { BrainStatus } from '@/components/BrainStatus';
 import AgentModels from '@/components/CodeAgentWorkspace/AgentModels';
 import AgentSettings from '@/components/CodeAgentWorkspace/AgentSettings';
 import BrowserTakeControl from '@/components/BrowserAgentWorkspace/BrowserTakeControl';
@@ -200,6 +201,12 @@ const AgentEmbedPanel = forwardRef<AgentPanelApi>((_props, ref) => {
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-ds-bg-neutral-subtle-default">
+      {/* Live brain (:5001) status + resurrect — a thin header row INSIDE the
+          panel flex column at the TOP, so it's bounded by the panel and never
+          overlays the editor chrome. */}
+      <div className="flex shrink-0 items-center justify-end border-b border-ds-border-neutral-subtle-default px-2 py-1">
+        <BrainStatus />
+      </div>
       <div className="min-h-0 flex-1 overflow-hidden">
         {body === 'skills' ? (
           <ManagedScreen

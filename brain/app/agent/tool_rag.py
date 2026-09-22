@@ -475,18 +475,43 @@ _LOADABLE_CAPS_TEMPLATE = (
 )
 
 
+def workforce_tool_rag_enabled() -> bool:
+    """Whether workforce WORKERS defer tools behind load_capability.
+
+    Default OFF. Unlike the single agent (whose run_turn RE-SELECTS tools every
+    turn), the workforce run loop has NO per-turn reconcile hook — so a worker is
+    frozen at build time with only core tools + load_capability. When that
+    catalog path fails (empty catalog / the model not driving load_capability),
+    the worker is left with NO shell/file tools and gives up ("the only available
+    action is load_capability"). Giving workers their full tool set is correct
+    until a per-turn reconcile exists for the workforce loop. Set
+    UNDISCLOSED_WORKFORCE_TOOL_RAG=1 to opt back in.
+    """
+    return str(env("UNDISCLOSED_WORKFORCE_TOOL_RAG", "0")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def prepare_tool_rag(
     tools: list[Any],
     system_message: str,
+    *,
+    enabled: bool = True,
 ) -> tuple[list[Any], str, "ToolRAGSelector | None"]:
     """Build a lean initial tool set for an agent + the loadable-capabilities
     prompt section. FAIL-SOFT: on any error (or when tool-RAG is disabled) it
     returns the tools + system_message unchanged and a None selector, so a
     caller can never end up WORSE than shipping every tool.
 
+    ``enabled=False`` bypasses RAG for this caller (used by workforce workers,
+    which have no per-turn reconcile — see workforce_tool_rag_enabled).
+
     Returns ``(initial_tools, system_message, selector)``.
     """
-    if not tool_rag_enabled():
+    if not enabled or not tool_rag_enabled():
         return tools, system_message, None
     try:
         selector = ToolRAGSelector(tools)

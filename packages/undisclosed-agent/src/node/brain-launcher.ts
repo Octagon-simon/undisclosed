@@ -104,6 +104,9 @@ export class BrainLauncher implements BackendApplicationContribution {
   }
 
   onStart(): void {
+    // Expose this instance so the backend REST route can service a
+    // user-triggered brain restart from the agent panel.
+    BrainLauncher.current = this;
     const bin = this.resolveBinary();
     if (!bin) {
       // eslint-disable-next-line no-console
@@ -449,6 +452,68 @@ export class BrainLauncher implements BackendApplicationContribution {
       this.brainLogFd = undefined;
     }
     return this.brainLogFd;
+  }
+
+  /**
+   * The most recently constructed launcher (singleton in practice — bound
+   * inSingletonScope). Lets the backend REST route reach the live instance to
+   * service a user-triggered "resurrect the brain" from the agent panel.
+   */
+  static current: BrainLauncher | undefined;
+
+  /**
+   * Resurrect the brain on demand (agent-panel Restart button). Works for the
+   * PACKAGED app — the case scripts/brain.sh can't cover: kill any child we own,
+   * wait for the port to free, then spawn our frozen brain. This also fixes the
+   * external-brain dance: the user stops their standalone brain → port frees →
+   * clicks Restart → the packaged app brings up ITS OWN frozen brain, so it no
+   * longer depends on the external one being restarted by hand.
+   *
+   * Returns a short status string. Never throws.
+   */
+  async restart(): Promise<{ ok: boolean; detail: string }> {
+    const bin = this.resolveBinary();
+    if (!bin) {
+      return {
+        ok: false,
+        detail:
+          'No frozen brain binary found (dev build). Run scripts/brain.sh restart.',
+      };
+    }
+    const port = process.env.UNDISCLOSED_BRAIN_PORT || '5001';
+
+    // Reset the crash-loop budget: a user-initiated restart is intentional.
+    this.restartCount = 0;
+    this.stopping = false;
+
+    // 1) Tear down a child we own (if any).
+    try {
+      this.onStop();
+    } catch {
+      /* best-effort */
+    }
+    this.stopping = false; // onStop set it; clear so respawn/watchdog work again
+
+    // 2) Wait (up to ~5s) for :port to be free — an externally-owned brain the
+    //    user just stopped may take a moment to release the socket.
+    for (let i = 0; i < 25 && portInUse(Number(port)); i++) {
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    if (portInUse(Number(port))) {
+      return {
+        ok: false,
+        detail: `:${port} is still held by another process; could not take it over.`,
+      };
+    }
+
+    // 3) Spawn our frozen brain and re-arm the watchdog.
+    try {
+      this.spawnChild(bin, port);
+      this.startWatchdog(bin, port);
+      return { ok: true, detail: `Spawning brain on :${port}.` };
+    } catch (err) {
+      return { ok: false, detail: (err as Error).message };
+    }
   }
 
   private resolveBinary(): string | undefined {

@@ -778,6 +778,15 @@ async def _response_content(
                 # the last boundary was a pre-tool-call preamble, not the
                 # answer. Close the segment and start a fresh one.
                 _seen_tool_calls = _tc_count
+                # Expose the LIVE tool-round count so the run loop can tell
+                # whether a mid-turn steer (chip-in) was consumed: a round that
+                # completes AFTER a steer was injected means the model looped
+                # again and saw it.
+                if task_lock is not None:
+                    try:
+                        task_lock.turn_round = _seen_tool_calls
+                    except Exception:  # pragma: no cover - defensive
+                        pass
                 if content.strip():
                     final_content = content
                     final_reasoning = reasoning
@@ -1025,6 +1034,43 @@ def _inject_user_message_into_running_agent(agent: Any, question: str) -> bool:
         return False
 
 
+def _inject_steer_into_running_agent(agent: Any, message: str) -> bool:
+    """Chip a mid-task steer into a LIVE agent's memory so the running turn can
+    act on it on its next step. Unlike `_inject_user_message_into_running_agent`
+    (which just says "address it later"), this frames it as steering the CURRENT
+    work: acknowledge, judge relevance, use it / push back / defer. Best-effort.
+    """
+    if agent is None:
+        return False
+    try:
+        agent.update_memory(
+            BaseMessage.make_user_message(
+                role_name="User",
+                content=(
+                    "[The user sent this WHILE you are working, to steer the "
+                    f"current task] {message}\n\n"
+                    "Briefly ACKNOWLEDGE it, then decide how it bears on your "
+                    "CURRENT work: if it helps, fold it in and use it now; if it "
+                    "conflicts or won't work, say so in one line and suggest an "
+                    "alternative; if it's a genuinely new request, note it and "
+                    "address it once the current step is done. Do NOT silently "
+                    "ignore it, and do NOT restart your whole task over it."
+                ),
+            ),
+            OpenAIBackendRole.USER,
+        )
+        logger.info(
+            "Chipped mid-task steer into live agent memory",
+            extra={"message_length": len(message)},
+        )
+        return True
+    except Exception:
+        logger.warning(
+            "Failed to chip mid-task steer into agent memory", exc_info=True
+        )
+        return False
+
+
 async def single_agent_solve(
     options: Chat,
     request: Request,
@@ -1092,6 +1138,12 @@ async def single_agent_solve(
         # into this one's success/failure routing.
         try:
             task_lock.soft_error = None
+        except Exception:  # pragma: no cover - defensive
+            pass
+        # Reset the live tool-round counter for chip-in (mid-turn steer)
+        # consumption tracking.
+        try:
+            task_lock.turn_round = 0
         except Exception:  # pragma: no cover - defensive
             pass
         # Every turn is now effectively fresh, so the compact background context
@@ -1385,6 +1437,30 @@ async def single_agent_solve(
     # normal turn as soon as the current one finishes. Without this, a follow-up
     # sent mid-turn looks "skipped" until the user asks again.
     deferred_followups: list[ActionImproveData] = []
+    # Mid-turn steers (chip-ins) injected into the LIVE agent, awaiting a
+    # consumed/not-consumed verdict at turn end: each is (item, injected_round).
+    pending_steers: list[tuple[ActionImproveData, int]] = []
+
+    def _resolve_pending_steers() -> None:
+        """Called when a turn ends: a steer whose injection was followed by at
+        least one more tool round was seen by the model (consumed → drop). One
+        that wasn't (the turn ended first) is re-queued as its own turn so it is
+        never silently lost."""
+        if not pending_steers:
+            return
+        final_round = int(getattr(task_lock, "turn_round", 0) or 0)
+        for steer_item, injected_round in pending_steers:
+            if final_round > injected_round:
+                logger.info(
+                    "Chip-in consumed by the running turn (round %d>%d)",
+                    final_round,
+                    injected_round,
+                )
+            else:
+                # The turn ended before looping again — the model never saw it.
+                # Fall back to the safe path: run it as its own turn.
+                deferred_followups.append(steer_item)
+        pending_steers.clear()
 
     def _start_turn_for_improve(item: ActionImproveData):
         """Set up and launch a run_turn for an improve/follow-up item."""
@@ -1461,25 +1537,47 @@ async def single_agent_solve(
                     assert isinstance(item, ActionImproveData)
 
                     if running_turn is not None and not running_turn.done():
-                        # A turn is already executing and can't be steered
-                        # mid-flight. DEFER the follow-up so it runs as its own
-                        # turn the moment the current one finishes — otherwise it
-                        # would only live in memory and look skipped until the
-                        # user re-asks. (No mid-run inject: that risked the
-                        # current turn answering it AND the deferred turn
-                        # answering it again.)
-                        deferred_followups.append(item)
-                        yield sse_json(
-                            "notice",
-                            {
-                                "notice": (
-                                    "Received your follow-up. The agent will "
-                                    "address it as soon as the current task "
-                                    "finishes."
-                                ),
-                                "process_task_id": current_task_id,
-                            },
+                        # CHIP-IN: a turn is executing — steer it in real time
+                        # instead of making the user wait. Inject the message
+                        # into the LIVE agent's memory so it's seen on the next
+                        # tool-loop step, and track it so we can tell at turn end
+                        # whether the model actually looped again and consumed it
+                        # (turn_round advanced) vs. the turn ended first. If it
+                        # was NOT consumed, `_resolve_pending_steers` re-queues it
+                        # as its own turn — so it's never silently dropped, and a
+                        # consumed steer is never double-answered by a deferral.
+                        injected = _inject_steer_into_running_agent(
+                            agent, item.data.question
                         )
+                        if injected:
+                            pending_steers.append(
+                                (item, int(getattr(task_lock, "turn_round", 0) or 0))
+                            )
+                            yield sse_json(
+                                "notice",
+                                {
+                                    "notice": (
+                                        "Got it — folding that into the current "
+                                        "work now."
+                                    ),
+                                    "process_task_id": current_task_id,
+                                },
+                            )
+                        else:
+                            # No live agent to steer (rare) — fall back to the
+                            # safe deferral path.
+                            deferred_followups.append(item)
+                            yield sse_json(
+                                "notice",
+                                {
+                                    "notice": (
+                                        "Received your follow-up. The agent will "
+                                        "address it as soon as the current task "
+                                        "finishes."
+                                    ),
+                                    "process_task_id": current_task_id,
+                                },
+                            )
                         continue
 
                     # Not busy: run it now.
@@ -1645,6 +1743,11 @@ async def single_agent_solve(
                 continue
 
             if running_turn is not None and running_turn in done:
+                # Resolve any mid-turn steers first: consumed ones are dropped;
+                # ones the turn ended before seeing are re-queued as their own
+                # turn (picked up by the deferred_followups drain at the top of
+                # the loop). Runs on every end path (success/error/cancel).
+                _resolve_pending_steers()
                 try:
                     final_result, total_tokens = running_turn.result()
                 except asyncio.CancelledError:
