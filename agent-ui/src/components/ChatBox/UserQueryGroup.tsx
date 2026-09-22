@@ -592,7 +592,7 @@ export const UserQueryGroup: React.FC<UserQueryGroupProps> = ({
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.2 }}
-                className="flex flex-col gap-4"
+                className="flex flex-col gap-2"
               >
                 {message.reasoning ? (
                   <ThinkingBlock reasoning={message.reasoning} />

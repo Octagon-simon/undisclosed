@@ -30,7 +30,7 @@ export function ThinkingBlock({ reasoning }: { reasoning?: string }) {
   if (!text) return null;
 
   return (
-    <div className="mb-2 rounded-xl border border-solid border-ds-border-neutral-subtle-default bg-ds-bg-neutral-muted-default py-sm px-sm mx-sm">
+    <div className="rounded-xl border border-solid border-ds-border-neutral-subtle-default bg-ds-bg-neutral-muted-default py-sm px-sm mx-sm">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
