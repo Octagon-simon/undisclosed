@@ -32,6 +32,10 @@ export type GovernanceMode = 'ask' | 'auto';
 /** Imperative handle the bundle returns; the title-bar toolbar drives it. */
 export interface AgentPanelHandle {
   unmount(): void;
+  /** Re-bind the agent to the editor's currently open folder. Called when the
+   *  workspace root changes after mount so the panel doesn't stay stuck on
+   *  "No active workspace folder". */
+  setWorkspaceRoot(root?: string): void;
   newConversation(): void;
   toggleHistory(): void;
   showConversation(): void;
@@ -366,6 +370,32 @@ export class UndisclosedAgentWidget extends BaseWidget {
     // NOTE: the first-launch welcome is rendered by the bundle's own empty
     // state (AgentEmbedPanel), not a Theia-side overlay — a widget overlay
     // superimposed on the live conversation and its chips restarted the run.
+
+    // The folder open in the editor can change AFTER the panel is mounted (the
+    // user picks a folder via File → Open, or switches folders). Theia updates
+    // the workspace in place — the panel would otherwise keep the root it read
+    // at mount (often none) and stay stuck on "No active workspace folder".
+    // Push the new root into the bundle so it re-binds the folder's space and
+    // activates a conversation. Registered ONCE here (not in mount(), which
+    // re-runs on every re-attach) so the listeners can't accumulate; the
+    // handler no-ops until the bundle has mounted. Both events matter:
+    // onWorkspaceChanged covers roots added/removed, onWorkspaceLocationChanged
+    // covers opening a different workspace/folder. Disposed with the widget.
+    const pushWorkspaceRoot = async () => {
+      try {
+        this.handle?.setWorkspaceRoot(await this.workspaceRoot());
+      } catch (err) {
+        console.warn('[undisclosed-agent] workspace root sync failed', err);
+      }
+    };
+    this.toDispose.push(
+      this.workspaceService.onWorkspaceChanged(() => void pushWorkspaceRoot())
+    );
+    this.toDispose.push(
+      this.workspaceService.onWorkspaceLocationChanged(
+        () => void pushWorkspaceRoot()
+      )
+    );
   }
 
   protected override onAfterAttach(msg: Message): void {

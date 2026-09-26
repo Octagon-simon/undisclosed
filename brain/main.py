@@ -241,7 +241,22 @@ def run_standalone():
     import uvicorn
 
     port = int(env("UNDISCLOSED_BRAIN_PORT", "5001"))
-    host = env("UNDISCLOSED_BRAIN_HOST", "0.0.0.0")  # nosec B104 - bind all for Docker/dev
+    # Bind LOCALHOST by default; only Docker needs 0.0.0.0 (to be reachable from
+    # the host). Binding 0.0.0.0 everywhere let a second brain silently coexist:
+    # macOS allows a 0.0.0.0:5001 bind and a 127.0.0.1:5001 bind at the SAME
+    # time, so running the packaged app + a dev brain gave TWO brains on :5001,
+    # and localhost connections raced between them — interleaving two turns'
+    # streams into scrambled reasoning. On 127.0.0.1 the OS REJECTS the second
+    # bind ("address already in use"), so the single-owner guard actually holds.
+    _default_host = "127.0.0.1"
+    try:
+        from app.hands.capabilities import _is_running_in_docker
+
+        if _is_running_in_docker():
+            _default_host = "0.0.0.0"  # nosec B104 - Docker must bind all
+    except Exception:
+        pass
+    host = env("UNDISCLOSED_BRAIN_HOST", _default_host)  # nosec B104
     # Auto-reload is a DEV-only convenience and is IMPOSSIBLE in a PyInstaller
     # binary (the reloader re-imports "main:api" from source + forks a worker,
     # which double-binds the port -> "Address already in use" -> the packaged

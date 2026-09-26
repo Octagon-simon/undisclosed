@@ -100,7 +100,8 @@
   "scripts": {
     "clean": "theia clean",
     "download:plugins": "theia download:plugins",
-    "build": "npm run download:plugins && theia build --mode production",
+    "build:packages": "npm --prefix ../../packages/undisclosed-agent run build && npm --prefix ../../packages/undisclosed-import run build && npm --prefix ../../packages/undisclosed-languages run build",
+    "build": "npm run build:packages && npm run download:plugins && theia build --mode production",
     "watch": "theia build --watch --mode development",
     "start": "theia start",
     "rebuild": "theia rebuild:electron",

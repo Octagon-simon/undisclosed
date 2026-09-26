@@ -81,6 +81,9 @@ export interface AgentPanelConfig {
  *  host (e.g. Theia title-bar toolbar) drives New/History/governance through it. */
 export interface AgentPanelHandle extends AgentPanelApi {
   unmount(): void;
+  /** Re-bind the panel to a new open folder (host workspace root changed after
+   *  mount). Re-bootstraps the folder's space + active conversation. */
+  setWorkspaceRoot(root?: string): void;
 }
 
 /**
@@ -154,9 +157,17 @@ export function mountAgentPanel(
   //    Record the open folder up front so every chat request can forward it as
   //    space_root_path even before bootstrapWorkspace finishes (it isn't awaited,
   //    so a conversation started immediately would otherwise miss the folder).
-  setOpenFolderRoot(config.workspaceRoot);
+  // The open folder can change AFTER mount (the user opens/switches a folder in
+  // the editor while the panel is already docked). Theia updates the workspace
+  // in place — often WITHOUT a full reload — so we must be able to re-bootstrap
+  // against the NEW root, not the one captured at mount. Keep it mutable and
+  // have runBootstrap read the latest value (the old closure over
+  // config.workspaceRoot left `setWorkspaceRoot` / rebootstrap re-running with a
+  // stale undefined root → panel stuck on "No active workspace folder").
+  let currentWorkspaceRoot = config.workspaceRoot;
+  setOpenFolderRoot(currentWorkspaceRoot);
   const runBootstrap = () =>
-    bootstrapWorkspace(config.userId ?? undefined, config.workspaceRoot);
+    bootstrapWorkspace(config.userId ?? undefined, currentWorkspaceRoot);
   void runBootstrap();
   // Expose a re-bootstrap so recovery paths (e.g. the brain coming back to life
   // after being dead at launch) can re-hydrate spaces + the active project.
@@ -284,6 +295,18 @@ export function mountAgentPanel(
       unsubscribeActiveEditor?.();
       root.unmount();
       element.classList.remove('undisclosed-agent-root');
+    },
+    setWorkspaceRoot: (root?: string) => {
+      // Called by the host (Theia widget) when the editor's open folder changes.
+      // Normalize away a trailing slash / empty string, no-op if unchanged, then
+      // re-bind the folder for outgoing chat requests and re-bootstrap so the
+      // folder's space + a live conversation become active (clears the empty
+      // "No active workspace folder" state without needing a window reload).
+      const normalized = root && root.trim() ? root : undefined;
+      if (normalized === currentWorkspaceRoot) return;
+      currentWorkspaceRoot = normalized;
+      setOpenFolderRoot(normalized);
+      void runBootstrap();
     },
     newConversation: () => apiRef.current?.newConversation(),
     toggleHistory: () => apiRef.current?.toggleHistory(),

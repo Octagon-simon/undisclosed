@@ -1561,6 +1561,11 @@ async def single_agent_solve(
                                         "work now."
                                     ),
                                     "process_task_id": current_task_id,
+                                    # Echo the chipped-in message so the UI can
+                                    # drop its pending QueuedBox pill (it's fed
+                                    # in now, not still "queued"). Matched by
+                                    # content, same as the confirmed-turn path.
+                                    "consumed_question": item.data.question,
                                 },
                             )
                         else:

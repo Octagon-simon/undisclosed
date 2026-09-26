@@ -7,6 +7,7 @@ import express from '@theia/core/shared/express';
 import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as http from 'http';
+import * as os from 'os';
 import * as path from 'path';
 import { BrainLauncher } from './brain-launcher';
 
@@ -255,14 +256,56 @@ export default new ContainerModule((bind) => {
                 );
               }
             }
-            // 2) DEV / standalone-brain: run scripts/brain.sh restart.
+            // 2) SELF-HOSTED (packaged app): the user runs their OWN brain from
+            //    their OWN checkout, at a path we can't guess — and scripts/ is
+            //    NOT bundled into the app (electron-builder ships only the frozen
+            //    binary), so findBrainScript() finds nothing and a bundled
+            //    brain.sh would point at <resources>/brain with no venv. Let the
+            //    self-hoster tell us how to restart THEIR brain via
+            //    UNDISCLOSED_BRAIN_RESTART_CMD (e.g.
+            //    "/path/to/eigent-theia/scripts/brain.sh restart"), run in a login
+            //    shell so their PATH / venv resolve. This is what makes the panel
+            //    Restart button work without dropping to a terminal.
+            const customCmd = (
+              process.env.UNDISCLOSED_BRAIN_RESTART_CMD || ''
+            ).trim();
+            if (customCmd) {
+              try {
+                const child = spawn('bash', ['-lc', customCmd], {
+                  cwd:
+                    process.env.UNDISCLOSED_BRAIN_RESTART_CWD || os.homedir(),
+                  detached: true,
+                  stdio: 'ignore',
+                });
+                child.on('error', (err) =>
+                  // eslint-disable-next-line no-console
+                  console.error(
+                    `[undisclosed-agent] brain restart cmd failed: ${err.message}`
+                  )
+                );
+                child.unref();
+                res
+                  .status(202)
+                  .json({ ok: true, detail: 'Running UNDISCLOSED_BRAIN_RESTART_CMD.' });
+                return;
+              } catch (err) {
+                res
+                  .status(500)
+                  .json({ ok: false, detail: (err as Error).message });
+                return;
+              }
+            }
+
+            // 3) DEV / standalone-brain: run scripts/brain.sh restart.
             const script = findBrainScript();
             if (!script) {
               res.status(501).json({
                 ok: false,
                 detail:
-                  'No frozen brain (dev) and scripts/brain.sh not found; '
-                  + 'restart the brain manually (./scripts/brain.sh restart).',
+                  'No frozen brain and scripts/brain.sh not found. If you '
+                  + 'self-host the brain, set UNDISCLOSED_BRAIN_RESTART_CMD (e.g. '
+                  + '"/path/to/scripts/brain.sh restart") in ~/.undisclosed/.env; '
+                  + 'otherwise restart it manually (./scripts/brain.sh restart).',
               });
               return;
             }

@@ -214,7 +214,33 @@ async def get_mcp_tools(
             f"Successfully connected to MCP toolkit with "
             f"{len(mcp_server['mcpServers'])} servers"
         )
+        # A remote MCP server (e.g. Asana via mcp-remote's streamable-http) can
+        # finish `connect()` before its tool list is FULLY populated — the
+        # session is still handshaking / reconnecting ("GET stream disconnected,
+        # reconnecting"), so it enumerates tools INCREMENTALLY. Reading once (or
+        # returning on the first non-empty read) yields a PARTIAL toolset: the
+        # agent then sees some Asana tools but not the one it needs (e.g. the
+        # task-LISTING read tool), and falls back to opening a browser. So poll
+        # until the tool count STABILIZES (unchanged across consecutive reads),
+        # not merely non-empty, up to MCP_TOOL_ENUM_WAIT.
+        enum_deadline = asyncio.get_event_loop().time() + float(
+            env("MCP_TOOL_ENUM_WAIT", "10")
+        )
         tools = mcp_toolkit.get_tools()
+        stable_reads = 0
+        prev_count = len(tools)
+        while (
+            mcp_toolkit.is_connected
+            and asyncio.get_event_loop().time() < enum_deadline
+            # Keep waiting until we have SOME tools and the count has held
+            # steady for two consecutive polls (enumeration settled).
+            and (not tools or stable_reads < 2)
+        ):
+            await asyncio.sleep(0.5)
+            tools = mcp_toolkit.get_tools()
+            count = len(tools)
+            stable_reads = stable_reads + 1 if count == prev_count else 0
+            prev_count = count
         if tools:
             tool_names = [
                 (
@@ -225,6 +251,13 @@ async def get_mcp_tools(
                 for tool in tools
             ]
             logging.debug(f"MCP tool names: {tool_names}")
+        else:
+            logger.warning(
+                "MCP server(s) connected but exposed NO tools after waiting "
+                "(unstable session / still enumerating). The agent will see no "
+                "MCP tools this turn; retry the request, or re-check the "
+                "connector's auth."
+            )
         return tools
     except asyncio.CancelledError:
         logger.info("MCP connection cancelled during get_mcp_tools")

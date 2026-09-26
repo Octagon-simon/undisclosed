@@ -4545,6 +4545,27 @@ const chatStore = (initial?: Partial<ChatStore>) =>
             return;
           }
           if (agentMessages.step === AgentStep.NOTICE) {
+            // A chip-in notice carries the message it just folded into the
+            // running turn — drop its pending QueuedBox pill (it's fed in now,
+            // not still "queued"), matched by content like the confirmed path.
+            const consumed = (
+              agentMessages.data as { consumed_question?: string } | undefined
+            )?.consumed_question;
+            if (consumed) {
+              try {
+                const ps = useProjectStore.getState();
+                const pending = ps.projects[
+                  currentTaskId
+                ]?.queuedMessages?.find(
+                  (m) => !m.executionId && m.content === consumed
+                );
+                if (pending) {
+                  ps.removeQueuedMessage(currentTaskId, pending.task_id);
+                }
+              } catch (err) {
+                console.warn('[queue] failed to clear chipped-in pill:', err);
+              }
+            }
             if (agentMessages.data.process_task_id !== '') {
               let taskAssigning = [...tasks[currentTaskId].taskAssigning];
 

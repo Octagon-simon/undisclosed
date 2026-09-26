@@ -274,7 +274,17 @@ export class BrainLauncher implements BackendApplicationContribution {
       return;
     }
     const nodePort = Number(port);
-    const failThreshold = Number(process.env.UNDISCLOSED_BRAIN_WATCH_FAILS || 3);
+    // How many consecutive 10s /health misses before we treat the brain as
+    // WEDGED and kill+respawn it. Default 18 (~3 min) — deliberately generous:
+    // the brain is single-event-loop, so a long BLOCKING task (a big terminal
+    // command, a sync tool running inline on the loop) stops answering /health
+    // while it's doing real work. A short window (the old 3 = ~30s) killed the
+    // brain MID-TASK. Crashes are handled instantly by the exit handler, not the
+    // watchdog, so a long grace here doesn't slow crash recovery — it only stops
+    // us murdering a busy brain. Tune via UNDISCLOSED_BRAIN_WATCH_FAILS.
+    const failThreshold = Number(
+      process.env.UNDISCLOSED_BRAIN_WATCH_FAILS || 18
+    );
     this.watchdogStartedAt = Date.now();
     this.watchdogTimer = setInterval(() => {
       void this.watchdogTick(bin, nodePort, failThreshold);

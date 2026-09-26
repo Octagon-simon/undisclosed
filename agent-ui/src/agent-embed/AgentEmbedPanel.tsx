@@ -262,8 +262,8 @@ const AgentEmbedPanel = forwardRef<AgentPanelApi>((_props, ref) => {
                 No active workspace folder
               </div>
               <div className="text-label-xs leading-relaxed text-ds-text-neutral-subtle-default">
-                Open a folder in the editor (File → Open Folder) to work on a
-                project, and the agent will operate there. Or use{' '}
+                Open a folder in the editor (File → Open…, then pick a folder) to
+                work on a project, and the agent will operate there. Or use{' '}
                 <span className="font-semibold">New</span> in the title bar for a
                 temporary conversation.
               </div>

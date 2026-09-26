@@ -80,7 +80,7 @@ try {
   const http = require('http');
   const fs = require('fs');
   const os = require('os');
-  const { spawnSync } = require('child_process');
+  const { spawn, spawnSync } = require('child_process');
 
   // render-process-gone reasons that mean the renderer is actually dead (vs a
   // normal `clean-exit` on quit, which must NOT trigger a reload).
@@ -255,6 +255,47 @@ try {
     }
   };
 
+  /**
+   * True when the user self-hosts the brain (mirrors BrainLauncher.selfHosted).
+   * In that mode there is NO in-app supervisor to respawn a killed brain, so
+   * recovery must run the user's own restart command instead of waiting.
+   */
+  const isSelfHosted = () => {
+    const v = (
+      process.env.UNDISCLOSED_BRAIN_SELF_HOSTED ??
+      (process.env.UNDISCLOSED_MANAGE_BRAIN === '0' ? '1' : '')
+    )
+      .trim()
+      .toLowerCase();
+    return v === '1' || v === 'true' || v === 'yes' || v === 'on';
+  };
+
+  /**
+   * Run the self-hoster's UNDISCLOSED_BRAIN_RESTART_CMD (e.g.
+   * "/path/to/scripts/brain.sh restart") in a login shell so their PATH/venv
+   * resolve. Returns true if a command was launched. Fire-and-forget: the health
+   * poll that follows is what confirms the brain actually came back.
+   */
+  const runSelfHostRestartCmd = () => {
+    const cmd = (process.env.UNDISCLOSED_BRAIN_RESTART_CMD || '').trim();
+    if (!cmd) {
+      return false;
+    }
+    try {
+      const child = spawn('bash', ['-lc', cmd], {
+        cwd: process.env.UNDISCLOSED_BRAIN_RESTART_CWD || os.homedir(),
+        detached: true,
+        stdio: 'ignore',
+      });
+      child.on('error', (e) => logLine(`self-host restart cmd failed: ${e.message}`));
+      child.unref();
+      return true;
+    } catch (e) {
+      logLine(`self-host restart cmd spawn failed: ${e.message}`);
+      return false;
+    }
+  };
+
   /** Poll /health until it answers or the timeout elapses. */
   const waitForBrain = async (timeoutMs) => {
     const deadline = Date.now() + timeoutMs;
@@ -287,10 +328,21 @@ try {
   const restartWedgedBrain = async (why) => {
     const pids = brainListenerPids();
     if (!pids.length) {
-      logLine(
-        `brain not listening on :${BRAIN_PORT} after wake (${why}) — ` +
-          'waiting for the supervisor to (re)start it'
-      );
+      // Self-host: nobody in-app will respawn it, so run the user's restart cmd.
+      if (isSelfHosted() && runSelfHostRestartCmd()) {
+        logLine(
+          `brain not listening on :${BRAIN_PORT} after wake (${why}) — ` +
+            'ran UNDISCLOSED_BRAIN_RESTART_CMD to revive it'
+        );
+      } else {
+        logLine(
+          `brain not listening on :${BRAIN_PORT} after wake (${why}) — ` +
+            (isSelfHosted()
+              ? 'self-hosted with no UNDISCLOSED_BRAIN_RESTART_CMD set; ' +
+                'start it yourself (./scripts/brain.sh start)'
+              : 'waiting for the supervisor to (re)start it')
+        );
+      }
       return waitForBrain(BRAIN_REVIVE_TIMEOUT_MS);
     }
     logLine(
@@ -309,6 +361,20 @@ try {
         process.kill(pid, 'SIGKILL');
       } catch (_e) {
         /* already gone */
+      }
+    }
+    // Self-host: BrainLauncher is a no-op, so the exit we just forced won't be
+    // respawned by anything in-app. Run the user's restart command ourselves;
+    // without it, the self-hosted brain stays down until they restart it by hand
+    // (the "I have to run brain.sh restart" the user hit).
+    if (isSelfHosted()) {
+      if (runSelfHostRestartCmd()) {
+        logLine('self-host: ran UNDISCLOSED_BRAIN_RESTART_CMD to revive brain');
+      } else {
+        logLine(
+          'self-host: no UNDISCLOSED_BRAIN_RESTART_CMD set — brain will stay ' +
+            'down; set it in ~/.undisclosed/.env or start it yourself'
+        );
       }
     }
     if (await waitForBrain(BRAIN_REVIVE_TIMEOUT_MS)) {
