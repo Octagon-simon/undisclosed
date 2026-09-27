@@ -20,8 +20,18 @@
  */
 
 import { proxyFetchGet } from '@/api/http';
+import { useFeedbackStore } from '@/store/feedbackStore';
 import { useQuery } from '@tanstack/react-query';
-import { Activity, Layers, Loader2, MessagesSquare, Zap } from 'lucide-react';
+import {
+  Activity,
+  Layers,
+  Loader2,
+  MessagesSquare,
+  ThumbsDown,
+  ThumbsUp,
+  Zap,
+} from 'lucide-react';
+import { useEffect } from 'react';
 
 interface GroupedProject {
   project_id: string;
@@ -80,6 +90,99 @@ function StatCard({
       <span className="text-heading-h5 font-bold tabular-nums text-ds-text-neutral-default-default">
         {value}
       </span>
+    </div>
+  );
+}
+
+/**
+ * Aggregate thumbs-up/down the user gave to agent answers — a "how well did the
+ * agent do" read-out. Derived live from the feedback store (same source the
+ * per-answer thumbs write to), so voting anywhere updates this immediately.
+ */
+function FeedbackSummary() {
+  const map = useFeedbackStore((s) => s.map);
+  const hydrate = useFeedbackStore((s) => s.hydrate);
+
+  useEffect(() => {
+    void hydrate();
+  }, [hydrate]);
+
+  const entries = Object.values(map);
+  let up = 0;
+  let down = 0;
+  for (const e of entries) {
+    if (e.rating === 'up') up++;
+    else if (e.rating === 'down') down++;
+  }
+  const total = up + down;
+  const satisfaction = total > 0 ? Math.round((up / total) * 100) : null;
+  const recent = entries
+    .slice()
+    .sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
+    .slice(0, 12);
+
+  return (
+    <div className="mt-4">
+      <div className="mb-1.5 text-label-xs font-medium uppercase tracking-wide text-ds-text-neutral-subtle-default">
+        Agent feedback
+      </div>
+      <div className="flex flex-col gap-2 rounded-xl border border-solid border-ds-border-neutral-default-default bg-ds-bg-neutral-muted-default px-3 py-3">
+        {total === 0 ? (
+          <div className="text-label-xs text-ds-text-neutral-subtle-default">
+            No ratings yet. Use 👍 / 👎 under an agent answer.
+          </div>
+        ) : (
+          <>
+            <div className="flex items-baseline justify-between">
+              <span className="text-heading-h5 font-bold tabular-nums text-ds-text-neutral-default-default">
+                {satisfaction}% positive
+              </span>
+              <span className="text-label-xs tabular-nums text-ds-text-neutral-subtle-default">
+                {total} rated
+              </span>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="flex items-center gap-1 text-label-sm tabular-nums text-ds-text-neutral-default-default">
+                <ThumbsUp
+                  size={14}
+                  aria-hidden
+                  className="text-ds-text-success-default-default"
+                />
+                {up}
+              </span>
+              <span className="flex items-center gap-1 text-label-sm tabular-nums text-ds-text-neutral-default-default">
+                <ThumbsDown
+                  size={14}
+                  aria-hidden
+                  className="text-ds-text-error-default-default"
+                />
+                {down}
+              </span>
+              {recent.length > 0 && (
+                <span className="ml-auto flex items-center gap-0.5">
+                  {recent.map((e, i) =>
+                    e.rating === 'up' ? (
+                      <ThumbsUp
+                        key={i}
+                        size={12}
+                        aria-hidden
+                        className="text-ds-text-success-default-default"
+                      />
+                    ) : (
+                      <ThumbsDown
+                        key={i}
+                        size={12}
+                        aria-hidden
+                        className="text-ds-text-error-default-default"
+                      />
+                    )
+                  )}
+                </span>
+              )}
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -166,6 +269,8 @@ export default function AgentUsageStats() {
               value={formatCompact(completed)}
             />
           </div>
+
+          <FeedbackSummary />
 
           <div className="mt-4">
             <div className="mb-1.5 text-label-xs font-medium uppercase tracking-wide text-ds-text-neutral-subtle-default">

@@ -89,7 +89,10 @@ export function useModelConfigCheck(): {
       } else if (modelType === 'local' || modelType === 'custom') {
         setCloudUsageLimitReached(false);
         const res = await proxyFetchGet('/api/v1/providers', { prefer: true });
-        const providerList = res.items || [];
+        // The brain serves /providers as a raw array; only the (legacy) cloud
+        // proxy wraps it in { items }. Handle both so a configured local/custom
+        // provider is detected and the "select a model" overlay stays hidden.
+        const providerList = Array.isArray(res) ? res : res?.items || [];
         setHasModelConfigured(providerList.length > 0);
       } else {
         setCloudUsageLimitReached(false);

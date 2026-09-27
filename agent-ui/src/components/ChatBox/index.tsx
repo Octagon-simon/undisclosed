@@ -972,6 +972,11 @@ export default function ChatBox(): JSX.Element {
             // (e.g. model A -> model B) is honored on this follow-up turn.
             const improveModel =
               await resolveChatModelForProject(targetProjectId);
+            // The follow-up POST was fire-and-forget: if it rejected (4xx/5xx,
+            // network, backend not consuming), the failure was SILENT and the
+            // queued pill got stuck forever with no send ever happening — the
+            // "message never reaches the agent, stays queued until I retype" bug.
+            // Surface failures and drop the stuck pill so a retry is possible.
             fetchPost(`/chat/${targetProjectId}`, {
               question: tempMessageContent,
               task_id: nextTaskId,
@@ -992,7 +997,29 @@ export default function ChatBox(): JSX.Element {
                     extra_params: improveModel.extra_params,
                   }
                 : {}),
-            });
+            })
+              .then((res) => {
+                console.debug('[handleSend] follow-up (improve) queued', {
+                  targetProjectId,
+                  nextTaskId,
+                  res,
+                });
+              })
+              .catch((err) => {
+                console.error(
+                  '[handleSend] follow-up (improve) POST failed',
+                  err
+                );
+                toast.error(
+                  'Could not send your message to the running task. Please try again.'
+                );
+                // Remove the stuck "queued" pill so the user isn't blocked.
+                try {
+                  projectStore.removeQueuedMessage(targetProjectId, nextTaskId);
+                } catch {
+                  /* pill may not exist (task was idle) */
+                }
+              });
             chatStore.setIsPending(_taskId, true);
             // Only insert the user message inline when the task is IDLE (its
             // turn starts now). For a QUEUED follow-up (task still busy), adding

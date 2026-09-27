@@ -16,7 +16,9 @@
 import useChatStoreAdapter from '@/hooks/useChatStoreAdapter';
 import { LiveReasoning } from './LiveReasoning';
 import { usePageTabStore } from '@/store/pageTabStore';
+import { useFeedbackStore } from '@/store/feedbackStore';
 import { AnimatePresence } from 'framer-motion';
+import { ThumbsDown, ThumbsUp } from 'lucide-react';
 import React, {
   useCallback,
   useEffect,
@@ -35,6 +37,83 @@ interface ProjectChatContainerProps {
   scrollBottomInsetPx: number;
   onSkip: () => void;
   isPauseResumeLoading: boolean;
+}
+
+/** How long the thread feedback pill stays before it eases out (ms). */
+const FEEDBACK_PILL_VISIBLE_MS = 6000;
+const FEEDBACK_PILL_FADE_MS = 700;
+
+/**
+ * Compact aggregate of the 👍/👎 the user has given agent answers, shown briefly
+ * at the top of the conversation thread then eased out — a glance, not a fixture
+ * (the persistent read-out lives in the Usage overview). Global tally (all
+ * conversations), sourced from the feedback store. Hidden when nothing's rated.
+ */
+function ThreadFeedbackSummary() {
+  const map = useFeedbackStore((s) => s.map);
+  const hydrate = useFeedbackStore((s) => s.hydrate);
+  const [phase, setPhase] = useState<'shown' | 'fading' | 'gone'>('shown');
+
+  useEffect(() => {
+    void hydrate();
+  }, [hydrate]);
+
+  // Show, then fade out and unmount so it never permanently occupies the top of
+  // the thread.
+  useEffect(() => {
+    const fade = setTimeout(() => setPhase('fading'), FEEDBACK_PILL_VISIBLE_MS);
+    const gone = setTimeout(
+      () => setPhase('gone'),
+      FEEDBACK_PILL_VISIBLE_MS + FEEDBACK_PILL_FADE_MS
+    );
+    return () => {
+      clearTimeout(fade);
+      clearTimeout(gone);
+    };
+  }, []);
+
+  let up = 0;
+  let down = 0;
+  for (const e of Object.values(map)) {
+    if (e.rating === 'up') up++;
+    else if (e.rating === 'down') down++;
+  }
+  const total = up + down;
+  if (total === 0 || phase === 'gone') return null;
+  const pct = Math.round((up / total) * 100);
+
+  return (
+    <div
+      className="mb-2 flex justify-center pt-2"
+      style={{
+        opacity: phase === 'fading' ? 0 : 1,
+        transition: `opacity ${FEEDBACK_PILL_FADE_MS}ms ease`,
+        pointerEvents: phase === 'fading' ? 'none' : undefined,
+      }}
+    >
+      <span className="inline-flex items-center gap-2 rounded-full border border-solid border-ds-border-neutral-subtle-default bg-ds-bg-neutral-muted-default px-2.5 py-0.5 text-label-xs text-ds-text-neutral-subtle-default">
+        <span className="font-semibold text-ds-text-neutral-default-default">
+          {pct}% positive
+        </span>
+        <span className="inline-flex items-center gap-0.5 tabular-nums">
+          <ThumbsUp
+            size={11}
+            aria-hidden
+            className="text-ds-text-success-default-default"
+          />
+          {up}
+        </span>
+        <span className="inline-flex items-center gap-0.5 tabular-nums">
+          <ThumbsDown
+            size={11}
+            aria-hidden
+            className="text-ds-text-error-default-default"
+          />
+          {down}
+        </span>
+      </span>
+    </div>
+  );
 }
 
 export const ProjectChatContainer: React.FC<ProjectChatContainerProps> = ({
@@ -360,6 +439,8 @@ export const ProjectChatContainer: React.FC<ProjectChatContainerProps> = ({
         className="mx-auto w-full max-w-[600px] pt-0"
         style={{ paddingBottom: scrollBottomInsetPx }}
       >
+        <ThreadFeedbackSummary />
+
         {/* ONE pinned plan/todo indicator, bound to the CURRENT (most recent)
             conversation's task — the last task section. Rendering it per-section
             pinned an OLDER task's plan over a newer conversation (the plan

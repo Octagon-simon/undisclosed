@@ -253,7 +253,11 @@ const authStore = create<AuthState>()(
       language: 'system',
       isFirstLaunch: true,
       onboardingCompleted: false,
-      modelType: 'cloud',
+      // BYOK product: default to the user's own configured provider (custom),
+      // NOT the vendor cloud (gpt-5.5) which has no key here. resolveChatModel-
+      // ForProject then resolves the preferred custom provider. (Cloud is being
+      // retired from the model picker — this app is BYOK/custom + local only.)
+      modelType: 'custom',
       cloud_model_type: getRandomDefaultModel(),
       codex_model_type: 'gpt-5.5',
       lastUsedModel: null,
@@ -482,7 +486,9 @@ const authStore = create<AuthState>()(
       name: 'auth-storage',
       // Bump so migrate re-runs for existing sessions that still need the
       // user-id repair; a matching version skips migrate and stays unrepaired.
-      version: 11,
+      // v12: retire the vendor cloud default — coerce persisted modelType
+      // 'cloud' → 'custom' so existing sessions use their own BYOK provider.
+      version: 12,
       migrate: (persistedState, _version) => {
         const s = persistedState as
           | {
@@ -499,6 +505,7 @@ const authStore = create<AuthState>()(
               workspaceMainBackground?: string;
               cloud_model_type?: unknown;
               codex_model_type?: unknown;
+              modelType?: unknown;
             }
           | undefined;
         if (!s) return persistedState as typeof persistedState;
@@ -559,6 +566,13 @@ const authStore = create<AuthState>()(
           dark: s.customThemeCatalog?.dark ?? {},
         };
 
+        // Retire the vendor cloud model: a session that still defaults to
+        // 'cloud' should fall back to its own BYOK provider ('custom'), so the
+        // picker shows the user's model (not GPT-5.5) and sends never hit a
+        // cloud key that doesn't exist in this standalone app.
+        const coercedModelType =
+          s.modelType === 'cloud' ? 'custom' : (s.modelType as ModelType);
+
         if (s.appearance === 'transparent') {
           return {
             ...s,
@@ -569,6 +583,7 @@ const authStore = create<AuthState>()(
             workspaceMainBackground,
             cloud_model_type: sanitizedCloudModelType,
             codex_model_type: sanitizedCodexModelType,
+            modelType: coercedModelType,
             authEnvironmentKey: currentEnvironmentKey,
           };
         }
@@ -581,6 +596,7 @@ const authStore = create<AuthState>()(
           workspaceMainBackground,
           cloud_model_type: sanitizedCloudModelType,
           codex_model_type: sanitizedCodexModelType,
+          modelType: coercedModelType,
           authEnvironmentKey: currentEnvironmentKey,
         } as typeof persistedState;
       },

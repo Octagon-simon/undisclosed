@@ -18,6 +18,8 @@ import { UndisclosedAgentWidget } from './undisclosed-agent-widget';
 import { UndisclosedAgentContribution } from './undisclosed-agent-contribution';
 import { UndisclosedAgentLayoutContribution } from './undisclosed-agent-layout-contribution';
 import { GitExtrasContribution } from './git-extras-contribution';
+import { TerminalWidget } from '@theia/terminal/lib/browser/base/terminal-widget';
+import { PersistentTerminalWidget } from './persistent-terminal-widget';
 import { UndisclosedWelcomeWidget } from './undisclosed-welcome-widget';
 import { UndisclosedWelcomeContribution } from './undisclosed-welcome-contribution';
 
@@ -34,11 +36,23 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
   // only alters the RIGHT side).
   rebind(SidePanelHandler).to(UndisclosedSidePanelHandler);
 
+  // Phase 4: make every terminal a PersistentTerminalWidget so scrollback
+  // survives a reload (VS Code "session restored"). @theia/terminal binds
+  // TerminalWidget -> TerminalWidgetImpl in transient scope and its WidgetFactory
+  // resolves TerminalWidget from a child container, so rebinding here propagates
+  // to newly created terminals. The subclass only ADDS serialize/restore and
+  // degrades to a normal terminal if the addon fails, so this is non-breaking.
+  rebind(TerminalWidget).to(PersistentTerminalWidget).inTransientScope();
+
   bindViewContribution(bind, UndisclosedAgentContribution);
   bind(FrontendApplicationContribution).toService(UndisclosedAgentContribution);
   bind(TabBarToolbarContribution).toService(UndisclosedAgentContribution);
   bind(UndisclosedAgentLayoutContribution).toSelf().inSingletonScope();
   bind(FrontendApplicationContribution).toService(UndisclosedAgentLayoutContribution);
+  // Also a TabBarToolbarContribution + CommandContribution: it adds the bottom
+  // panel Expand/restore button (resizes the bottom area, keeping side bars).
+  bind(TabBarToolbarContribution).toService(UndisclosedAgentLayoutContribution);
+  bind(CommandContribution).toService(UndisclosedAgentLayoutContribution);
   bind(UndisclosedAgentWidget).toSelf();
   bind(WidgetFactory)
     .toDynamicValue((ctx) => ({

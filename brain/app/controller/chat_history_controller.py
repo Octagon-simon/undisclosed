@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -171,3 +173,86 @@ async def list_turns(chat_id: str):
 async def get_turn(chat_id: str, query_id: str):
     turn = _load_turn(chat_id, query_id)
     return asdict(turn)
+
+
+# --------------------------------------------------------------------------- #
+# Message feedback (thumbs up / down)                                          #
+#                                                                              #
+# Purely LOCAL: the panel's per-answer thumbs post here instead of a cloud     #
+# server (which doesn't exist in the standalone app). One small JSON file,     #
+# keyed by the assistant message id, upserted under a lock so concurrent votes #
+# don't clobber each other. `rating: null` clears a vote (lets the user undo   #
+# or switch). The Stats panel derives its tally from GET /feedback/map.        #
+# --------------------------------------------------------------------------- #
+
+_FEEDBACK_LOCK = threading.Lock()
+
+Rating = str  # "up" | "down"
+
+
+def _feedback_path() -> Path:
+    override = env("UNDISCLOSED_FEEDBACK_FILE", "").strip()
+    if override:
+        p = Path(override).expanduser()
+    else:
+        p = Path.home() / ".undisclosed" / "feedback.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _read_feedback() -> dict[str, dict[str, Any]]:
+    data = _read_json(_feedback_path()) or {}
+    msgs = data.get("messages")
+    return msgs if isinstance(msgs, dict) else {}
+
+
+def _write_feedback(messages: dict[str, dict[str, Any]]) -> None:
+    _atomic_write_json(_feedback_path(), {"messages": messages})
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+@router.post("/feedback")
+async def post_feedback(
+    message_id: str = Body(..., embed=True),
+    rating: str | None = Body(None, embed=True),
+    chat_id: str | None = Body(None, embed=True),
+):
+    """Upsert (or clear, when rating is null) the thumbs rating for a message."""
+    mid = (message_id or "").strip()
+    if not mid:
+        return {"ok": False, "detail": "message_id required"}
+    norm = (rating or "").strip().lower()
+    if norm not in ("up", "down", ""):
+        return {"ok": False, "detail": "rating must be 'up', 'down' or null"}
+    with _FEEDBACK_LOCK:
+        messages = _read_feedback()
+        if norm == "":
+            messages.pop(mid, None)
+        else:
+            prev = messages.get(mid) or {}
+            messages[mid] = {
+                "rating": norm,
+                "chatId": chat_id or prev.get("chatId"),
+                "createdAt": prev.get("createdAt") or _now_iso(),
+                "updatedAt": _now_iso(),
+            }
+        _write_feedback(messages)
+    return {"ok": True, "rating": norm or None}
+
+
+@router.get("/feedback/map")
+async def get_feedback_map():
+    """All ratings keyed by message id: `{ "<id>": {rating, updatedAt} }`.
+
+    The panel uses this to restore each answer's thumb after a reload and to
+    derive the aggregate tally (up/down/recent) shown in the Stats panel.
+    """
+    messages = _read_feedback()
+    return {
+        mid: {"rating": v.get("rating"), "updatedAt": v.get("updatedAt")}
+        for mid, v in messages.items()
+        if v.get("rating") in ("up", "down")
+    }

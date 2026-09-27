@@ -1304,7 +1304,13 @@ export async function resolveChatModelForProject(
   const effectiveModelType =
     pinnedModelSelection?.modelType ?? authStore.modelType;
 
-  if (effectiveModelType === 'custom' || effectiveModelType === 'local') {
+  // BYOK product: every non-Codex selection resolves to one of the user's own
+  // configured providers (custom API keys or local runtimes). This deliberately
+  // also catches the legacy `'cloud'`/undefined default — the vendor cloud
+  // (gpt-5.5) is retired here, so a persisted `modelType: 'cloud'` from before
+  // this change still runs on the user's preferred BYOK provider instead of
+  // failing on a cloud key that doesn't exist. Codex keeps its own auth path.
+  if (effectiveModelType !== 'codex_subscription') {
     let provider: any = null;
     if (pinnedModelSelection?.provider_id !== undefined) {
       try {
@@ -1322,7 +1328,7 @@ export async function resolveChatModelForProject(
       const res = await proxyFetchGet('/api/v1/providers', {
         prefer: true,
       });
-      const providerList = res.items || [];
+      const providerList = Array.isArray(res) ? res : res.items || [];
       provider = providerList[0];
     }
     if (!provider) {
@@ -1342,41 +1348,9 @@ export async function resolveChatModelForProject(
     };
   }
 
-  if (effectiveModelType === 'cloud') {
-    const requestedCloudModelId =
-      pinnedModelSelection?.cloud_model_type || authStore.cloud_model_type;
-    const cloudModelStore = getCloudModelStore();
-    let resolvedCloudModel = cloudModelStore.resolveCloudModel(
-      requestedCloudModelId
-    );
-    if (!resolvedCloudModel || resolvedCloudModel.source !== 'selected') {
-      await cloudModelStore.fetchCloudModels(true);
-      resolvedCloudModel = getCloudModelStore().resolveCloudModel(
-        requestedCloudModelId
-      );
-    }
-    if (!resolvedCloudModel) {
-      return null;
-    }
-    let res: any;
-    try {
-      res = await proxyFetchGet('/api/v1/user/key');
-    } catch (error) {
-      return null;
-    }
-    if (!res?.value) {
-      return null;
-    }
-    return {
-      api_key: res.value,
-      model_type: resolvedCloudModel.model.model_type,
-      model_platform: resolvedCloudModel.model.model_platform,
-      api_url: res.api_url,
-      model_config_dict: {},
-      extra_params: {},
-      auth_source: undefined,
-    };
-  }
+  // (Vendor cloud model resolution retired — this app is BYOK/custom + local
+  // only. The `!== 'codex_subscription'` branch above now handles every
+  // non-Codex case, including the legacy 'cloud' default.)
 
   if (effectiveModelType === 'codex_subscription') {
     const codexModelId =
@@ -1933,7 +1907,7 @@ const chatStore = (initial?: Partial<ChatStore>) =>
           const res = await proxyFetchGet('/api/v1/providers', {
             prefer: true,
           });
-          const providerList = res.items || [];
+          const providerList = Array.isArray(res) ? res : res.items || [];
           provider = providerList[0];
         }
 
@@ -2662,9 +2636,25 @@ const chatStore = (initial?: Partial<ChatStore>) =>
                 // have no executionId), matched by content.
                 try {
                   const ps = useProjectStore.getState();
-                  const pending = ps.projects[project_id]?.queuedMessages?.find(
+                  const queued = ps.projects[project_id]?.queuedMessages || [];
+                  const pending = queued.find(
                     (m) => !m.executionId && m.content === userMessageContent
                   );
+                  // [STEER-DIAG] Pinpoints the mid-task follow-up bug: shows that
+                  // the deferred turn's `confirmed` DID arrive and whether the
+                  // pill match succeeded. A pill that stays = content mismatch
+                  // here (userMessageContent vs the pill's stored content).
+                  console.debug('[STEER-DIAG] confirmed onboarding follow-up', {
+                    project_id,
+                    newTaskId,
+                    currentTaskId,
+                    isFollowUpConfirm,
+                    userMessageContent,
+                    pendingContents: queued
+                      .filter((m) => !m.executionId)
+                      .map((m) => m.content),
+                    pillMatched: !!pending,
+                  });
                   if (pending) {
                     ps.removeQueuedMessage(project_id, pending.task_id);
                   }
@@ -4551,6 +4541,16 @@ const chatStore = (initial?: Partial<ChatStore>) =>
             const consumed = (
               agentMessages.data as { consumed_question?: string } | undefined
             )?.consumed_question;
+            // [STEER-DIAG] The backend emits this `notice` when it received the
+            // mid-task follow-up (either folding it into the running turn or
+            // deferring it). If this logs, the message REACHED the brain — so a
+            // stuck pill / missing answer is a UI-side rendering issue, not a
+            // send failure.
+            console.debug('[STEER-DIAG] notice received', {
+              currentTaskId,
+              consumed,
+              notice: (agentMessages.data as { notice?: string })?.notice,
+            });
             if (consumed) {
               try {
                 const ps = useProjectStore.getState();

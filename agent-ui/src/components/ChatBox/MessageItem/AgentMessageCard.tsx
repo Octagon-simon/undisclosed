@@ -14,6 +14,7 @@
 
 import { fileInfoFromPath } from '@/lib/fileInfo';
 import { usePageTabStore } from '@/store/pageTabStore';
+import { useFeedbackStore } from '@/store/feedbackStore';
 import { useHost } from '@/host';
 import { Check, Copy, FileText, ThumbsDown, ThumbsUp } from 'lucide-react';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
@@ -23,8 +24,6 @@ import { Button } from '../../ui/button';
 import { MarkDown } from './MarkDown';
 
 const COPIED_RESET_MS = 2000;
-
-type MessageFeedback = 'up' | 'down' | null;
 
 interface AgentMessageCardProps {
   id: string;
@@ -67,12 +66,18 @@ export function AgentMessageCard({
   const enableTypewriter = !isCompleted;
 
   const [copied, setCopied] = useState(false);
-  const [feedback, setFeedback] = useState<MessageFeedback>(null);
+  // Feedback is persisted (local brain) and keyed by message id, so it survives
+  // reloads and stays in sync with the Stats panel tally. Subscribe to just this
+  // message's rating.
+  const feedback = useFeedbackStore((s) => s.map[id]?.rating ?? null);
+  const setRating = useFeedbackStore((s) => s.setRating);
   const { t } = useTranslation();
 
+  // Hydrate the map once (guarded inside the store) so a reloaded conversation
+  // shows the thumbs the user already gave.
   useEffect(() => {
-    setFeedback(null);
-  }, [id]);
+    void useFeedbackStore.getState().hydrate();
+  }, []);
 
   const handleTypingComplete = () => {
     if (!completedTypewriterByMessageId.has(id)) {
@@ -100,16 +105,16 @@ export function AgentMessageCard({
   }, [onMarkdownRenderComplete]);
 
   const handleThumbUp = useCallback(() => {
-    if (feedback !== null) return;
-    setFeedback('up');
-    toast.success('Thanks for your feedback');
-  }, [feedback]);
+    const adding = feedback !== 'up'; // toggling the active thumb clears it
+    void setRating(id, 'up');
+    if (adding) toast.success('Thanks for your feedback');
+  }, [feedback, id, setRating]);
 
   const handleThumbDown = useCallback(() => {
-    if (feedback !== null) return;
-    setFeedback('down');
-    toast.success('Thanks for your feedback');
-  }, [feedback]);
+    const adding = feedback !== 'down';
+    void setRating(id, 'down');
+    if (adding) toast.success('Thanks for your feedback');
+  }, [feedback, id, setRating]);
 
   const showDeferredFileUi =
     markdownAndTypingComplete &&
@@ -186,12 +191,16 @@ export function AgentMessageCard({
             variant="ghost"
             size="xs"
             buttonContent="icon-only"
-            aria-label="Thumb up"
+            aria-label={feedback === 'up' ? 'Rated helpful — click to remove' : 'Thumb up'}
             aria-pressed={feedback === 'up'}
-            disabled={feedback === 'down'}
+            title={feedback === 'up' ? 'Rated helpful — click to remove' : 'Good response'}
           >
             <ThumbsUp
-              className={`h-4 w-4 ${feedback === 'up' ? 'text-ds-text-brand-default-default' : ''}`}
+              className={`h-4 w-4 ${feedback === 'up' ? 'text-ds-text-success-default-default' : ''}`}
+              // Fill the icon while rated so it reads as SOLID (rated) vs the
+              // hollow default — the affordance that this answer is rated and a
+              // re-click clears it.
+              fill={feedback === 'up' ? 'currentColor' : 'none'}
             />
           </Button>
           <Button
@@ -199,12 +208,13 @@ export function AgentMessageCard({
             variant="ghost"
             size="xs"
             buttonContent="icon-only"
-            aria-label="Thumb down"
+            aria-label={feedback === 'down' ? 'Rated not helpful — click to remove' : 'Thumb down'}
             aria-pressed={feedback === 'down'}
-            disabled={feedback === 'up'}
+            title={feedback === 'down' ? 'Rated not helpful — click to remove' : 'Bad response'}
           >
             <ThumbsDown
-              className={`h-4 w-4 ${feedback === 'down' ? 'text-ds-text-brand-default-default' : ''}`}
+              className={`h-4 w-4 ${feedback === 'down' ? 'text-ds-text-error-default-default' : ''}`}
+              fill={feedback === 'down' ? 'currentColor' : 'none'}
             />
           </Button>
         </div>
