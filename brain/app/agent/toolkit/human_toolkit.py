@@ -157,6 +157,24 @@ class HumanToolkit(BaseToolkit, AbstractToolkit):
 
         task_lock = get_task_lock(self.api_task_id)
 
+        # Weaker models call this on every step with placeholder junk — the
+        # literal strings "null"/"none"/"undefined" or an empty description —
+        # which surfaced as meaningless "null" progress notices spamming the UI
+        # (and making a working turn look like it was stalling out with no real
+        # progress). Drop those: only emit a notice when there is real content.
+        def _is_placeholder(value: str | None) -> bool:
+            if value is None:
+                return True
+            v = value.strip().lower()
+            return v in ("", "null", "none", "undefined", "n/a")
+
+        if _is_placeholder(message_description):
+            return (
+                "Message not sent: message_description was empty or a "
+                "placeholder. Provide a real one-sentence update, or skip "
+                "calling this tool if there is nothing to report."
+            )
+
         # Get process_task_id from ContextVar with fallback
         current_process_task_id = process_task.get("")
         if not current_process_task_id:

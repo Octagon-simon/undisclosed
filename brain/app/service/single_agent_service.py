@@ -1106,9 +1106,17 @@ async def single_agent_solve(
             pass
         observable_todo = getattr(agent, "_observable_todo_toolkit", None)
         if observable_todo is not None:
+            # Drop todos left over from a previous task so this turn starts
+            # clean — otherwise the prior task's list (last item often still
+            # `in_progress`) gets re-emitted below under the new task_id and the
+            # UI renders a stale, spinning todo for a task that never used todos.
+            observable_todo.reset_todos_if_stale(task_id)
             observable_todo.task_id = task_id
             observable_todo.agent_id = agent.agent_id
-            observable_todo.emit_todo_state()
+            # Only re-emit when there are todos that actually belong to THIS
+            # task; emitting an empty list would spin up an empty work-log shell.
+            if observable_todo.todos:
+                observable_todo.emit_todo_state()
         return agent
 
     async def run_turn(

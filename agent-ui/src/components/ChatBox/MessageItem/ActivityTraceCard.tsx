@@ -94,6 +94,22 @@ const FileSvgIcon = memo(function FileSvgIcon({
 });
 
 /**
+ * Split a file path into a muted parent dir (last ≤2 segments, prefixed with
+ * "…/" when deeper) + the basename, so file rows read like Antigravity's
+ * "…/components/ProjectSection.tsx" with the filename emphasized.
+ */
+function splitPathForDisplay(p: string): { dir: string; base: string } {
+  const clean = (p || '').replace(/\/+$/, '');
+  const parts = clean.split(/[\\/]/).filter(Boolean);
+  if (parts.length <= 1) return { dir: '', base: clean };
+  const base = parts[parts.length - 1];
+  const dirParts = parts.slice(0, -1);
+  const tail = dirParts.slice(-2);
+  const dir = (dirParts.length > tail.length ? '…/' : '') + tail.join('/') + '/';
+  return { dir, base };
+}
+
+/**
  * Legacy fallback badge: a small rounded square with a short label in the
  * language's brand color. Used only for extensions with no brand mark upstream
  * (txt, rst, java, .m/.mm, .proto) and for anything unknown.
@@ -269,7 +285,11 @@ const ActivityItemRow = memo(function ActivityItemRow({
             className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-label-sm font-medium text-ds-text-neutral-default-default hover:text-ds-text-brand-default-default hover:underline"
           >
             <FileTypeIcon path={item.filePath as string} />
-            <span className="min-w-0 truncate">{item.object}</span>
+            {/* Show just the file name (the full path is the click target +
+                tooltip). */}
+            <span className="min-w-0 truncate">
+              {splitPathForDisplay(item.filePath as string).base}
+            </span>
           </span>
         ) : (
           <span className="min-w-0 flex-1 truncate text-label-sm font-medium text-ds-text-neutral-default-default">

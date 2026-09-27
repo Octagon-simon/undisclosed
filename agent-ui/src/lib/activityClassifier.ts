@@ -132,24 +132,91 @@ function shorten(value: string): string {
   return parts.length ? parts[parts.length - 1] : value;
 }
 
-/** Parses a result count out of a tool's DEACTIVATE message, when present. */
-function extractResultBadge(output: string): string | undefined {
+/**
+ * A search pattern that reads cleanly as a quoted term. Returns null for a
+ * pattern that would render as noise — punctuation-only (`(`), or a heavy regex
+ * (`export (const|function)`) — so callers fall back to a path or a generic
+ * object instead of showing "Searched (".
+ */
+function cleanSearchTerm(raw: string | null): string | null {
+  const term = (raw || '').trim().replace(/^['"]+|['"]+$/g, '').trim();
+  if (!term) return null;
+  if (!/[A-Za-z0-9]/.test(term)) return null; // punctuation-only
+  const metaCount = (term.match(/[()[\]{}|\\^$*+?]/g) || []).length;
+  if (metaCount >= 2) return null; // reads as a regex blob, not a term
+  return truncate(term, 40);
+}
+
+/** A glob/name pattern for a file-name search — keep `*`, just strip quotes. */
+function cleanGlob(raw: string | null): string | null {
+  const g = (raw || '').trim().replace(/^['"]+|['"]+$/g, '').trim();
+  if (!g || !/[A-Za-z0-9*]/.test(g)) return null;
+  return g;
+}
+
+/**
+ * Best-effort search pattern from a `grep`/`rg`/`ag`/`ack` command so a shell
+ * search reads like a tool search ("Searched \"truncate\"") instead of the
+ * generic "Searched files". Prefers the first QUOTED argument (patterns are
+ * almost always quoted); returns null for unquoted/complex commands.
+ */
+function grepPatternFromCommand(command: string): string | null {
+  const m = command.match(
+    /\b(?:grep|egrep|fgrep|rg|ag|ack)\b[^\n]*?(['"])(.+?)\1/
+  );
+  return m ? m[2] : null;
+}
+
+/**
+ * A `[N matches]`-style count badge (Antigravity's metric pill) from a tool's
+ * DEACTIVATE message. CONSERVATIVE on purpose: the backend truncates tool output
+ * to 500 chars, so we only trust an explicit count the tool itself printed, or a
+ * (complete) JSON array — never a line-count of truncated text, which would
+ * under-report. `preferredNoun` ("matches", "files", "sources") sets the label.
+ */
+function extractResultBadge(
+  output: string,
+  preferredNoun = 'results'
+): string | undefined {
   if (!output) return undefined;
-  const match = output.match(/(\d+)\s*(results?|matches?|items?)/i);
+  const singular = preferredNoun.replace(/s$/, '');
+  const match = output.match(/(\d+)\s*(results?|matches?|items?|files?)/i);
   if (match) {
     const count = Number.parseInt(match[1], 10);
-    if (count === 0) return 'no results';
-    const noun = /result/i.test(match[2]) ? 'results' : match[2].toLowerCase();
-    return `${count} ${noun}`;
+    return count === 0 ? `no ${preferredNoun}` : `${count} ${count === 1 ? singular : preferredNoun}`;
   }
   try {
     const parsed = JSON.parse(output);
     if (Array.isArray(parsed)) {
-      return parsed.length === 0 ? 'no results' : `${parsed.length} results`;
+      const n = parsed.length;
+      return n === 0 ? `no ${preferredNoun}` : `${n} ${n === 1 ? singular : preferredNoun}`;
     }
   } catch {
-    // Not JSON; no count to report.
+    // Not JSON; no reliable count to report.
   }
+  return undefined;
+}
+
+/** Extract an unquoted numeric kwarg (`start_line=10`), which `extractParam`
+ *  (quoted-only) misses. */
+function numParam(input: string, keys: string[]): number | null {
+  for (const key of keys) {
+    const m = input.match(new RegExp(`${key}\\s*=\\s*(\\d+)`, 'i'));
+    if (m) return Number.parseInt(m[1], 10);
+  }
+  return null;
+}
+
+/** `lines X–Y` badge for a windowed file read, from the REQUEST args (accurate
+ *  even though the returned content is truncated). Undefined for a whole-file
+ *  read (no range args). */
+function readRangeBadge(input: string): string | undefined {
+  const start = numParam(input, ['start_line', 'startline', 'offset', 'start']);
+  const end = numParam(input, ['end_line', 'endline', 'end']);
+  const limit = numParam(input, ['limit']);
+  if (start != null && end != null && end >= start) return `lines ${start}–${end}`;
+  if (start != null && limit != null && limit > 0)
+    return `lines ${start}–${start + limit - 1}`;
   return undefined;
 }
 
@@ -237,11 +304,16 @@ function describeSingleCommand(seg: string): { verb: string; object: string } {
     case 'fgrep':
     case 'rg':
     case 'ag':
-    case 'ack':
-      return { verb: 'Searched', object: 'files' };
+    case 'ack': {
+      const term = cleanSearchTerm(grepPatternFromCommand(effective));
+      return {
+        verb: 'Searched',
+        object: term ? `codebase for "${term}"` : 'codebase',
+      };
+    }
     case 'find':
     case 'fd':
-      return { verb: 'Found', object: 'files' };
+      return { verb: 'Found files', object: 'in the workspace' };
     case 'ls':
     case 'll':
     case 'la':
@@ -374,6 +446,50 @@ function labelFromNarration(
   return { verb: text.slice(0, space), object: text.slice(space + 1) };
 }
 
+/**
+ * Past-tense verb → present-continuous, so a RUNNING row reads "Searching
+ * codebase…" and flips to "Searched codebase" when done — matching Antigravity's
+ * activity trace (see activity-antigravity.md §4D). Unmapped verbs (e.g. a
+ * humanized MCP method) are left as-is while running.
+ */
+const PAST_TO_GERUND: Record<string, string> = {
+  Searched: 'Searching',
+  'Found files': 'Finding files',
+  Read: 'Reading',
+  'Read file': 'Reading file',
+  Wrote: 'Writing',
+  Edited: 'Editing',
+  Updated: 'Updating',
+  Created: 'Creating',
+  Removed: 'Removing',
+  Copied: 'Copying',
+  Moved: 'Moving',
+  Fetched: 'Fetching',
+  Ran: 'Running',
+  Listed: 'Listing',
+  Waited: 'Waiting',
+  Changed: 'Changing',
+  Stopped: 'Stopping',
+  Checked: 'Checking',
+  Located: 'Locating',
+  Processed: 'Processing',
+  Counted: 'Counting',
+  Viewed: 'Viewing',
+  Remembered: 'Remembering',
+  Recalled: 'Recalling',
+  'Loaded skill': 'Loading skill',
+  Visited: 'Visiting',
+  Clicked: 'Clicking',
+  Typed: 'Typing',
+  Scrolled: 'Scrolling',
+  Browsed: 'Browsing',
+  Transferred: 'Transferring',
+};
+
+function toRunningVerb(verb: string): string {
+  return PAST_TO_GERUND[verb] ?? verb;
+}
+
 function browserVerb(method: string): string {
   if (method.includes('visit') || method.includes('open')) return 'Visited';
   if (method.includes('click')) return 'Clicked';
@@ -446,21 +562,37 @@ export function classifyToolItem(item: ToolItem): ActivityItem {
     method.includes('glob')
   ) {
     category = 'search';
-    verb = method.includes('glob') ? 'Found files' : 'Searched';
-    // File/code search tools use `pattern=`; web search uses `query=`.
-    object =
-      extractParam(item.input, [
-        'query',
-        'q',
-        'pattern',
-        'regex',
-        'keyword',
-        'search_term',
-        'text',
-      ]) ||
-      truncate(item.input, 60) ||
-      'the codebase';
-    badge = extractResultBadge(item.output);
+    // Label shape mirrors Antigravity's activity trace (see activity-antigravity.md):
+    //   code   -> Searched codebase for "term"
+    //   web    -> Searched the web for "term"
+    //   glob   -> Found files  <glob>
+    // and a bad/regex/empty pattern falls back to a clean scope instead of the
+    // old meaningless "Searched (".
+    if (method.includes('glob')) {
+      verb = 'Found files';
+      const glob = cleanGlob(
+        extractParam(item.input, ['glob', 'glob_pattern', 'pattern'])
+      );
+      object = glob ? shorten(glob) : 'in the workspace';
+      badge = extractResultBadge(item.output, 'files');
+    } else {
+      verb = 'Searched';
+      const isWeb = toolkit.includes('web') || method.includes('web');
+      const term = cleanSearchTerm(
+        extractParam(item.input, [
+          'query',
+          'q',
+          'pattern',
+          'regex',
+          'keyword',
+          'search_term',
+          'text',
+        ])
+      );
+      const where = isWeb ? 'the web' : 'codebase';
+      object = term ? `${where} for "${term}"` : where;
+      badge = extractResultBadge(item.output, isWeb ? 'sources' : 'matches');
+    }
   } else if (toolkit.includes('browser')) {
     category = 'browser';
     verb = browserVerb(method);
@@ -543,6 +675,7 @@ export function classifyToolItem(item: ToolItem): ActivityItem {
       extractFilePath(item.input) ||
       extractParam(item.input, ['image_path']) ||
       'file';
+    badge = readRangeBadge(item.input);
   } else if (method.includes('screenshot')) {
     category = 'read';
     verb = 'Viewed';
@@ -584,8 +717,14 @@ export function classifyToolItem(item: ToolItem): ActivityItem {
   return {
     id: item.id,
     category,
-    verb,
-    object: narrated ? truncate(object, 64) : shorten(object),
+    // Present-continuous while running ("Searching…"), past tense when done.
+    verb: running ? toRunningVerb(verb) : verb,
+    // Search objects are already cleaned/shortened in-branch; re-`shorten`ing
+    // would split a term on "/" and mangle it. Everything else shortens paths.
+    object:
+      narrated || category === 'search'
+        ? truncate(object, 64)
+        : shorten(object),
     badge,
     running,
     filePath,

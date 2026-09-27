@@ -2550,7 +2550,23 @@ const chatStore = (initial?: Partial<ChatStore>) =>
                   newChatStore.getState().setType(newTaskId, 'replay');
                 }
 
-                const isFollowUpConfirm = Boolean(previousChatStore.nextTaskId);
+                // Every `confirmed` that reaches this block is a NON-first
+                // confirm (the block is guarded by `!skipFirstConfirm`), i.e. a
+                // follow-up / subsequent turn. For those the SSE `question` is
+                // the Brain's echo of THIS turn's prompt and is authoritative;
+                // the closure `messageContent` is the ORIGINAL startTask prompt
+                // and is stale for every turn after the first (which goes to the
+                // else branch, not here).
+                //
+                // This used to be gated on `previousChatStore.nextTaskId`, but a
+                // mid-run steer that the Brain DEFERS loses that pointer by the
+                // time its deferred `confirmed` arrives (it reads null). That
+                // false negative flipped the resolver to the stale ORIGINAL
+                // prompt — rendering the wrong user bubble for the steered turn
+                // AND leaving its queued pill (keyed by the real prompt text)
+                // unmatched, so the pill stuck forever. Treat every confirm in
+                // this block as a follow-up so `question` wins.
+                const isFollowUpConfirm = true;
                 const lastMessage =
                   previousChatStore.tasks[currentTaskId]?.messages.at(-1);
                 if (lastMessage?.role === 'user' && lastMessage?.id) {
@@ -2634,27 +2650,16 @@ const chatStore = (initial?: Partial<ChatStore>) =>
                 // This queued follow-up's turn has started and it's now in the
                 // stream — drop its pending QueuedBox pill (display-only entries
                 // have no executionId), matched by content.
+                // The pill's stored content is the follow-up's prompt text, so
+                // this match only works because `userMessageContent` now
+                // resolves to the SSE `question` (the real prompt) rather than
+                // the stale original — see the isFollowUpConfirm note above.
                 try {
                   const ps = useProjectStore.getState();
                   const queued = ps.projects[project_id]?.queuedMessages || [];
                   const pending = queued.find(
                     (m) => !m.executionId && m.content === userMessageContent
                   );
-                  // [STEER-DIAG] Pinpoints the mid-task follow-up bug: shows that
-                  // the deferred turn's `confirmed` DID arrive and whether the
-                  // pill match succeeded. A pill that stays = content mismatch
-                  // here (userMessageContent vs the pill's stored content).
-                  console.debug('[STEER-DIAG] confirmed onboarding follow-up', {
-                    project_id,
-                    newTaskId,
-                    currentTaskId,
-                    isFollowUpConfirm,
-                    userMessageContent,
-                    pendingContents: queued
-                      .filter((m) => !m.executionId)
-                      .map((m) => m.content),
-                    pillMatched: !!pending,
-                  });
                   if (pending) {
                     ps.removeQueuedMessage(project_id, pending.task_id);
                   }
@@ -4541,26 +4546,19 @@ const chatStore = (initial?: Partial<ChatStore>) =>
             const consumed = (
               agentMessages.data as { consumed_question?: string } | undefined
             )?.consumed_question;
-            // [STEER-DIAG] The backend emits this `notice` when it received the
-            // mid-task follow-up (either folding it into the running turn or
-            // deferring it). If this logs, the message REACHED the brain — so a
-            // stuck pill / missing answer is a UI-side rendering issue, not a
-            // send failure.
-            console.debug('[STEER-DIAG] notice received', {
-              currentTaskId,
-              consumed,
-              notice: (agentMessages.data as { notice?: string })?.notice,
-            });
-            if (consumed) {
+            if (consumed && project_id) {
+              // queuedMessages are keyed by PROJECT id, not task id. Using
+              // currentTaskId here (a task id) looked up a nonexistent project,
+              // so a purely chipped-in steer's pill was never cleared and stuck.
               try {
                 const ps = useProjectStore.getState();
                 const pending = ps.projects[
-                  currentTaskId
+                  project_id
                 ]?.queuedMessages?.find(
                   (m) => !m.executionId && m.content === consumed
                 );
                 if (pending) {
-                  ps.removeQueuedMessage(currentTaskId, pending.task_id);
+                  ps.removeQueuedMessage(project_id, pending.task_id);
                 }
               } catch (err) {
                 console.warn('[queue] failed to clear chipped-in pill:', err);

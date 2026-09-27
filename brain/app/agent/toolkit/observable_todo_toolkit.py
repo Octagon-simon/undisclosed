@@ -65,6 +65,11 @@ class ObservableTodoToolkit(TodoToolkit, AbstractToolkit):
         self.api_task_id = api_task_id
         self.task_id = task_id
         self.agent_id = agent_id
+        # The task_id the current todo list was written under. The agent (and
+        # therefore this toolkit + its persisted todo files) is reused across
+        # turns, so todos outlive the task that created them. Tracking their
+        # owner lets a new task drop stale todos instead of inheriting them.
+        self._todos_task_id: str | None = None
 
     def todo_write(self, todos: list[_FlexTodoItem]) -> str:
         """Create or update the current task todo list.
@@ -97,8 +102,31 @@ class ObservableTodoToolkit(TodoToolkit, AbstractToolkit):
             )
         result = super().todo_write(coerced)
         if not result.startswith("[ERROR]"):
+            # These todos belong to the task currently running.
+            self._todos_task_id = self.task_id
             self.emit_todo_state()
         return result
+
+    def reset_todos_if_stale(self, new_task_id: str) -> bool:
+        """Drop todos that belong to a PREVIOUS task before a new turn starts.
+
+        The single agent (and this toolkit, including its `todo.md`/`.todo.json`
+        files) is reused across turns. Without this, the prior task's todo list —
+        often with the final item left `in_progress` — is re-emitted under the
+        new task_id by `ensure_agent`, so a task that never used todos renders a
+        stale, perpetually-spinning todo item. Returns True if it cleared.
+        """
+        if (
+            self.todos
+            and self._todos_task_id is not None
+            and self._todos_task_id != new_task_id
+        ):
+            with self._lock:
+                self.todos = []
+                self._save()
+            self._todos_task_id = None
+            return True
+        return False
 
     def emit_todo_state(self) -> None:
         try:

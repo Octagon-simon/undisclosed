@@ -40,7 +40,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { requestEmbedScreen } from '@/agent-embed/embedNav';
-import { createHost } from '@/host/createHost';
 import {
   DEFAULT_MODEL_CONFIGURE_PATH,
   preferProviderRow,
@@ -60,7 +59,6 @@ import {
   modelImageStyle,
 } from '@/shared/modelProviderImages';
 import { useAuthStore } from '@/store/authStore';
-import { useCloudModelStore } from '@/store/cloudModelStore';
 import { useProjectRuntimeStore } from '@/store/projectRuntimeStore';
 import { useSpaceStore } from '@/store/spaceStore';
 
@@ -71,7 +69,6 @@ import {
   Key,
   Layers,
   Plus,
-  Server,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -165,15 +162,8 @@ export function ModelSelect({
 }: ModelSelectProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const {
-    modelType,
-    cloud_model_type,
-    codex_model_type,
-    email,
-    appearance,
-    appearanceMode,
-    setModelType,
-  } = useAuthStore();
+  const { modelType, appearance, appearanceMode, setModelType } =
+    useAuthStore();
 
   /**
    * The theme actually on screen (see `shared/hostTheme.ts`).
@@ -185,14 +175,6 @@ export function ModelSelect({
    * mismatch is why the Anthropic/OpenAI marks stayed black on a dark editor.
    */
   const effectiveAppearance = useEffectiveAppearance(appearance, appearanceMode);
-
-  const cloudModels = useCloudModelStore((state) => state.models);
-  const fetchCloudModels = useCloudModelStore(
-    (state) => state.fetchCloudModels
-  );
-  const getCloudModelDisplayName = useCloudModelStore(
-    (state) => state.getModelDisplayName
-  );
 
   const setProjectModel = useProjectRuntimeStore(
     (state) => state.setProjectModel
@@ -217,10 +199,6 @@ export function ModelSelect({
 
   const [providers, setProviders] = useState<ProviderRow[]>([]);
   const [open, setOpen] = useState(false);
-  const [codexStatus, setCodexStatus] = useState<{
-    connected: boolean;
-    status: string;
-  }>({ connected: false, status: 'not_connected' });
 
   const loadProviders = useCallback(async () => {
     try {
@@ -234,49 +212,8 @@ export function ModelSelect({
   }, []);
 
   useEffect(() => {
-    if (import.meta.env.VITE_USE_LOCAL_PROXY === 'true') return;
-    void fetchCloudModels();
-  }, [fetchCloudModels]);
-
-  useEffect(() => {
     void loadProviders();
   }, [loadProviders, modelType]);
-
-  const refreshCodexStatus = useCallback(async () => {
-    if (!email) {
-      setCodexStatus({ connected: false, status: 'not_connected' });
-      return;
-    }
-    try {
-      const status =
-        await createHost().electronAPI?.codexSubscriptionStatus?.(email);
-      setCodexStatus(status || { connected: false, status: 'not_connected' });
-    } catch (error) {
-      console.error('Failed to load Codex subscription status:', error);
-      setCodexStatus({ connected: false, status: 'error' });
-    }
-  }, [email]);
-
-  useEffect(() => {
-    refreshCodexStatus();
-  }, [refreshCodexStatus]);
-
-  useEffect(() => {
-    const ipcRenderer = createHost().ipcRenderer;
-    if (!ipcRenderer?.on || !ipcRenderer?.off) return;
-    const listener = () => {
-      refreshCodexStatus();
-    };
-    ipcRenderer.on('subscription-auth:codex-status-changed', listener);
-    return () => {
-      ipcRenderer.off('subscription-auth:codex-status-changed', listener);
-    };
-  }, [refreshCodexStatus]);
-
-  const codexProvider = useMemo(
-    () => INIT_PROVODERS.find((p) => p.authMode === 'oauth_subscription'),
-    []
-  );
 
   /** Every configured row, grouped by provider_name. */
   const groups = useMemo<ProviderGroup[]>(() => {
@@ -360,10 +297,6 @@ export function ModelSelect({
     return providers.find((p) => p.prefer);
   }, [pinnedSelection, providers]);
 
-  const codexIsPreferred = pinnedSelection
-    ? pinnedSelection.modelType === 'codex_subscription'
-    : modelType === 'codex_subscription';
-
   const isDefaultRow = useCallback(
     (row: ProviderRow, kind: ProviderSelectionKind): boolean => {
       if (pinnedSelection) {
@@ -383,20 +316,6 @@ export function ModelSelect({
    */
   const needsInvert = (modelId: string | null): { filter: string } | undefined =>
     modelImageStyle(modelId, effectiveAppearance);
-
-  const handleCodexSetDefault = useCallback(() => {
-    if (projectId) {
-      const codexModelId = codex_model_type || 'gpt-5.5';
-      setProjectModel(projectId, {
-        modelType: 'codex_subscription',
-        codex_model_type: codexModelId,
-        model_platform: 'openai',
-        model_type: codexModelId,
-      });
-      return;
-    }
-    setModelType('codex_subscription');
-  }, [codex_model_type, projectId, setModelType, setProjectModel]);
 
   const handleSelectRow = useCallback(
     async (row: ProviderRow) => {
@@ -424,39 +343,20 @@ export function ModelSelect({
 
   /** Trigger label (e.g. "DeepSeek (deepseek-v4-flash)"). */
   const triggerModelName = useMemo(() => {
+    // BYOK + local only. A pinned selection (or the server default) always maps
+    // to a configured provider row; the legacy hosted-cloud and Codex label
+    // branches were removed with the cloud UI.
     if (pinnedSelection) {
-      if (pinnedSelection.modelType === 'codex_subscription') {
-        const pinnedCodexModelType = pinnedSelection.codex_model_type || '';
-        return `Codex Subscription${pinnedCodexModelType ? ` (${pinnedCodexModelType})` : ''}`;
+      if (activeRow) {
+        return rowTriggerLabel(activeRow);
       }
-      if (pinnedSelection.modelType === 'cloud') {
-        return getCloudModelDisplayName(
-          pinnedSelection.cloud_model_type || cloud_model_type
-        );
+      // Providers still loading (or the pinned provider disappeared):
+      // fall back to the identifiers captured with the pin.
+      if (pinnedSelection.model_platform || pinnedSelection.model_type) {
+        const platformLabel = pinnedSelection.model_platform || '';
+        const mt = pinnedSelection.model_type || '';
+        return platformLabel ? `${platformLabel}${mt ? ` (${mt})` : ''}` : mt;
       }
-      if (
-        pinnedSelection.modelType === 'custom' ||
-        pinnedSelection.modelType === 'local'
-      ) {
-        if (activeRow) {
-          return rowTriggerLabel(activeRow);
-        }
-        // Providers still loading (or the pinned provider disappeared):
-        // fall back to the identifiers captured with the pin.
-        if (pinnedSelection.model_platform || pinnedSelection.model_type) {
-          const platformLabel = pinnedSelection.model_platform || '';
-          const mt = pinnedSelection.model_type || '';
-          return platformLabel ? `${platformLabel}${mt ? ` (${mt})` : ''}` : mt;
-        }
-      }
-    }
-
-    if (modelType === 'codex_subscription') {
-      return `Codex Subscription${codex_model_type ? ` (${codex_model_type})` : ''}`;
-    }
-
-    if (modelType === 'cloud') {
-      return getCloudModelDisplayName(cloud_model_type);
     }
 
     if (activeRow) {
@@ -464,15 +364,7 @@ export function ModelSelect({
     }
 
     return t('setting.select-default-model');
-  }, [
-    activeRow,
-    cloud_model_type,
-    codex_model_type,
-    getCloudModelDisplayName,
-    modelType,
-    pinnedSelection,
-    t,
-  ]);
+  }, [activeRow, pinnedSelection, t]);
 
   const activeSubTriggerRef = useRef<HTMLElement | null>(null);
 
@@ -588,7 +480,6 @@ export function ModelSelect({
         setOpen(next);
         if (next) {
           void loadProviders();
-          void fetchCloudModels();
         }
       }}
     >
@@ -652,37 +543,6 @@ export function ModelSelect({
             ref={subContentCallbackRef}
             className="max-h-[440px] w-[220px] overflow-y-auto"
           >
-            {codexProvider && (
-              <DropdownMenuItem
-                onSelect={() => {
-                  if (codexStatus.connected) {
-                    handleCodexSetDefault();
-                  } else {
-                    requestEmbedScreen('models');
-                    navigate(DEFAULT_MODEL_CONFIGURE_PATH);
-                  }
-                }}
-                className="flex items-center justify-between"
-              >
-                <div className="flex items-center gap-2">
-                  <img
-                    src={getModelImage(codexProvider.id) ?? ''}
-                    alt={codexProvider.name}
-                    className="h-4 w-4"
-                    style={needsInvert(codexProvider.id)}
-                  />
-                  <span
-                    className={`text-body-sm ${codexStatus.connected ? 'text-ds-text-neutral-default-default' : 'text-ds-text-neutral-subtle-default'}`}
-                  >
-                    {codexProvider.name}
-                  </span>
-                </div>
-                {codexIsPreferred && (
-                  <Check className="h-4 w-4 text-ds-text-success-default-default" />
-                )}
-              </DropdownMenuItem>
-            )}
-
             {cloudGroups.map((group, i) =>
               renderProviderGroup(group, 'custom', i === 0)
             )}
