@@ -243,3 +243,66 @@ export async function memoryClear(
   const res = await fetchDelete(`/memory${qs ? `?${qs}` : ''}`);
   return { removed: Number(res?.removed ?? 0) };
 }
+
+/** Structured breakdown of a conversation handoff (from the brain). */
+export interface HandoffTimelineTurn {
+  n: number;
+  status: string;
+  user: string;
+  did: string;
+  files: string[];
+  commands: string[];
+  verified: string[];
+  next: string;
+}
+
+export interface HandoffSections {
+  objective: string;
+  status: string;
+  status_line: string;
+  turn_count: number;
+  updated_at: string;
+  rolling: string;
+  files: string[];
+  commands: string[];
+  verified: string[];
+  blockers: string[];
+  next_action: string;
+  timeline: HandoffTimelineTurn[];
+}
+
+/**
+ * Rendered HANDOFF for a project's conversation: the cumulative rolling summary
+ * as Markdown plus a structured `sections` breakdown. `found: false` (empty
+ * markdown) means the brain has no summary for this project yet, so the caller
+ * should fall back to a local build.
+ */
+export async function memoryHandoff(params: {
+  projectId: string;
+  spaceId?: string | null;
+  email?: string | null;
+  userId?: string | number | null;
+}): Promise<{
+  found: boolean;
+  markdown: string;
+  turnCount: number;
+  sections: HandoffSections | null;
+}> {
+  const qs = new URLSearchParams();
+  qs.set('project_id', params.projectId);
+  if (params.spaceId) qs.set('space_id', params.spaceId);
+  if (params.email) qs.set('email', params.email);
+  if (params.userId != null && params.userId !== '') {
+    qs.set('user_id', String(params.userId));
+  }
+  const res = await fetchGet(`/memory/handoff?${qs.toString()}`);
+  return {
+    found: Boolean(res?.found),
+    markdown: typeof res?.markdown === 'string' ? res.markdown : '',
+    turnCount: Number(res?.turn_count ?? 0),
+    sections:
+      res?.sections && typeof res.sections === 'object'
+        ? (res.sections as HandoffSections)
+        : null,
+  };
+}

@@ -322,6 +322,7 @@ export function mountAgentPanel(
     getShowThinking: () => apiRef.current?.getShowThinking() ?? true,
     setShowThinking: (value) => apiRef.current?.setShowThinking(value),
     exportChat: () => apiRef.current?.exportChat(),
+    exportHandoff: () => apiRef.current?.exportHandoff(),
     clearAgentContext: () => apiRef.current?.clearAgentContext(),
   };
 }

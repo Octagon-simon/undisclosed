@@ -109,6 +109,9 @@ export interface AgentPanelApi {
   setShowThinking(value: boolean): void;
   /** Export the active conversation to a Markdown file (download). */
   exportChat(): void;
+  /** Export a compact HANDOFF for the active conversation (download), for
+   *  branching into a new chat without re-sending the whole transcript. */
+  exportHandoff(): void;
   /** Clear the agent's chat memory (soft reset) to break a context loop,
    *  keeping the system prompt + live browser session. */
   clearAgentContext(): void;
@@ -168,6 +171,22 @@ const AgentEmbedPanel = forwardRef<AgentPanelApi>((_props, ref) => {
         void import('@/lib/exportChat').then(
           ({ exportActiveConversationToMarkdown }) => {
             exportActiveConversationToMarkdown();
+          }
+        );
+      },
+      exportHandoff: () => {
+        void import('@/lib/handoff').then(
+          ({ exportActiveConversationHandoff }) => {
+            void exportActiveConversationHandoff().then(async (ok) => {
+              const { toast } = await import('sonner');
+              if (ok) {
+                toast.success(
+                  'Handoff ready. Paste it at the start of a new chat.'
+                );
+              } else {
+                toast.info('No conversation to hand off yet.');
+              }
+            });
           }
         );
       },

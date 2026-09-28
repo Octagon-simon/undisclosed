@@ -420,6 +420,15 @@ interface Task {
   planDirty: boolean;
   autoConfirmDeadline: number | null;
   isContextExceeded?: boolean;
+  /**
+   * Size of the LATEST single model request (input + output tokens), NOT the
+   * cumulative billed total. This is the real gauge of how full the model's
+   * context window is: each turn's prompt is roughly the previous request's
+   * size plus the new turn. `tokens` (cumulative) grows super-linearly and
+   * would false-alarm on ordinary chats — a 30-turn conversation can pass 1M
+   * billed while any single request is only ~40k.
+   */
+  lastRequestTokens?: number;
   /** Live streamed reasoning ("thinking") deltas for the current turn. */
   liveReasoning?: string;
   /** One-time turn-start acknowledgement line (Action.acknowledge). */
@@ -875,6 +884,7 @@ export interface ChatStore {
   savePlan: (taskId: string) => Promise<void>;
   clearTasks: () => void;
   setIsContextExceeded: (taskId: string, isContextExceeded: boolean) => void;
+  setLastRequestTokens: (taskId: string, tokens: number) => void;
   appendLiveReasoning: (taskId: string, delta: string) => void;
   clearLiveReasoning: (taskId: string) => void;
   setAcknowledgement: (taskId: string, text: string) => void;
@@ -2802,6 +2812,7 @@ const chatStore = (initial?: Partial<ChatStore>) =>
             setElapsed,
             setActiveTaskId: _setActiveTaskId,
             setIsContextExceeded,
+            setLastRequestTokens,
             setStreamingDecomposeText,
             clearStreamingDecomposeText,
             setPlanDirty,
@@ -3348,6 +3359,9 @@ const chatStore = (initial?: Partial<ChatStore>) =>
           if (agentMessages.step === AgentStep.REQUEST_USAGE) {
             if (agentMessages.data.tokens) {
               addTokens(currentTaskId, agentMessages.data.tokens);
+              // `tokens` here is THIS request's input+output, i.e. the current
+              // context size — the number the window gauge compares against.
+              setLastRequestTokens(currentTaskId, agentMessages.data.tokens);
               const stepKey = `${currentTaskId}:${agentMessages.data.agent_id}`;
               requestUsageStepTokens.set(
                 stepKey,
@@ -5885,6 +5899,25 @@ const chatStore = (initial?: Partial<ChatStore>) =>
           },
         },
       }));
+    },
+    setLastRequestTokens(taskId: string, tokens: number) {
+      // Only ever move this forward: request_usage events arrive per model
+      // request, and a late/duplicate smaller value must not un-warn a
+      // conversation that just crossed a threshold.
+      set((state) => {
+        const task = state.tasks[taskId];
+        if (!task || tokens <= (task.lastRequestTokens ?? 0)) return state;
+        return {
+          ...state,
+          tasks: {
+            ...state.tasks,
+            [taskId]: {
+              ...task,
+              lastRequestTokens: tokens,
+            },
+          },
+        };
+      });
     },
     appendLiveReasoning: (taskId, delta) => {
       set((state) => {

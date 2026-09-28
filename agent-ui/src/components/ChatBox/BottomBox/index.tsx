@@ -1,4 +1,5 @@
 // ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+// Portions Copyright 2026 Simon Ugorji. All Rights Reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -14,8 +15,9 @@
 
 import { Button } from '@/components/ui/button';
 import { type SessionModeType } from '@/types/constants';
+import { AnimatePresence } from 'framer-motion';
 import { TriangleAlert } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { BoxFooter } from './BoxFooter';
 import { BoxHeaderConfirm, BoxHeaderSave } from './BoxHeader';
@@ -62,6 +64,11 @@ interface BottomBoxProps {
   // Input props
   inputProps: Omit<InputboxProps, 'className'> & { className?: string };
   usageLimitBanner?: UsageLimitBannerProps | null;
+  /**
+   * Token-window nudge rendered in the same floating stack as the usage-limit
+   * banner, above the composer. Purely additive; never affects BoxMain layout.
+   */
+  contextWindowNotice?: ReactNode;
 
   // BoxFooter (project-setup controls: mode + model); omit sessionMode to hide the row.
   sessionMode?: SessionModeType;
@@ -91,6 +98,7 @@ export default function BottomBox({
   onEdit,
   inputProps,
   usageLimitBanner,
+  contextWindowNotice,
   sessionMode,
   onSessionModeChange,
   sessionModeSelectInteractive = false,
@@ -172,7 +180,8 @@ export default function BottomBox({
     backgroundClass = 'bg-ds-bg-completed-default-default';
 
   const showQueuedBox = enableQueuedBox && queuedMessages.length > 0;
-  const hasOverlay = showQueuedBox || !!usageLimitBanner || !!openPanel;
+  const hasOverlay =
+    showQueuedBox || !!usageLimitBanner || !!contextWindowNotice || !!openPanel;
 
   return (
     <div className="relative z-50 flex w-full flex-col rounded-3xl bg-ds-bg-neutral-default-default">
@@ -189,6 +198,7 @@ export default function BottomBox({
             />
           )}
           {usageLimitBanner && <UsageLimitBanner {...usageLimitBanner} />}
+          <AnimatePresence>{contextWindowNotice}</AnimatePresence>
           {openPanel && (
             <div
               ref={panelRef}

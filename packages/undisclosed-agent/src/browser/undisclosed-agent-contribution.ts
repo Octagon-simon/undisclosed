@@ -40,6 +40,10 @@ const SETTINGS: Command = { id: 'undisclosed-agent.settings', label: 'Settings' 
 const BROWSER: Command = { id: 'undisclosed-agent.browser', label: 'Agent browser' };
 const THINKING: Command = { id: 'undisclosed-agent.thinking', label: 'Show thinking' };
 const EXPORT: Command = { id: 'undisclosed-agent.export', label: 'Export chat' };
+const EXPORT_HANDOFF: Command = {
+  id: 'undisclosed-agent.export-handoff',
+  label: 'Export handoff',
+};
 const CLEAR_CONTEXT: Command = {
   id: 'undisclosed-agent.clear-context',
   label: 'Clear agent context',
@@ -122,6 +126,10 @@ export class UndisclosedAgentContribution
       isEnabled: (w) => asAgent(w) !== undefined,
       execute: (w) => asAgent(w)?.exportChat(),
     });
+    commands.registerCommand(EXPORT_HANDOFF, {
+      isEnabled: (w) => asAgent(w) !== undefined,
+      execute: (w) => asAgent(w)?.exportHandoff(),
+    });
     commands.registerCommand(CLEAR_CONTEXT, {
       isEnabled: (w) => asAgent(w) !== undefined,
       execute: (w) => asAgent(w)?.clearAgentContext(),
@@ -178,6 +186,11 @@ export class UndisclosedAgentContribution
       commandId: EXPORT.id,
       label: 'Export chat',
       order: '1.8',
+    });
+    menus.registerMenuAction(MORE_MENU, {
+      commandId: EXPORT_HANDOFF.id,
+      label: 'Export handoff',
+      order: '1.85',
     });
     // "Clear agent context" removed from the UI: the stateless-per-turn memory
     // architecture (below) makes manual clearing unnecessary.

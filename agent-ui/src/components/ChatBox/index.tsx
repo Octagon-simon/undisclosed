@@ -32,6 +32,8 @@ import {
   setProjectAchievedState,
 } from '@/lib/projectAchievement';
 import { inferSessionModeFromTask } from '@/lib/sessionMode';
+import { evaluateContextWindow, resolveContextWindow } from '@/lib/contextWindow';
+import { exportActiveConversationHandoff } from '@/lib/handoff';
 import { proxyUpdateTriggerExecution } from '@/service/triggerApi';
 import { useAuthStore } from '@/store/authStore';
 import {
@@ -59,6 +61,7 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import BottomBox from './BottomBox';
+import { ContextWindowNotice } from './ContextWindowNotice';
 import { ConversationWelcome } from './ConversationWelcome';
 import { ProjectChatContainer } from './ProjectChatContainer';
 import { PLAN_OVERLAY_SLOT_ID } from './TaskBox/PlanTaskBox';
@@ -430,6 +433,104 @@ export default function ChatBox(): JSX.Element {
     activeTaskId && activeAsk && isInteractiveHumanReply
       ? `${activeTaskId}:${activeAskMessageId || activeAsk}`
       : null;
+
+  // ---- Context-window nudge -------------------------------------------------
+  // The gauge is the LATEST request's size (`lastRequestTokens`), not the
+  // cumulative `tokens` accumulator: a long chat can pass 1M billed while any
+  // single request is tiny, and the window only cares about the live context.
+  // The window is resolved per model from the cached provider catalog, with a
+  // 1M fallback. This never blocks sending; it points at the token-cheap exit.
+  const activeModelId = useMemo(() => {
+    const selection = activeProjectId
+      ? projectStore.getProjectModel(activeProjectId)
+      : null;
+    return (
+      selection?.model_type ||
+      selection?.cloud_model_type ||
+      selection?.codex_model_type ||
+      null
+    );
+  }, [activeProjectId, projectStore]);
+
+  const contextWindowTokens = useMemo(
+    () => resolveContextWindow(activeModelId),
+    [activeModelId]
+  );
+
+  const contextEval = useMemo(
+    () =>
+      evaluateContextWindow(
+        activeTask?.lastRequestTokens ?? 0,
+        contextWindowTokens
+      ),
+    [activeTask?.lastRequestTokens, contextWindowTokens]
+  );
+
+  const [contextWindowNotice, setContextWindowNotice] = useState<{
+    id: string;
+    used: number;
+    window: number;
+    level: 'warn' | 'critical';
+  } | null>(null);
+  // The last `task:level:window` combo we surfaced, so the nudge fires once per
+  // threshold crossing (and re-arms only when it escalates) instead of on every
+  // token update.
+  const contextNoticeShownRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const level = contextEval.level;
+    if (!activeTaskId || level === 'ok') {
+      if (level === 'ok') contextNoticeShownRef.current = null;
+      return;
+    }
+    const key = `${activeTaskId}:${level}:${contextWindowTokens}`;
+    if (contextNoticeShownRef.current === key) return;
+    contextNoticeShownRef.current = key;
+    setContextWindowNotice({
+      id: key,
+      used: contextEval.used,
+      window: contextEval.window,
+      level,
+    });
+  }, [activeTaskId, contextEval, contextWindowTokens]);
+
+  const handleGenerateHandoffFromNotice = useCallback(async () => {
+    setContextWindowNotice(null);
+    const ok = await exportActiveConversationHandoff();
+    if (ok) {
+      toast.success(
+        t('chat.context-window-handoff-ready', {
+          defaultValue:
+            'Handoff exported. Paste it at the start of a new chat to continue with far fewer tokens.',
+        })
+      );
+    } else {
+      toast.info(
+        t('chat.context-window-handoff-empty', {
+          defaultValue: 'Nothing to hand off yet.',
+        })
+      );
+    }
+  }, [t]);
+
+  const handleStartNewChatFromNotice = useCallback(() => {
+    setContextWindowNotice(null);
+    if (activeProjectId) {
+      projectStore.appendInitChatStore(activeProjectId);
+    }
+  }, [activeProjectId, projectStore]);
+
+  const contextWindowNoticeNode = contextWindowNotice ? (
+    <ContextWindowNotice
+      id={contextWindowNotice.id}
+      used={contextWindowNotice.used}
+      windowTokens={contextWindowNotice.window}
+      level={contextWindowNotice.level}
+      onGenerateHandoff={handleGenerateHandoffFromNotice}
+      onStartNewChat={handleStartNewChatFromNotice}
+      onDismiss={() => setContextWindowNotice(null)}
+    />
+  ) : null;
 
   useEffect(() => {
     if (!chatStore?.activeTaskId) return;
@@ -1473,6 +1574,7 @@ export default function ChatBox(): JSX.Element {
                 queuedMessages={queuedMessages}
                 onRemoveQueuedMessage={(id) => handleRemoveTaskQueue(id)}
                 usageLimitBanner={usageLimitBanner}
+                contextWindowNotice={contextWindowNoticeNode}
                 noModelOverlay={!hasModel && !isCloudUsageLimited}
                 onSelectModel={handleSelectModel}
                 subtitle={

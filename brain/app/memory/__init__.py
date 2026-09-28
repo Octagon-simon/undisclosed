@@ -1,4 +1,5 @@
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+# Portions Copyright 2026 Simon Ugorji. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -50,6 +51,7 @@ from app.memory.rolling_summary import (
     TurnDigest,
     append_turn,
     build_turn_digest,
+    is_digest_relevant_tool,
     render_md,
 )
 from app.memory.service import (
@@ -58,6 +60,7 @@ from app.memory.service import (
     finalize_task_lock_run_memory,
     get_memory_service,
     read_rolling_summary_for_task_lock,
+    record_run_tool_event,
 )
 
 # Hybrid conversational memory (``hybrid_memory.md``). Additive + env-gated;
@@ -92,6 +95,7 @@ __all__ = [
     "memory_root",
     "project_dir",
     "read_rolling_summary_for_task_lock",
+    "record_run_tool_event",
     "render_md",
     "run_dir",
     "space_dir",

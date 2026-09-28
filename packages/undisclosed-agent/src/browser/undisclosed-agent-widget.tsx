@@ -50,6 +50,9 @@ export interface AgentPanelHandle {
   getShowThinking(): boolean;
   setShowThinking(value: boolean): void;
   exportChat(): void;
+  /** Export a compact HANDOFF for the active conversation (for branching into
+   *  a new chat without re-sending the full transcript). */
+  exportHandoff(): void;
   clearAgentContext(): void;
 }
 
@@ -313,6 +316,9 @@ export class UndisclosedAgentWidget extends BaseWidget {
   }
   exportChat(): void {
     this.handle?.exportChat();
+  }
+  exportHandoff(): void {
+    this.handle?.exportHandoff();
   }
   clearAgentContext(): void {
     this.handle?.clearAgentContext();

@@ -1,4 +1,5 @@
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+# Portions Copyright 2026 Simon Ugorji. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -50,6 +51,7 @@ from app.memory.events import (
     RunMemory,
     RunStatus,
     SpaceMemory,
+    ToolEvent,
 )
 from app.memory.local_store import LocalMemoryStore
 from app.memory.paths import canonical_user_id
@@ -304,6 +306,70 @@ def read_rolling_summary_for_task_lock(task_lock: Any) -> str | None:
         logger.debug("rolling summary fallback read failed", exc_info=True)
         return None
     return rendered or None
+
+
+def record_run_tool_event(
+    task_lock_or_context: Any,
+    *,
+    tool_name: str,
+    arguments: dict[str, Any] | None = None,
+    result_summary: str | None = None,
+    visibility: Literal["context", "audit_only", "debug_only"] = "context",
+    filter_relevant: bool = True,
+) -> bool:
+    """Record one tool invocation for a run into tool_events.jsonl.
+
+    Target may be a TaskLock (with .run_context and optional .memory_service)
+    or a RunContext directly. Best-effort and fail-soft: any error is logged
+    and returns False so tool execution is never blocked by a memory glitch.
+    """
+
+    if filter_relevant and not rolling_summary.is_digest_relevant_tool(tool_name):
+        return False
+
+    run_context = (
+        getattr(task_lock_or_context, "run_context", None)
+        or task_lock_or_context
+    )
+    if run_context is None or not hasattr(run_context, "run_id"):
+        return False
+
+    user_key = _resolve_user_key(run_context)
+    if not user_key:
+        return False
+
+    service = getattr(task_lock_or_context, "memory_service", None)
+    store = getattr(service, "store", None) or LocalMemoryStore()
+
+    try:
+        event = ToolEvent(
+            event_id=_new_event_id(),
+            run_id=run_context.run_id,
+            timestamp=_utc_now(),
+            tool_name=tool_name,
+            arguments=arguments or {},
+            result_summary=result_summary or "",
+            visibility=visibility,
+        )
+        store.append_tool_event(
+            user_key,
+            run_context.space_id,
+            run_context.project_id,
+            run_context.run_id,
+            event,
+        )
+        return True
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "memory.service: failed to record tool event",
+            extra={
+                "project_id": getattr(run_context, "project_id", None),
+                "run_id": getattr(run_context, "run_id", None),
+                "tool_name": tool_name,
+            },
+            exc_info=True,
+        )
+        return False
 
 
 def _user_prompt_from_task_lock(task_lock: Any) -> str | None:
@@ -821,18 +887,24 @@ class MemoryService:
             if run is not None:
                 prompt = (run.user_prompt or "").strip()
 
+        # Tool events enrich the digest (files touched, commands run,
+        # verification evidence). Best-effort: a read failure just means a less
+        # specific summary, never a failed write.
+        try:
+            events = self._store.read_tool_events(
+                user_key,
+                run_context.space_id,
+                run_context.project_id,
+                run_context.run_id,
+            )
+        except Exception:  # noqa: BLE001 — enrichment is optional
+            events = []
+
         resolved_files = files
         if resolved_files is None:
-            try:
-                events = self._store.read_tool_events(
-                    user_key,
-                    run_context.space_id,
-                    run_context.project_id,
-                    run_context.run_id,
-                )
-                resolved_files = rolling_summary.extract_touched_files(events)
-            except Exception:  # noqa: BLE001 — enrichment is optional
-                resolved_files = []
+            resolved_files = rolling_summary.extract_touched_files(events)
+        commands = rolling_summary.extract_commands(events)
+        verified = rolling_summary.extract_verification(events)
 
         digest = rolling_summary.build_turn_digest(
             query_id=run_context.run_id,
@@ -843,6 +915,8 @@ class MemoryService:
             error=error,
             ts=now,
             files=resolved_files,
+            commands=commands,
+            verified=verified,
         )
 
         budget = rolling_summary.char_budget()
