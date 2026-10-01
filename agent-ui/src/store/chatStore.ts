@@ -868,6 +868,7 @@ export interface ChatStore {
   setElapsed: (taskId: string, taskTime: number) => void;
   getFormattedTaskTime: (taskId: string) => string;
   addTokens: (taskId: string, tokens: number) => void;
+  setTokens: (taskId: string, tokens: number) => void;
   getTokens: (taskId: string) => number;
   setUpdateCount: () => void;
   setCotList: (taskId: string, cotList: string[]) => void;
@@ -4247,6 +4248,15 @@ const chatStore = (initial?: Partial<ChatStore>) =>
 
           if (agentMessages.step === AgentStep.END) {
             const endData: unknown = agentMessages.data;
+            // The turn is done — drop any "added to this task" (chipped-in)
+            // follow-up acknowledgements now that they've been handled.
+            if (project_id) {
+              try {
+                useProjectStore.getState().clearConsumedQueuedMessages(project_id);
+              } catch {
+                /* best-effort */
+              }
+            }
             const endMessageText = extractEndPayloadText(endData);
             const endTokens =
               typeof endData === 'object' &&
@@ -4585,15 +4595,14 @@ const chatStore = (initial?: Partial<ChatStore>) =>
           }
           if (agentMessages.step === AgentStep.NOTICE) {
             // A chip-in notice carries the message it just folded into the
-            // running turn — drop its pending QueuedBox pill (it's fed in now,
-            // not still "queued"), matched by content like the confirmed path.
+            // running turn — the follow-up was folded into THIS turn. Don't drop
+            // its pill (that made it flash and vanish with no acknowledgement);
+            // MARK it consumed so the inline bubble stays as "added to this task"
+            // until the turn ends, then it's cleared on `end`. Matched by content.
             const consumed = (
               agentMessages.data as { consumed_question?: string } | undefined
             )?.consumed_question;
             if (consumed && project_id) {
-              // queuedMessages are keyed by PROJECT id, not task id. Using
-              // currentTaskId here (a task id) looked up a nonexistent project,
-              // so a purely chipped-in steer's pill was never cleared and stuck.
               try {
                 const ps = useProjectStore.getState();
                 const pending = ps.projects[
@@ -4602,10 +4611,10 @@ const chatStore = (initial?: Partial<ChatStore>) =>
                   (m) => !m.executionId && m.content === consumed
                 );
                 if (pending) {
-                  ps.removeQueuedMessage(project_id, pending.task_id);
+                  ps.markQueuedMessageConsumed(project_id, pending.task_id);
                 }
               } catch (err) {
-                console.warn('[queue] failed to clear chipped-in pill:', err);
+                console.warn('[queue] failed to mark chipped-in pill:', err);
               }
             }
             if (agentMessages.data.process_task_id !== '') {
@@ -4992,20 +5001,15 @@ const chatStore = (initial?: Partial<ChatStore>) =>
           if (task.status !== ChatTaskStatus.FINISHED) {
             setStatus(taskId, ChatTaskStatus.FINISHED);
           }
-          const hasReplayErrorMessage = task.messages.some(
-            (message) =>
-              message.role === 'agent' &&
-              typeof message.content === 'string' &&
-              message.content.includes('Unable to replay this legacy task')
-          );
-          if (!hasReplayErrorMessage) {
-            addMessages(taskId, {
-              id: generateUniqueId(),
-              role: 'agent',
-              content:
-                'Unable to replay this legacy task. The saved playback data could not be loaded.',
-            });
-          }
+          // Do NOT inject an "Unable to replay this legacy task" message here.
+          // Snapshot-replay legitimately fails for single-agent tasks (they have
+          // no snapshots), but the conversation is restored separately from the
+          // persisted per-turn store (`/chat/{chatId}/turns`, hydrated by
+          // ProjectSection under the stable chatId==projectId). That error used
+          // to REPLACE the just-restored answer on a sleep/wake reload — the
+          // "response is gone" report. Leave the task empty here and let turns
+          // hydration fill it; if there genuinely are no persisted turns, an
+          // empty turn is less alarming (and less wrong) than a false error.
         }
         throw error;
       }
@@ -5057,14 +5061,33 @@ const chatStore = (initial?: Partial<ChatStore>) =>
         // so every reloaded conversation lost its answers.
         const role = message?.role;
         if (role === 'user' || role === 'agent') {
-          const projectId = useProjectStore.getState().activeProjectId;
-          const { getAllChatStores } = useProjectStore.getState();
-          const chatStores = projectId ? getAllChatStores(projectId) : [];
-          // Find the chat store that contains this taskId
-          const chatEntry = chatStores.find((e) =>
-            Object.prototype.hasOwnProperty.call(e.chatStore.getState().tasks, taskId)
-          );
-          const chatId = chatEntry?.chatId;
+          const ps = useProjectStore.getState();
+          const { getAllChatStores } = ps;
+          const hasTask = (e: { chatStore: VanillaChatStore }) =>
+            Object.prototype.hasOwnProperty.call(
+              e.chatStore.getState().tasks,
+              taskId
+            );
+          // Resolve the chatId that owns this task. IMPORTANT: search the ACTIVE
+          // project first, then FALL BACK to every project. The old code only
+          // looked in the active project, so if `activeProjectId` had drifted by
+          // the time an async assistant `end` landed (user opened another chat,
+          // a from-history load switched projects, etc.), chatId came back
+          // undefined and the assistant turn was SILENTLY DROPPED — the reload
+          // then had no answer on disk ("the last response is gone for good").
+          let chatId: string | undefined;
+          if (ps.activeProjectId) {
+            chatId = getAllChatStores(ps.activeProjectId).find(hasTask)?.chatId;
+          }
+          if (!chatId) {
+            for (const pid of Object.keys(ps.projects || {})) {
+              const hit = getAllChatStores(pid).find(hasTask);
+              if (hit) {
+                chatId = hit.chatId;
+                break;
+              }
+            }
+          }
 
           if (role === 'user') {
             const queryId = message.id; // user message id is the turn key
@@ -5716,6 +5739,18 @@ const chatStore = (initial?: Partial<ChatStore>) =>
           },
         },
       }));
+    },
+    setTokens(taskId: string, tokens: number) {
+      // Idempotent seed (used when restoring the persisted cumulative from turn
+      // hydration) — never lowers a live count that's already ahead.
+      set((state) => {
+        const task = state.tasks[taskId];
+        if (!task || (task.tokens ?? 0) >= tokens) return state;
+        return {
+          ...state,
+          tasks: { ...state.tasks, [taskId]: { ...task, tokens } },
+        };
+      });
     },
     getTokens(taskId: string) {
       const { tasks } = get();

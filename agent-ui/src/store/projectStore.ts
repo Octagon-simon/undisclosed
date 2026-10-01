@@ -139,6 +139,10 @@ interface TaskQueue {
   triggerId?: number;
   triggerName?: string;
   processing?: boolean;
+  /** A mid-turn follow-up the running agent CHIPPED IN (folded into the current
+   *  turn) rather than deferring. Kept visible as an "added to this task"
+   *  acknowledgement until the turn ends, instead of vanishing. */
+  consumed?: boolean;
 }
 
 /**
@@ -414,6 +418,11 @@ interface ProjectStore {
   restoreQueuedMessage: (projectId: string, messageData: TaskQueue) => void;
   clearQueuedMessages: (projectId: string) => void;
   markQueuedMessageAsProcessing: (projectId: string, taskId: string) => void;
+  /** Mark a queued follow-up (matched by task_id) as chipped-in/consumed so the
+   *  UI keeps it visible as "added to this task" instead of removing it. */
+  markQueuedMessageConsumed: (projectId: string, taskId: string) => void;
+  /** Drop consumed display-only follow-ups (called when a turn ends). */
+  clearConsumedQueuedMessages: (projectId: string) => void;
 
   // Chat store state management
   createChatStore: (projectId: string, chatName?: string) => string | null;
@@ -1897,6 +1906,44 @@ const projectStore = create<ProjectStore>()((set, get) => ({
         attaches: [],
       }
     );
+  },
+
+  markQueuedMessageConsumed: (projectId: string, task_id: string) => {
+    const { projects } = get();
+    if (!projects[projectId]) return;
+    set((state) => ({
+      projects: {
+        ...state.projects,
+        [projectId]: {
+          ...state.projects[projectId],
+          queuedMessages: state.projects[projectId].queuedMessages.map((m) =>
+            m.task_id === task_id ? { ...m, consumed: true } : m
+          ),
+          updatedAt: Date.now(),
+        },
+      },
+    }));
+  },
+
+  clearConsumedQueuedMessages: (projectId: string) => {
+    const { projects } = get();
+    if (!projects[projectId]) return;
+    const hasConsumed = projects[projectId].queuedMessages.some(
+      (m) => m.consumed
+    );
+    if (!hasConsumed) return;
+    set((state) => ({
+      projects: {
+        ...state.projects,
+        [projectId]: {
+          ...state.projects[projectId],
+          queuedMessages: state.projects[projectId].queuedMessages.filter(
+            (m) => !m.consumed
+          ),
+          updatedAt: Date.now(),
+        },
+      },
+    }));
   },
 
   // Method to restore a queued message (for error handling)

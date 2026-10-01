@@ -105,17 +105,20 @@ export class UndisclosedAgentLayoutContribution
 
   constructor() {
     this.injectHeaderStyles();
+    this.injectActivityBarStyles();
     this.injectBottomPanelStyles();
   }
 
   onStart(): void {
     this.injectHeaderStyles();
+    this.injectActivityBarStyles();
     this.injectBottomPanelStyles();
     this.setupViewGuard();
   }
 
   onDidInitializeLayout(): void {
     this.injectHeaderStyles();
+    this.injectActivityBarStyles();
     this.injectBottomPanelStyles();
     this.removeViews();
     this.setupViewGuard();
@@ -373,6 +376,132 @@ export class UndisclosedAgentLayoutContribution
    * into the left/right side bars. Same inject-once <style> pattern as the header
    * styles. Selectors verified against @theia/core sidepanel.css (Lumino `lm-`).
    */
+  /**
+   * Restyle the left activity bar to match the Antigravity reference: brighter
+   * icons, a subtle rounded highlight behind the hovered/active item, and a left
+   * accent bar + full-strength icon on the active view. Theia's default active
+   * state was near-invisible (icons at ~40% opacity, no highlight), so it was
+   * hard to tell which side view was open. Uses VS Code activityBar theme vars
+   * (with fallbacks) so it follows light/dark and custom themes.
+   */
+  private injectActivityBarStyles(): void {
+    if (typeof document === 'undefined') {
+      return;
+    }
+    const styleId = 'undisclosed-activity-bar-style';
+    if (document.getElementById(styleId)) {
+      return;
+    }
+    const style = document.createElement('style');
+    style.id = styleId;
+    style.textContent = `
+      /* Each activity-bar item is a positioned box so we can draw a centered
+         highlight pill (::before) and a left accent bar (::after) behind the
+         icon without affecting layout. */
+      .theia-app-left .lm-TabBar-tab {
+        position: relative !important;
+      }
+
+      /* Icons: a touch larger and readable when inactive. We drive brightness
+         with opacity on the theme FOREGROUND (not the theme's
+         inactiveForeground, which some themes set as low as 40% — too dim vs the
+         Antigravity reference), so inactive reads at a comfortable 62% and stays
+         correct in light themes too. 18px is the single source of truth for
+         EVERY icon in the rail (see the plugin + bottom-menu rules below). */
+      .theia-app-left .lm-TabBar-tab .lm-TabBar-tabIcon.codicon {
+        font-size: 18px !important;
+        color: var(--theia-activityBar-foreground, #ffffff) !important;
+        opacity: 0.62 !important;
+        transition: opacity 0.12s ease !important;
+        position: relative !important;
+        z-index: 1 !important;
+      }
+      .theia-app-left .lm-TabBar-tab:hover .lm-TabBar-tabIcon.codicon {
+        opacity: 0.85 !important;
+      }
+
+      /* Extension/plugin-contributed view icons default to ~24px — larger than
+         the built-in codicons, which made the rail look ragged. Normalize them
+         to the same 18px, covering font-, mask-, and background-image glyphs. */
+      .theia-app-left .lm-TabBar-tab .lm-TabBar-tabIcon.theia-plugin-view-container {
+        font-size: 18px !important;
+        -webkit-mask-size: 18px 18px !important;
+        mask-size: 18px 18px !important;
+        background-size: 18px 18px !important;
+        opacity: 0.62 !important;
+        transition: opacity 0.12s ease !important;
+        position: relative !important;
+        z-index: 1 !important;
+      }
+      .theia-app-left .lm-TabBar-tab:hover .lm-TabBar-tabIcon.theia-plugin-view-container {
+        opacity: 0.85 !important;
+      }
+      .theia-app-left .lm-TabBar-tab.lm-mod-current .lm-TabBar-tabIcon.theia-plugin-view-container {
+        opacity: 1 !important;
+      }
+
+      /* Bottom sidebar menu (Settings gear, overflow "…", Accounts) also renders
+         at ~24px — bring it in line with the rail size + inactive brightness so
+         the whole left column is consistent. */
+      .theia-sidebar-menu .theia-sidebar-menu-item .codicon {
+        font-size: 18px !important;
+        color: var(--theia-activityBar-foreground, #ffffff) !important;
+        opacity: 0.62 !important;
+        transition: opacity 0.12s ease !important;
+      }
+      .theia-sidebar-menu .theia-sidebar-menu-item:hover .codicon {
+        opacity: 0.9 !important;
+      }
+
+      /* Centered rounded highlight — appears on hover and (stronger) when the
+         view is open. */
+      .theia-app-left .lm-TabBar-tab::before {
+        content: '';
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 34px;
+        height: 34px;
+        transform: translate(-50%, -50%);
+        border-radius: 10px;
+        background: transparent;
+        transition: background-color 0.12s ease;
+        pointer-events: none;
+      }
+      .theia-app-left .lm-TabBar-tab:hover::before {
+        background: var(--theia-activityBar-activeBackground, rgba(255, 255, 255, 0.08)) !important;
+      }
+      .theia-app-left .lm-TabBar-tab.lm-mod-current::before {
+        background: var(--theia-activityBar-activeBackground, rgba(255, 255, 255, 0.13)) !important;
+      }
+
+      /* Active view: full-strength icon + a 2px left accent bar (the VS Code /
+         Antigravity activity-bar active indicator). */
+      .theia-app-left .lm-TabBar-tab.lm-mod-current .lm-TabBar-tabIcon.codicon {
+        color: var(--theia-activityBar-foreground, #ffffff) !important;
+        opacity: 1 !important;
+      }
+      .theia-app-left .lm-TabBar-tab.lm-mod-current::after {
+        content: '';
+        position: absolute;
+        left: 0;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 2px;
+        height: 24px;
+        border-radius: 0 2px 2px 0;
+        background: var(--theia-activityBar-activeBorder, var(--theia-focusBorder, #4c8bf5));
+      }
+
+      /* Activity-bar items are view toggles, not documents — never show a × on
+         them (Theia marks them closable, which would otherwise reveal one). */
+      .theia-app-left .lm-TabBar-tab .lm-TabBar-tabCloseIcon {
+        display: none !important;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
   private injectBottomPanelStyles(): void {
     if (typeof document === 'undefined') {
       return;
@@ -419,20 +548,30 @@ export class UndisclosedAgentLayoutContribution
 
       /* Inactive tabs read dimmer; hover lifts them slightly (VS Code feel). */
       #theia-bottom-content-panel .lm-TabBar-tab:not(.lm-mod-current) {
-        color: var(--theia-panelTitle-inactiveForeground, #8a8a8a) !important;
+        color: var(--theia-panelTitle-inactiveForeground, rgba(255, 255, 255, 0.55)) !important;
       }
 
       #theia-bottom-content-panel .lm-TabBar-tab:not(.lm-mod-current):hover {
         background: var(--theia-list-hoverBackground, rgba(127, 127, 127, 0.08)) !important;
-        color: var(--theia-panelTitle-activeForeground, #cccccc) !important;
+        color: var(--theia-panelTitle-activeForeground, #e6e6e6) !important;
       }
 
-      /* Active tab: brighter text + 2px accent TOP border (the VS Code panel
-         look). Inset box-shadow draws the top rule without shifting layout. */
+      /* Active tab: reads as a clearly SELECTED tab — a subtle raised fill (the
+         content/editor background, so it visually connects to the panel body
+         below), full-strength + slightly heavier text, and a 2px accent top
+         border. Inset box-shadow draws the top rule without shifting layout. */
       #theia-bottom-content-panel .lm-TabBar-tab.lm-mod-current {
         color: var(--theia-panelTitle-activeForeground, #ffffff) !important;
-        background: transparent !important;
-        box-shadow: inset 0 2px 0 0 var(--theia-panelTitle-activeBorder, var(--theia-focusBorder, #007acc)) !important;
+        font-weight: 600 !important;
+        background: var(--theia-editor-background, rgba(255, 255, 255, 0.05)) !important;
+        box-shadow: inset 0 2px 0 0 var(--theia-panelTitle-activeBorder, var(--theia-focusBorder, #4c8bf5)) !important;
+      }
+
+      /* Active tab's icon also brightens (Problems' warning icon, terminal glyph,
+         etc.), so the whole tab reads active — not just its label. */
+      #theia-bottom-content-panel .lm-TabBar-tab.lm-mod-current .lm-TabBar-tabIcon,
+      #theia-bottom-content-panel .lm-TabBar-tab.lm-mod-current .theia-tab-icon-label {
+        color: var(--theia-panelTitle-activeForeground, #ffffff) !important;
       }
 
       /* Badge counts (e.g. Problems' error count) — pill like VS Code. */

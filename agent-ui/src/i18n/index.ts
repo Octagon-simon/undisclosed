@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
 
-import { getAuthStore } from '@/store/authStore';
+import { getAuthStore, useAuthStore } from '@/store/authStore';
 import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
 import { resources } from './locales';
@@ -31,31 +31,66 @@ export enum LocaleEnum {
   Spanish = 'es',
 }
 
-const { language } = getAuthStore();
-
-const savedLanguage = language?.toLowerCase();
-const systemLanguage = navigator.language.toLowerCase();
 const availableLanguages = Object.values(LocaleEnum);
 
-let initialLanguage: string;
-
-if (savedLanguage && availableLanguages.includes(savedLanguage as LocaleEnum)) {
-  initialLanguage = savedLanguage;
-} else {
-  const matched = availableLanguages.find((lang) =>
-    systemLanguage.startsWith(lang)
+/**
+ * Resolve a persisted/system value (case-insensitively) to a supported locale,
+ * or null if none applies. `'system'` (the auth-store default) is treated as
+ * "no explicit choice" and falls through to system detection.
+ */
+function resolveLocale(candidate?: string | null): LocaleEnum | null {
+  const lower = candidate?.toLowerCase();
+  if (!lower || lower === 'system') return null;
+  return (
+    availableLanguages.find((lang) => lang.toLowerCase() === lower) ?? null
   );
-  initialLanguage = matched || LocaleEnum.English;
+}
+
+function detectInitialLanguage(): string {
+  const saved = resolveLocale(getAuthStore().language);
+  if (saved) return saved;
+  const systemLanguage = navigator.language.toLowerCase();
+  const matched = availableLanguages.find((lang) =>
+    systemLanguage.startsWith(lang.toLowerCase())
+  );
+  return matched ?? LocaleEnum.English;
 }
 
 i18n.use(initReactI18next).init({
   resources,
   fallbackLng: LocaleEnum.English,
-  lng: initialLanguage,
+  lng: detectInitialLanguage(),
   interpolation: {
     escapeValue: false,
   },
 });
+
+// The auth-store persists the user's language, but its rehydration from
+// localStorage can finish AFTER this module first read it (module-load order is
+// not guaranteed). Without this, a persisted non-English language silently
+// reverted to English/System on every launch — the panel stayed English even
+// though Settings still showed the chosen language. Re-apply the persisted
+// choice once hydration completes (and if it already has, apply immediately).
+function applyPersistedLanguage() {
+  const persisted = resolveLocale(getAuthStore().language);
+  if (persisted && i18n.language !== persisted) {
+    void i18n.changeLanguage(persisted);
+  }
+}
+const authPersist = (
+  useAuthStore as unknown as {
+    persist?: {
+      hasHydrated?: () => boolean;
+      onFinishHydration?: (cb: () => void) => void;
+    };
+  }
+).persist;
+if (authPersist?.onFinishHydration) {
+  authPersist.onFinishHydration(applyPersistedLanguage);
+}
+if (authPersist?.hasHydrated?.()) {
+  applyPersistedLanguage();
+}
 
 export const switchLanguage = (lang: LocaleEnum) => {
   console.log('switchLanguage', lang);

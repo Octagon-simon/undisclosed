@@ -670,11 +670,12 @@ export function classifyToolItem(item: ToolItem): ActivityItem {
     object = extractFilePath(item.input) || 'file';
   } else if (method.includes('read')) {
     category = 'read';
-    verb = 'Read file';
-    object =
-      extractFilePath(item.input) ||
-      extractParam(item.input, ['image_path']) ||
-      'file';
+    // "Read" + filename reads cleanly ("Read contextWindow.ts"); "Read file
+    // contextWindow.ts" was redundant. Falls back to "Read file" when unnamed.
+    const readPath =
+      extractFilePath(item.input) || extractParam(item.input, ['image_path']);
+    verb = 'Read';
+    object = readPath || 'file';
     badge = readRangeBadge(item.input);
   } else if (method.includes('screenshot')) {
     category = 'read';

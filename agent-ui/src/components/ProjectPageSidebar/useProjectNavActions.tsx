@@ -24,10 +24,13 @@ import {
   fetchPut,
   proxyFetchDelete,
   proxyFetchGet,
+  proxyFetchPut,
 } from '@/api/http';
 import AlertDialog from '@/components/ui/alertDialog';
+import { Input } from '@/components/ui/input';
 import { useHost } from '@/host';
 import { setProjectAchievedState } from '@/lib/projectAchievement';
+import { isPlaceholderProjectName } from '@/lib/spaceLabel';
 import { useAuthStore } from '@/store/authStore';
 import { usePageTabStore } from '@/store/pageTabStore';
 import { useProjectRuntimeStore } from '@/store/projectRuntimeStore';
@@ -55,7 +58,8 @@ export interface ProjectNavActions {
   handlePinProject: (projectId: string) => void;
   requestDeleteProject: (projectId: string) => void;
   requestAchieveProject: (projectId: string) => void;
-  /** The delete + archive confirm dialogs; render once in the consumer. */
+  requestRenameProject: (projectId: string) => void;
+  /** The delete + archive + rename confirm dialogs; render once in the consumer. */
   dialogs: ReactNode;
 }
 
@@ -78,6 +82,9 @@ export function useProjectNavActions(): ProjectNavActions {
   const [achieveProjectId, setAchieveProjectId] = useState<string | null>(null);
   const [achieveProjectLoading, setAchieveProjectLoading] = useState(false);
   const [achieveDialogOpen, setAchieveDialogOpen] = useState(false);
+  const [renameProjectId, setRenameProjectId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [renameLoading, setRenameLoading] = useState(false);
 
   const handlePinProject = useCallback((projectId: string) => {
     setPinnedProjectIds((prev) => {
@@ -105,6 +112,51 @@ export function useProjectNavActions(): ProjectNavActions {
     setAchieveDialogOpen(true);
   }, []);
 
+  const requestRenameProject = useCallback(
+    (projectId: string) => {
+      const current =
+        projectStore.projects[projectId]?.name ??
+        useSpaceStore.getState().getProjectMeta(projectId)?.name ??
+        '';
+      setRenameValue(isPlaceholderProjectName(current, projectId) ? '' : current);
+      setRenameProjectId(projectId);
+    },
+    [projectStore]
+  );
+
+  const confirmRenameProject = useCallback(async () => {
+    const projectId = renameProjectId;
+    const nextName = renameValue.trim();
+    if (!projectId || !nextName || renameLoading) return;
+
+    setRenameLoading(true);
+    try {
+      // Optimistically update local stores so the row title changes right away;
+      // updateProject also syncs the space-store meta via
+      // upsertSpaceProjectMetaFromProject.
+      projectStore.updateProject(projectId, { name: nextName });
+      try {
+        await proxyFetchPut(
+          `/api/v1/chat/project/${encodeURIComponent(
+            projectId
+          )}/name?new_name=${encodeURIComponent(nextName)}`
+        );
+      } catch (error) {
+        console.warn(
+          `[useProjectNavActions] Failed to persist rename for ${projectId}:`,
+          error
+        );
+      }
+      toast.success(t('layout.project-renamed', { defaultValue: 'Project renamed' }));
+    } catch (error) {
+      console.error('[useProjectNavActions] Failed to rename project:', error);
+      toast.error(t('layout.rename-project-failed', { defaultValue: 'Failed to rename project' }));
+    } finally {
+      setRenameLoading(false);
+      setRenameProjectId(null);
+    }
+  }, [projectStore, renameLoading, renameProjectId, renameValue, t]);
+
   const confirmDeleteProject = useCallback(async () => {
     const projectId = deleteProjectId;
     if (!projectId) return;
@@ -131,38 +183,50 @@ export function useProjectNavActions(): ProjectNavActions {
         );
       }
 
-      const cleanupPromises = (historyProject?.tasks ?? [])
-        .filter((task) => task?.id != null)
-        .flatMap((task) => {
-          const work: Promise<unknown>[] = [
-            proxyFetchDelete(`/api/v1/chat/history/${task.id}`).catch(
-              (error) => {
+      // Delete the persisted history from disk. The turn store is ONE directory
+      // per project, named by chatId == projectId (see createProject's
+      // initialChatId = projectId); the Brain's DELETE keys the dir by the path
+      // param. Previously the FE deleted `/chat/history/{task.id}`, but the
+      // grouped-history `id` is a SEQUENTIAL NUMBER (1,2,3…), not the dir name —
+      // so `turns/1` was targeted, nothing was removed, and the "deleted" project
+      // reappeared from disk. Delete by projectId (the real dir), plus per-task
+      // ids defensively in case a project ever spans multiple turn dirs.
+      const historyIds = new Set<string>([projectId]);
+      for (const task of historyProject?.tasks ?? []) {
+        const tid = (task as { task_id?: string; project_id?: string })?.task_id;
+        const pid = (task as { project_id?: string })?.project_id;
+        if (tid) historyIds.add(tid);
+        if (pid) historyIds.add(pid);
+      }
+      const cleanupPromises: Promise<unknown>[] = [];
+      for (const hid of historyIds) {
+        cleanupPromises.push(
+          proxyFetchDelete(
+            `/api/v1/chat/history/${encodeURIComponent(hid)}`
+          ).catch((error) => {
+            console.warn(
+              `[useProjectNavActions] Failed to delete history ${hid}:`,
+              error
+            );
+          })
+        );
+      }
+      for (const task of historyProject?.tasks ?? []) {
+        const tid = (task as { task_id?: string; project_id?: string })?.task_id;
+        const pid = (task as { project_id?: string })?.project_id;
+        if (tid && email && ipcRenderer) {
+          cleanupPromises.push(
+            ipcRenderer
+              .invoke('delete-task-files', email, tid, pid ?? projectId)
+              .catch((error: unknown) => {
                 console.warn(
-                  `[useProjectNavActions] Failed to delete history task ${task.task_id}:`,
+                  `[useProjectNavActions] Local file cleanup failed for task ${tid}:`,
                   error
                 );
-              }
-            ),
-          ];
-          if (task.task_id && email && ipcRenderer) {
-            work.push(
-              ipcRenderer
-                .invoke(
-                  'delete-task-files',
-                  email,
-                  task.task_id,
-                  task.project_id ?? projectId
-                )
-                .catch((error: unknown) => {
-                  console.warn(
-                    `[useProjectNavActions] Local file cleanup failed for task ${task.task_id}:`,
-                    error
-                  );
-                })
-            );
-          }
-          return work;
-        });
+              })
+          );
+        }
+      }
       await Promise.allSettled(cleanupPromises);
 
       try {
@@ -294,6 +358,31 @@ export function useProjectNavActions(): ProjectNavActions {
         confirmVariant="caution"
         confirmDisabled={achieveProjectLoading}
       />
+      <AlertDialog
+        isOpen={renameProjectId != null}
+        onClose={() => {
+          if (renameLoading) return;
+          setRenameProjectId(null);
+        }}
+        onConfirm={() => void confirmRenameProject()}
+        title={t('layout.rename-project', { defaultValue: 'Rename Project' })}
+        confirmText={t('layout.save', { defaultValue: 'Save' })}
+        cancelText={t('layout.cancel')}
+        confirmVariant="primary"
+        confirmDisabled={!renameValue.trim() || renameLoading}
+      >
+        <Input
+          autoFocus
+          value={renameValue}
+          placeholder={t('layout.project-name', {
+            defaultValue: 'Project name',
+          })}
+          onChange={(event) => setRenameValue(event.target.value)}
+          onEnter={() => {
+            if (renameValue.trim() && !renameLoading) void confirmRenameProject();
+          }}
+        />
+      </AlertDialog>
     </>
   );
 
@@ -302,6 +391,7 @@ export function useProjectNavActions(): ProjectNavActions {
     handlePinProject,
     requestDeleteProject,
     requestAchieveProject,
+    requestRenameProject,
     dialogs,
   };
 }

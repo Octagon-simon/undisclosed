@@ -61,6 +61,7 @@ export default function AgentPanelHistory({
     handlePinProject,
     requestDeleteProject,
     requestAchieveProject,
+    requestRenameProject,
     dialogs,
   } = useProjectNavActions();
 
@@ -176,6 +177,7 @@ export default function AgentPanelHistory({
           onProjectClick={handleSelect}
           onDeleteProject={requestDeleteProject}
           onAchieveProject={requestAchieveProject}
+          onRenameProject={requestRenameProject}
           onPinProject={handlePinProject}
           onNewProject={onNewProject}
           folded={false}

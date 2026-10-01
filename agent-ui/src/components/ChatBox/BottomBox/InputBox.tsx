@@ -621,6 +621,9 @@ export const Inputbox = ({
               variant="ghost"
               onClick={handleSend}
               disabled={disabled || value.trim().length === 0}
+              aria-label={t('chat.input-send-message', {
+                defaultValue: 'Send message',
+              })}
             >
               {/* Ghost icon (like attach/MCP) so it's theme-following and visible
                   in light + dark: muted when empty → brand when ready. */}

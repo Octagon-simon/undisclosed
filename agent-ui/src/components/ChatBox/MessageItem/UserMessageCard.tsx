@@ -335,6 +335,7 @@ export function UserMessageCard({
             variant="ghost"
             size="sm"
             buttonContent="icon-only"
+            aria-label={t('setting.copy', { defaultValue: 'Copy' })}
           >
             {copied ? (
               <Check className="h-4 w-4 text-ds-text-success-default-default" />

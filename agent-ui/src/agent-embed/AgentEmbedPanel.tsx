@@ -236,29 +236,41 @@ const AgentEmbedPanel = forwardRef<AgentPanelApi>((_props, ref) => {
           </ManagedScreen>
         ) : body === 'connectors' ? (
           <ManagedScreen
-            title="Connectors"
+            title={t('layout.connectors', { defaultValue: 'Connectors' })}
             onBack={() => setBody('conversation')}
           >
             <AgentConnectors />
           </ManagedScreen>
         ) : body === 'memory' ? (
-          <ManagedScreen title="Memory" onBack={() => setBody('conversation')}>
+          <ManagedScreen
+            title={t('layout.memory', { defaultValue: 'Memory' })}
+            onBack={() => setBody('conversation')}
+          >
             <AgentMemorySettings />
           </ManagedScreen>
         ) : body === 'models' ? (
-          <ManagedScreen title="Models" onBack={() => setBody('conversation')}>
+          <ManagedScreen
+            title={t('layout.models', { defaultValue: 'Models' })}
+            onBack={() => setBody('conversation')}
+          >
             <AgentModels />
           </ManagedScreen>
         ) : body === 'settings' ? (
-          <ManagedScreen title="Settings" onBack={() => setBody('conversation')}>
+          <ManagedScreen
+            title={t('setting.settings', { defaultValue: 'Settings' })}
+            onBack={() => setBody('conversation')}
+          >
             <AgentSettings />
           </ManagedScreen>
         ) : body === 'browser' ? (
-          <ManagedScreen title="Browser" onBack={() => setBody('conversation')}>
+          <ManagedScreen
+            title={t('layout.browser', { defaultValue: 'Browser' })}
+            onBack={() => setBody('conversation')}
+          >
             <BrowserTakeControl />
           </ManagedScreen>
         ) : body === 'stats' ? (
-          <AgentUsageStats />
+          <AgentUsageStats onOpenConversation={() => setBody('conversation')} />
         ) : body === 'history' ? (
           <div className="h-full min-h-0 px-2 py-2">
             <AgentPanelHistory
@@ -278,13 +290,15 @@ const AgentEmbedPanel = forwardRef<AgentPanelApi>((_props, ref) => {
                 />
               </span>
               <div className="text-body-sm font-semibold text-ds-text-neutral-default-default">
-                No active workspace folder
+                {t('layout.no-active-workspace-folder', {
+                  defaultValue: 'No active workspace folder',
+                })}
               </div>
               <div className="text-label-xs leading-relaxed text-ds-text-neutral-subtle-default">
-                Open a folder in the editor (File → Open…, then pick a folder) to
-                work on a project, and the agent will operate there. Or use{' '}
-                <span className="font-semibold">New</span> in the title bar for a
-                temporary conversation.
+                {t('layout.no-active-workspace-folder-desc', {
+                  defaultValue:
+                    'Open a folder in the editor (File → Open…, then pick a folder) to work on a project, and the agent will operate there. Or use New in the title bar for a temporary conversation.',
+                })}
               </div>
             </div>
           </div>

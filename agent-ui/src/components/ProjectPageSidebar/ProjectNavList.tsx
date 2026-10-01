@@ -35,6 +35,7 @@ export interface ProjectNavListProps {
   onProjectClick?: (projectId: string) => void;
   onDeleteProject?: (projectId: string) => void;
   onAchieveProject?: (projectId: string) => void;
+  onRenameProject?: (projectId: string) => void;
   onPinProject?: (projectId: string) => void;
   onNewProject: () => void;
   /** Selected state for the New Project row. */
@@ -99,6 +100,7 @@ export function ProjectNavList({
   onProjectClick,
   onDeleteProject,
   onAchieveProject,
+  onRenameProject,
   onPinProject,
   onNewProject,
   newProjectActive = false,
@@ -140,6 +142,7 @@ export function ProjectNavList({
     onProjectClick,
     onDeleteProject,
     onAchieveProject,
+    onRenameProject,
     onPinProject,
     folded,
   };

@@ -461,6 +461,9 @@ export const RichChatInput = React.forwardRef<
       <div
         ref={setRootRef}
         role="textbox"
+        aria-label={t('chat.input-aria-label', {
+          defaultValue: 'Message the agent',
+        })}
         aria-multiline="true"
         aria-placeholder={ariaPlaceholderLine}
         contentEditable={!disabled}

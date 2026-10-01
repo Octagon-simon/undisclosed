@@ -18,7 +18,7 @@ import { LiveReasoning } from './LiveReasoning';
 import { usePageTabStore } from '@/store/pageTabStore';
 import { useProjectRuntimeStore } from '@/store/projectRuntimeStore';
 import { AnimatePresence } from 'framer-motion';
-import { X } from 'lucide-react';
+import { Check, X } from 'lucide-react';
 import React, {
   useCallback,
   useEffect,
@@ -56,19 +56,29 @@ function QueuedFollowups({ projectId }: { projectId: string }) {
         <div key={m.id ?? m.task_id} className="flex justify-end">
           <div className="group relative max-w-[85%] rounded-2xl rounded-br-sm border border-dashed border-ds-border-neutral-default-default bg-ds-bg-neutral-muted-default px-3 py-2">
             <div className="mb-1 flex items-center justify-between gap-2">
-              <span className="flex items-center gap-1.5 text-label-xs font-medium text-ds-text-neutral-subtle-default">
-                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-ds-bg-status-running-default-default" />
-                Queued · runs after the current task
-              </span>
-              <button
-                type="button"
-                aria-label="Cancel queued message"
-                title="Cancel"
-                onClick={() => removeQueuedMessage(projectId, m.task_id)}
-                className="shrink-0 rounded p-0.5 text-ds-icon-neutral-subtle-default opacity-0 transition-opacity hover:text-ds-icon-neutral-default-default group-hover:opacity-100"
-              >
-                <X size={13} aria-hidden />
-              </button>
+              {m.consumed ? (
+                // Chipped-in: the running agent folded this into the CURRENT turn.
+                <span className="flex items-center gap-1.5 text-label-xs font-medium text-ds-text-success-default-default">
+                  <Check size={12} aria-hidden />
+                  Added to this task
+                </span>
+              ) : (
+                <span className="flex items-center gap-1.5 text-label-xs font-medium text-ds-text-neutral-subtle-default">
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-ds-bg-status-running-default-default" />
+                  Queued · runs after the current task
+                </span>
+              )}
+              {!m.consumed && (
+                <button
+                  type="button"
+                  aria-label="Cancel queued message"
+                  title="Cancel"
+                  onClick={() => removeQueuedMessage(projectId, m.task_id)}
+                  className="shrink-0 rounded p-0.5 text-ds-icon-neutral-subtle-default opacity-0 transition-opacity hover:text-ds-icon-neutral-default-default group-hover:opacity-100"
+                >
+                  <X size={13} aria-hidden />
+                </button>
+              )}
             </div>
             <div className="whitespace-pre-wrap break-words text-body-sm text-ds-text-neutral-default-default">
               {m.content}
@@ -212,18 +222,70 @@ export const ProjectChatContainer: React.FC<ProjectChatContainerProps> = ({
     }, 0);
   }, [chatStore?.activeTaskId]);
 
-  // When switching projects, jump to the latest message (bottom) instead of
-  // staying at the top. Deferred so the switched-to project's messages have
-  // rendered; instant (not smooth) so we don't scroll through the whole
-  // history on every switch.
+  // Open a conversation scrolled to the LATEST message so the user lands on the
+  // most recent response by default, then can scroll up freely to read history.
+  //
+  // A conversation's turns hydrate ASYNCHRONOUSLY (ProjectSection fetches
+  // `/turns` then `setMessages` a beat later — hundreds of ms to several seconds
+  // for a long chat), so a single timed scroll on the project switch fires
+  // before the content exists and leaves the view pinned at the top. Instead we
+  // PIN this project to the bottom and re-assert it on every content change
+  // (a MutationObserver catches async hydration AND streaming regardless of
+  // timing), releasing the pin the moment the user scrolls up.
+  const stickBottomProjectRef = useRef<string | null>(null);
+  const programmaticScrollRef = useRef(false);
+  const jumpToBottom = useCallback(() => {
+    const root = scrollContainerRef.current;
+    if (!root) return;
+    programmaticScrollRef.current = true;
+    root.scrollTo({ top: root.scrollHeight, behavior: 'auto' });
+    // Release the guard once this scroll's event has fired, so a genuine
+    // user scroll-up afterward is still detected.
+    requestAnimationFrame(() => {
+      programmaticScrollRef.current = false;
+    });
+  }, [scrollContainerRef]);
+
+  // On open / project switch: (re)pin to bottom and do an initial jump.
   useEffect(() => {
+    stickBottomProjectRef.current = activeProjectId ?? null;
     if (!activeProjectId) return;
-    const timer = setTimeout(() => {
-      const el = scrollContainerRef.current;
-      if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'auto' });
-    }, 100);
+    const timer = setTimeout(jumpToBottom, 60);
     return () => clearTimeout(timer);
-  }, [activeProjectId, scrollContainerRef]);
+  }, [activeProjectId, jumpToBottom]);
+
+  // Re-assert the bottom on any content change while still pinned. Subtree +
+  // characterData covers new turns AND live token streaming; rAF coalesces
+  // bursts. Structure-agnostic, so it doesn't depend on a single content wrapper.
+  useEffect(() => {
+    const root = scrollContainerRef.current;
+    if (!root) return;
+    let raf = 0;
+    const mo = new MutationObserver(() => {
+      if (stickBottomProjectRef.current !== activeProjectId) return;
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(jumpToBottom);
+    });
+    mo.observe(root, { childList: true, subtree: true, characterData: true });
+    return () => {
+      mo.disconnect();
+      cancelAnimationFrame(raf);
+    };
+  }, [activeProjectId, chatStores, scrollContainerRef, jumpToBottom]);
+
+  // A genuine user scroll-up releases the pin so they can read in peace. The
+  // programmatic guard prevents our own jumpToBottom from self-releasing.
+  useEffect(() => {
+    const root = scrollContainerRef.current;
+    if (!root) return;
+    const onScroll = () => {
+      if (programmaticScrollRef.current) return;
+      const dist = root.scrollHeight - root.scrollTop - root.clientHeight;
+      if (dist > 120) stickBottomProjectRef.current = null;
+    };
+    root.addEventListener('scroll', onScroll, { passive: true });
+    return () => root.removeEventListener('scroll', onScroll);
+  }, [scrollContainerRef]);
 
   // Intersection Observer for scroll-based animations
   useEffect(() => {

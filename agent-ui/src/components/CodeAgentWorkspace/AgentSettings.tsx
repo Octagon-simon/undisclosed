@@ -39,18 +39,18 @@ const LANGUAGES: { value: LocaleEnum; label: string }[] = [
 ];
 
 export default function AgentSettings() {
-  const { i18n } = useTranslation();
+  const { t, i18n } = useTranslation();
   const current = i18n.language;
 
   return (
     <div className="flex flex-col gap-4 px-3 py-2">
       <div className="text-body-sm font-semibold text-ds-text-neutral-default-default">
-        Settings
+        {t('setting.settings', { defaultValue: 'Settings' })}
       </div>
 
       <label className="flex flex-col gap-1">
         <span className="text-label-xs text-ds-text-neutral-subtle-default">
-          Language
+          {t('setting.language', { defaultValue: 'Language' })}
         </span>
         <select
           value={current}
@@ -64,7 +64,9 @@ export default function AgentSettings() {
           ))}
         </select>
         <span className="text-label-xs text-ds-text-neutral-subtle-default">
-          Changes the agent panel's language immediately.
+          {t('setting.changes-panel-language-immediately', {
+            defaultValue: "Changes the agent panel's language immediately.",
+          })}
         </span>
       </label>
     </div>

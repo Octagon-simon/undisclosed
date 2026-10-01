@@ -101,6 +101,7 @@ export default function ProjectPageSidebar({
     handlePinProject,
     requestDeleteProject,
     requestAchieveProject,
+    requestRenameProject,
     dialogs: projectNavDialogs,
   } = useProjectNavActions();
 
@@ -524,6 +525,7 @@ export default function ProjectPageSidebar({
                 onProjectClick={selectProject}
                 onDeleteProject={requestDeleteProject}
                 onAchieveProject={requestAchieveProject}
+                onRenameProject={requestRenameProject}
                 onPinProject={handlePinProject}
                 onNewProject={handleNewProject}
                 newProjectActive={activeWorkspaceTab === 'new-project'}

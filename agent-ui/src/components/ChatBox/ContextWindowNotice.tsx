@@ -82,13 +82,20 @@ export function ContextWindowNotice({
       onMouseLeave={() => setHovered(false)}
       role="status"
       className={cn(
-        'pointer-events-auto flex w-full items-start gap-3 rounded-xl border px-4 py-2.5 shadow-sm',
+        'pointer-events-auto flex w-full items-start gap-3 rounded-xl border border-solid px-4 py-2.5 shadow-sm backdrop-blur-lg',
         isCritical
-          ? 'border-text-error/30 bg-surface-error-subtle text-text-error'
-          : 'border-border-warning bg-surface-warning text-text-warning'
+          ? 'border-ds-border-error-muted-default bg-ds-bg-error-subtle-default text-ds-text-error-default-default'
+          : 'border-ds-border-warning-muted-default bg-ds-bg-warning-subtle-default text-ds-text-warning-default-default'
       )}
     >
-      <span className="mt-0.5 shrink-0">
+      <span
+        className={cn(
+          'mt-0.5 shrink-0',
+          isCritical
+            ? 'text-ds-icon-error-default-default'
+            : 'text-ds-icon-warning-default-default'
+        )}
+      >
         {isCritical ? (
           <TriangleAlert className="size-4" aria-hidden />
         ) : (
@@ -104,7 +111,9 @@ export function ContextWindowNotice({
             onClick={onGenerateHandoff}
             className={cn(
               'text-body-sm font-semibold underline underline-offset-4',
-              isCritical ? 'text-text-error' : 'text-text-heading'
+              isCritical
+                ? 'text-ds-text-error-strong-default'
+                : 'text-ds-text-warning-strong-default'
             )}
           >
             {t('chat.context-window-generate-handoff', {
@@ -114,7 +123,7 @@ export function ContextWindowNotice({
           <button
             type="button"
             onClick={onStartNewChat}
-            className="text-body-sm font-medium text-text-secondary underline-offset-4 hover:text-text-primary hover:underline"
+            className="text-body-sm font-medium text-ds-text-neutral-subtle-default underline-offset-4 hover:text-ds-text-neutral-default-default hover:underline"
           >
             {t('chat.context-window-start-new-chat', {
               defaultValue: 'Start new chat',
@@ -129,7 +138,7 @@ export function ContextWindowNotice({
         aria-label={t('chat.context-window-dismiss', {
           defaultValue: 'Dismiss context window notice',
         })}
-        className="flex size-7 shrink-0 items-center justify-center rounded-md text-icon-secondary transition-colors hover:bg-fill-fill-transparent-hover hover:text-icon-primary"
+        className="flex size-7 shrink-0 items-center justify-center rounded-md text-ds-icon-neutral-subtle-default transition-colors hover:bg-ds-bg-neutral-muted-default hover:text-ds-icon-neutral-default-default"
       >
         <X className="size-4" />
       </button>

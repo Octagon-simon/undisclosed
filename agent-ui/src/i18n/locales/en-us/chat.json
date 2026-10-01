@@ -95,6 +95,8 @@
   "agent-outcome-expand": "Expand",
   "agent-outcome-collapse": "Collapse",
   "input-attach-add-files-or-photos": "Add files or photos",
+  "input-send-message": "Send message",
+  "input-aria-label": "Message the agent",
   "input-attach-skills": "Skills",
   "input-attach-upload-new-skill": "Upload a new skill",
   "input-attach-manage-skills": "Manage skills",

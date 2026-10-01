@@ -35,8 +35,10 @@ import { inferSessionModeFromTask } from '@/lib/sessionMode';
 import {
   estimateContextTokens,
   evaluateContextWindow,
+  formatTokenCount,
   resolveContextWindow,
 } from '@/lib/contextWindow';
+import { Gauge } from 'lucide-react';
 import { exportActiveConversationHandoff } from '@/lib/handoff';
 import { proxyUpdateTriggerExecution } from '@/service/triggerApi';
 import { useAuthStore } from '@/store/authStore';
@@ -465,19 +467,48 @@ export default function ChatBox(): JSX.Element {
     [activeModel.modelId, activeModel.providerId]
   );
 
-  // Prefer the Brain-reported request size; on a reopened conversation that
-  // hasn't run a turn yet (lastRequestTokens resets to 0 and isn't persisted),
-  // estimate from the loaded transcript so a large context still warns.
+  // Context "used" must be STABLE across a multi-turn conversation. Each turn is
+  // its own task, and `lastRequestTokens` (Brain request_usage) is per-task and
+  // resets to 0 when a fresh follow-up task starts — so reading only the active
+  // task made the gauge jump (e.g. 120K -> 66.7K -> …) as turns switched. Use the
+  // PEAK reported request size across ALL tasks in the conversation (context only
+  // grows, so the largest request so far is the right proxy and never drops), and
+  // fall back to a transcript estimate only when nothing has been reported yet
+  // (e.g. a reopened conversation before its first turn runs).
   const usedTokens = useMemo(() => {
-    const reported = activeTask?.lastRequestTokens ?? 0;
-    if (reported > 0) return reported;
+    const tasks = Object.values(chatStore?.tasks || {}) as Array<{
+      lastRequestTokens?: number;
+    }>;
+    let maxReported = 0;
+    for (const tk of tasks) {
+      const r = tk?.lastRequestTokens ?? 0;
+      if (r > maxReported) maxReported = r;
+    }
+    if (maxReported > 0) return maxReported;
     return estimateContextTokens(activeTask);
-  }, [activeTask?.lastRequestTokens, activeTask]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatStore?.tasks, activeTask]);
 
   const contextEval = useMemo(
     () => evaluateContextWindow(usedTokens, contextWindowTokens),
     [usedTokens, contextWindowTokens]
   );
+
+  // Cumulative tokens SPENT in this whole conversation (a Cline-style running
+  // total for the sticky pill) — the sum of every task's `tokens` accumulator
+  // (each turn's input+output added up in the SSE handler). This differs from
+  // `usedTokens` above, which is the current CONTEXT size (peak single request):
+  // spend grows unbounded across turns, context is capped by the window. On a
+  // freshly reopened conversation nothing has run yet so the sum is 0 — fall
+  // back to the transcript estimate so the pill is never a bare 0.
+  const conversationTokens = useMemo(() => {
+    const tasks = Object.values(chatStore?.tasks || {}) as Array<{
+      tokens?: number;
+    }>;
+    const sum = tasks.reduce((acc, t) => acc + (t?.tokens || 0), 0);
+    return sum > 0 ? sum : usedTokens;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatStore?.tasks, usedTokens]);
 
   const [contextWindowNotice, setContextWindowNotice] = useState<{
     id: string;
@@ -1545,6 +1576,23 @@ export default function ChatBox(): JSX.Element {
           ref={scrollContainerRef}
           className="scrollbar-always-visible min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden pl-2"
         >
+          {hasAnyMessages && (
+            /* Sticky running-total of tokens spent in THIS conversation, so the
+               cost is always visible (grows 10K → 30K → 50K …). Right-aligned,
+               click-through except the pill itself. */
+            <div className="pointer-events-none sticky top-0 z-20 flex justify-end px-2 pt-1">
+              <div
+                role="status"
+                aria-live="polite"
+                aria-label={`≈ ${conversationTokens.toLocaleString()} tokens used in this conversation`}
+                className="pointer-events-auto flex items-center gap-1 rounded-full border border-solid border-ds-border-neutral-subtle-default bg-ds-bg-neutral-subtle-default/90 px-2 py-0.5 text-label-xs tabular-nums text-ds-text-neutral-subtle-default backdrop-blur"
+                title={`≈ ${conversationTokens.toLocaleString()} tokens used in this conversation`}
+              >
+                <Gauge className="h-3 w-3 shrink-0" aria-hidden />
+                {formatTokenCount(conversationTokens)}
+              </div>
+            </div>
+          )}
           {hasAnyMessages ? (
             <ProjectChatContainer
               scrollContainerRef={scrollContainerRef}

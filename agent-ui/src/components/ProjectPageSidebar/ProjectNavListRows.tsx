@@ -16,7 +16,7 @@ import { Button } from '@/components/ui/button';
 import { TooltipSimple } from '@/components/ui/tooltip';
 import type { SessionNavLeadPresentation } from '@/lib/sessionNavLead';
 import { cn } from '@/lib/utils';
-import { Archive, Pin, Trash2, Zap } from 'lucide-react';
+import { Archive, Pencil, Pin, Trash2, Zap } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { SIDEBAR_TOOLTIP_CONTENT_CLASS } from './constants';
 import { workspaceTabButtonClass } from './NavTab';
@@ -40,6 +40,7 @@ export interface ProjectNavListRowsProps {
   /** Kept for backward compat (parent still wires up the delete dialog). */
   onDeleteProject?: (projectId: string) => void;
   onAchieveProject?: (projectId: string) => void;
+  onRenameProject?: (projectId: string) => void;
   onPinProject?: (projectId: string) => void;
   /** Icon rail: one icon per row. */
   folded: boolean;
@@ -65,6 +66,7 @@ export function ProjectNavListRows({
   onProjectClick,
   onDeleteProject,
   onAchieveProject,
+  onRenameProject,
   onPinProject,
   folded,
   maxItems,
@@ -72,11 +74,12 @@ export function ProjectNavListRows({
   showRowMenu = true,
 }: ProjectNavListRowsProps) {
   const { t } = useTranslation();
-  const achieveLabel = t('layout.achieve', { defaultValue: 'Achieve' });
-  const achievedLabel = t('layout.achieved', { defaultValue: 'Achieved' });
+  const achieveLabel = t('layout.achieve', { defaultValue: 'Archive' });
+  const achievedLabel = t('layout.achieved', { defaultValue: 'Archived' });
   const pinLabel = t('layout.pin', { defaultValue: 'Pin' });
   const unpinLabel = t('layout.unpin', { defaultValue: 'Unpin' });
   const deleteLabel = t('layout.delete-project', { defaultValue: 'Delete' });
+  const renameLabel = t('layout.rename-project', { defaultValue: 'Rename' });
   const triggerSourceLabel = t('layout.task-source-trigger');
   const list = maxItems != null ? projects.slice(0, maxItems) : projects;
 
@@ -166,6 +169,32 @@ export function ProjectNavListRows({
               {/* Pin + archive buttons — in-flow so title truncates; snap visible on hover, no animation */}
               {showRowMenu && (
                 <div className="hidden shrink-0 items-center group-hover/session-item:flex">
+                  {onRenameProject ? (
+                    <TooltipSimple
+                      content={renameLabel}
+                      side="top"
+                      sideOffset={6}
+                    >
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        buttonRadius="full"
+                        buttonContent="icon-only"
+                        className="no-drag shrink-0"
+                        aria-label={renameLabel}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onRenameProject(project.id);
+                        }}
+                      >
+                        <Pencil
+                          className="h-3.5 w-3.5 text-ds-icon-neutral-muted-default"
+                          aria-hidden
+                        />
+                      </Button>
+                    </TooltipSimple>
+                  ) : null}
                   <TooltipSimple
                     content={project.pinned ? unpinLabel : pinLabel}
                     side="top"
