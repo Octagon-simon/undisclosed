@@ -63,25 +63,33 @@ const normalizeId = (value: unknown): string =>
     .toLowerCase();
 
 /**
- * Conservative fallback windows for well-known model FAMILIES, used only when
- * the cached provider catalog can't resolve the model. Most OpenAI-compatible
- * `/v1/models` endpoints (deepseek, anthropic, …) omit `context_length`, so
- * without this the gauge would sit on the 1M default and never warn for a real
- * 128k model. Matched by substring against the model id first, then the provider
- * id. Values are deliberately on the LARGER side of each family so we under-warn
- * rather than nag falsely; unknown models keep the 1M default. Easy to tune.
+ * Fallback context windows for well-known model FAMILIES, used only when the
+ * cached provider catalog can't resolve the model (most OpenAI-compatible
+ * `/v1/models` endpoints — deepseek, anthropic, … — omit `context_length`).
+ * Matched by substring against the model id first, then the provider id; first
+ * match wins.
+ *
+ * Values are the CURRENT-FLAGSHIP windows for each family (verified Sep 2026,
+ * sources in the commit) and deliberately biased LARGER — a family spans several
+ * generations (e.g. gpt-4o 128k vs gpt-5.x ~1M), and under-warning on an older
+ * model is far better UX than falsely nagging on a current one. deepseek V4
+ * (Flash/Pro/chat) ships a documented 1M window; older deepseek-chat/reasoner
+ * (V3.x) is 128k — so the V4 rule MUST precede the generic one (first match
+ * wins). Unknown models keep the 1M default. One line each to tune.
  */
 const KNOWN_FAMILY_WINDOWS: Array<[RegExp, number]> = [
-  [/gemini/, 1_000_000],
-  [/claude|anthropic|sonnet|opus|haiku/, 200_000],
-  [/kimi|moonshot/, 200_000],
-  [/deepseek/, 128_000],
-  [/qwen|qwq|tongyi/, 131_072],
-  [/llama|nemotron|nvidia/, 128_000],
-  [/grok/, 131_072],
-  [/glm|z\.?ai/, 128_000],
-  [/gpt-5|gpt-4|gpt4|o1|o3|o4|codex|openai/, 128_000],
-  [/mistral|mixtral|codestral|magistral/, 128_000],
+  [/deepseek.*v4|deepseek-?v4|v4.*deepseek/, 1_000_000], // DeepSeek V4 Flash/Pro/chat — 1M (spec; some served endpoints cap ~160k, caught by the /v1/models cache when reported)
+  [/deepseek/, 128_000], // deepseek-chat / reasoner (V3.x) — documented 128k
+  [/gemini/, 1_000_000], // Gemini 3.1 Pro 1M (2M on some)
+  [/claude|anthropic|sonnet|opus|haiku/, 1_000_000], // Sonnet 5 / Opus 4.8+ = 1M
+  [/gpt-5|gpt-4|gpt4|o1|o3|o4|codex|openai/, 1_000_000], // GPT-5.x ~1M
+  [/qwen|qwq|tongyi/, 1_000_000], // Qwen 3.5 ~1M
+  [/grok/, 1_000_000], // Grok 4.x (500k–2M across versions)
+  [/minimax/, 1_000_000],
+  [/mistral|mixtral|codestral|magistral/, 256_000], // Mistral Large 3 = 256k
+  [/kimi|moonshot/, 256_000], // Kimi K2.x 128k–256k
+  [/llama|nemotron|nvidia/, 256_000], // Llama 3.x 128k / 4 Scout far larger
+  [/glm|z\.?ai/, 200_000], // GLM-4.6 ~200k
 ];
 
 function windowFromKnownFamily(

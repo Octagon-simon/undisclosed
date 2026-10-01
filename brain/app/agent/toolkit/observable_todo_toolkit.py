@@ -110,17 +110,21 @@ class ObservableTodoToolkit(TodoToolkit, AbstractToolkit):
     def reset_todos_if_stale(self, new_task_id: str) -> bool:
         """Drop todos that belong to a PREVIOUS task before a new turn starts.
 
-        The single agent (and this toolkit, including its `todo.md`/`.todo.json`
-        files) is reused across turns. Without this, the prior task's todo list —
-        often with the final item left `in_progress` — is re-emitted under the
-        new task_id by `ensure_agent`, so a task that never used todos renders a
-        stale, perpetually-spinning todo item. Returns True if it cleared.
+        The prior task's todo list — often with the final item left `in_progress`
+        — otherwise gets re-emitted under the new task_id by `ensure_agent`, so a
+        fresh turn renders a stale, perpetually-spinning "step 3 ongoing" item.
+
+        Two ways stale todos reach a new turn:
+          1. The agent (and this toolkit) is REUSED — `self.todos` carries over,
+             tagged with `_todos_task_id` from the turn that wrote them.
+          2. The agent is REBUILT (model change / stop / resume) — a fresh toolkit
+             instance LOADS the old todos back from `.todo.json` with
+             `_todos_task_id == None`.
+        Both are stale for a different task, so reset whenever the todos aren't
+        tagged with the current task (including the untagged file-loaded case).
+        Returns True if it cleared.
         """
-        if (
-            self.todos
-            and self._todos_task_id is not None
-            and self._todos_task_id != new_task_id
-        ):
+        if self.todos and self._todos_task_id != new_task_id:
             with self._lock:
                 self.todos = []
                 self._save()

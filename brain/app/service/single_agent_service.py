@@ -1503,8 +1503,29 @@ async def single_agent_solve(
                 )
                 pause_event.clear()
                 task_lock.status = Status.confirming
-                if running_turn and not running_turn.done():
-                    running_turn.cancel()
+                cancelled_turn = running_turn
+                running_turn = None
+                if cancelled_turn is not None and not cancelled_turn.done():
+                    cancelled_turn.cancel()
+
+                    def _swallow(task: asyncio.Task) -> None:
+                        try:
+                            task.result()
+                        except (asyncio.CancelledError, Exception):
+                            pass
+
+                    cancelled_turn.add_done_callback(_swallow)
+                # Drop the agent so a RECONNECT (e.g. after a wifi switch — the
+                # client re-POSTs and the turn re-runs) builds a CLEAN agent
+                # instead of reusing one whose MCP/browser transports are
+                # mid-collapse from the cancel. Reusing the half-torn agent
+                # silently produces nothing — the "agent freezes after the
+                # connection drops" report. Mirrors the Skip path above.
+                agent = None
+                try:
+                    task_lock.single_agent = None
+                except Exception:  # pragma: no cover - defensive
+                    pass
                 break
 
             # As soon as the agent is idle, run the next follow-up that arrived

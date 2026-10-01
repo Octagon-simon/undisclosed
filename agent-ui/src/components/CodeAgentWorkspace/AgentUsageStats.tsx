@@ -20,7 +20,10 @@
  */
 
 import { proxyFetchGet } from '@/api/http';
+import { ensureProjectLoaded } from '@/components/ProjectPageSidebar/projectNav';
 import { useFeedbackStore } from '@/store/feedbackStore';
+import { useProjectRuntimeStore } from '@/store/projectRuntimeStore';
+import { useSpaceStore } from '@/store/spaceStore';
 import { useQuery } from '@tanstack/react-query';
 import {
   Activity,
@@ -31,7 +34,7 @@ import {
   ThumbsUp,
   Zap,
 } from 'lucide-react';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 
 interface GroupedProject {
   project_id: string;
@@ -40,9 +43,20 @@ interface GroupedProject {
   total_tokens?: number;
   task_count?: number;
   total_completed_tasks?: number;
+  /** ISO timestamp of the most recent task — server sorts by this. */
+  latest_task_date?: string;
+  space_id?: string;
   /** Present when the request asks for tasks; tasks[0] is the opening turn. */
   tasks?: Array<{ question?: string | null }>;
 }
+
+type UsageSort = 'recent' | 'tokens' | 'runs';
+
+const SORT_OPTIONS: { value: UsageSort; label: string }[] = [
+  { value: 'recent', label: 'Recent' },
+  { value: 'tokens', label: 'Tokens' },
+  { value: 'runs', label: 'Runs' },
+];
 
 /**
  * A meaningful label for a conversation. The server names untitled conversations
@@ -162,10 +176,40 @@ function FeedbackSummary() {
   );
 }
 
-export default function AgentUsageStats() {
+export default function AgentUsageStats({
+  onOpenConversation,
+}: {
+  /** Open a conversation (switch the panel back to the chat view). */
+  onOpenConversation?: () => void;
+} = {}) {
+  // Scope the overview to the CURRENT workspace, matching the History sidebar
+  // (which filters by the active folder Space). Without space_id the grouped
+  // endpoint returns every conversation across all folders.
+  const activeSpaceId = useSpaceStore((s) => s.activeSpaceId);
+  const projectStore = useProjectRuntimeStore();
+  const [sort, setSort] = useState<UsageSort>('recent');
+
+  // Open the clicked conversation — same path the History panel uses
+  // (setActiveProject → pin last-visited → ensure loaded → switch to chat view).
+  const handleOpenConversation = async (projectId: string) => {
+    projectStore.setActiveProject(projectId);
+    if (activeSpaceId) {
+      useSpaceStore.getState().setLastVisitedProject(activeSpaceId, projectId);
+    }
+    try {
+      await ensureProjectLoaded(projectStore, projectId);
+    } catch (error) {
+      console.warn(
+        `[AgentUsageStats] Failed to load conversation ${projectId}:`,
+        error
+      );
+    }
+    onOpenConversation?.();
+  };
+
   const { data, isLoading, isError, refetch, isFetching } =
     useQuery<GroupedResponse>({
-      queryKey: ['agent-usage-grouped'],
+      queryKey: ['agent-usage-grouped', activeSpaceId ?? null],
       queryFn: () =>
         proxyFetchGet('/api/v1/chat/histories/grouped', {
           page: 1,
@@ -173,13 +217,18 @@ export default function AgentUsageStats() {
           // Need tasks[0].question to title auto-named conversations by their
           // opening prompt (matching the history sidebar).
           include_tasks: true,
+          ...(activeSpaceId ? { space_id: activeSpaceId } : {}),
         }),
       staleTime: 30_000,
     });
 
-  const projects = (data?.projects ?? [])
-    .slice()
-    .sort((a, b) => (b.total_tokens ?? 0) - (a.total_tokens ?? 0));
+  const projects = (data?.projects ?? []).slice().sort((a, b) => {
+    if (sort === 'tokens') return (b.total_tokens ?? 0) - (a.total_tokens ?? 0);
+    if (sort === 'runs') return (b.task_count ?? 0) - (a.task_count ?? 0);
+    // 'recent' — newest activity first (server already returns this order, but
+    // sort defensively in case the payload order changes).
+    return (b.latest_task_date ?? '').localeCompare(a.latest_task_date ?? '');
+  });
   const totalTokens =
     data?.total_tokens ??
     projects.reduce((s, p) => s + (p.total_tokens ?? 0), 0);
@@ -248,8 +297,24 @@ export default function AgentUsageStats() {
           <FeedbackSummary />
 
           <div className="mt-4">
-            <div className="mb-1.5 text-label-xs font-medium uppercase tracking-wide text-ds-text-neutral-subtle-default">
-              By conversation
+            <div className="mb-1.5 flex items-center justify-between gap-2">
+              <span className="text-label-xs font-medium uppercase tracking-wide text-ds-text-neutral-subtle-default">
+                By conversation
+              </span>
+              <label className="flex items-center gap-1 text-label-xs text-ds-text-neutral-subtle-default">
+                <span>Sort</span>
+                <select
+                  value={sort}
+                  onChange={(e) => setSort(e.target.value as UsageSort)}
+                  className="rounded-md border border-solid border-ds-border-neutral-subtle-default bg-ds-bg-neutral-subtle-default px-1.5 py-0.5 text-label-xs text-ds-text-neutral-default-default outline-none"
+                >
+                  {SORT_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
             </div>
             {projects.length === 0 ? (
               <div className="rounded-lg border border-solid border-ds-border-neutral-default-default bg-ds-bg-neutral-muted-default px-3 py-4 text-center text-label-xs text-ds-text-neutral-subtle-default">
@@ -258,19 +323,23 @@ export default function AgentUsageStats() {
             ) : (
               <ul className="m-0 flex list-none flex-col gap-1 p-0">
                 {projects.slice(0, 40).map((p) => (
-                  <li
-                    key={p.project_id}
-                    className="flex items-center gap-2 rounded-lg px-2.5 py-2 transition-colors hover:bg-ds-bg-neutral-muted-default"
-                  >
-                    <span className="min-w-0 flex-1 truncate text-label-sm text-ds-text-neutral-default-default">
-                      {conversationLabel(p)}
-                    </span>
-                    <span className="shrink-0 text-label-xs tabular-nums text-ds-text-neutral-subtle-default">
-                      {formatCompact(p.total_tokens ?? 0)} tok
-                    </span>
-                    <span className="shrink-0 rounded-full bg-ds-bg-neutral-subtle-default px-1.5 py-0.5 text-label-xs tabular-nums text-ds-text-neutral-subtle-default">
-                      {p.task_count ?? 0} run{(p.task_count ?? 0) === 1 ? '' : 's'}
-                    </span>
+                  <li key={p.project_id}>
+                    <button
+                      type="button"
+                      onClick={() => void handleOpenConversation(p.project_id)}
+                      title={conversationLabel(p)}
+                      className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left outline-none transition-colors hover:bg-ds-bg-neutral-muted-default focus-visible:ring-2 focus-visible:ring-ds-ring-neutral-subtle-default"
+                    >
+                      <span className="min-w-0 flex-1 truncate text-label-sm text-ds-text-neutral-default-default">
+                        {conversationLabel(p)}
+                      </span>
+                      <span className="shrink-0 text-label-xs tabular-nums text-ds-text-neutral-subtle-default">
+                        {formatCompact(p.total_tokens ?? 0)} tok
+                      </span>
+                      <span className="shrink-0 rounded-full bg-ds-bg-neutral-subtle-default px-1.5 py-0.5 text-label-xs tabular-nums text-ds-text-neutral-subtle-default">
+                        {p.task_count ?? 0} run{(p.task_count ?? 0) === 1 ? '' : 's'}
+                      </span>
+                    </button>
                   </li>
                 ))}
               </ul>

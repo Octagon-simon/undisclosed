@@ -409,14 +409,20 @@ try {
       await restartWedgedBrain(
         healthy ? 'slept; recycling dead connections' : 'unresponsive on /health'
       );
+      // The brain was recycled, so the UI's SSE/sockets point at a dead process
+      // — reload to reattach to the fresh one.
+      await sleep(RESUME_SETTLE_MS);
+      reloadAllWindows();
     } else {
-      logLine('brain healthy after resume — keeping it, recycling UI');
+      // Brain healthy and KEPT — do NOT reload. An unconditional reload on every
+      // wake (even a brief display sleep) blew away in-memory conversation state
+      // and forced a from-history restore; for a single-agent task that restore
+      // hits the snapshot-replay path and fails ("Unable to replay this legacy
+      // task"), so the just-finished response VANISHED after a sleep/wake. The
+      // renderer's SSE already retries/reconnects on its own (see fetchEventSource
+      // onerror), so a healthy-brain wake needs no reload.
+      logLine('brain healthy after resume — keeping brain + UI (no reload)');
     }
-
-    // Give the wake a beat to settle, then reload so the UI reattaches to a
-    // (now healthy) brain instead of limping along on dead sockets.
-    await sleep(RESUME_SETTLE_MS);
-    reloadAllWindows();
   };
 
   let watchFailures = 0;

@@ -335,6 +335,9 @@ async def browser_stream(websocket: WebSocket) -> None:
     desired: dict[str, Any] = {"url": None, "id": None, "page_url": ""}
     rebind = asyncio.Event()
     seen_ids: set[str] = set()
+    # Last-seen URL per target id, so the watcher can follow the tab the agent is
+    # actually acting on (the one whose URL just changed), not just tab-open.
+    url_by_id: dict[str, str] = {}
     input_task: asyncio.Task[Any] | None = None
     watch_task: asyncio.Task[Any] | None = None
 
@@ -399,10 +402,21 @@ async def browser_stream(websocket: WebSocket) -> None:
                     logger.debug("input dispatch failed", exc_info=True)
 
     async def _watch_targets() -> None:
-        """Follow the agent across tabs. When it opens a NEW page target, switch
-        the live view to it; if the tab we're showing closes, fall back to the
-        most recent remaining page. Without this the bridge stayed pinned to the
-        target chosen at connect time, so a newly opened tab was never shown."""
+        """Follow the agent across tabs.
+
+        The agent works one tab at a time and that tab is the one whose URL is
+        actively CHANGING (a newly opened tab that then navigates, or the agent
+        moving to another tab and loading something). So we switch to whichever
+        target's URL just changed to a real (non-blank) page — this catches the
+        case a plain tab-open watcher missed: a tab opens as about:blank (marked
+        "seen"), then navigates a beat later, so its real page never showed and
+        the view stayed pinned to the first tab. If the tab we're showing closes,
+        fall back to a live page.
+
+        Note: a pure focus switch with NO navigation isn't observable over the
+        CDP target list (it reports no "focused" flag), so that rare case isn't
+        followed; any navigation on the target tab resyncs the view.
+        """
         while True:
             await asyncio.sleep(1.0)
             try:
@@ -413,28 +427,35 @@ async def browser_stream(websocket: WebSocket) -> None:
                 continue
             ids = [str(p.get("id")) for p in pages if p.get("id")]
             id_set = set(ids)
-            new_ids = [i for i in ids if i not in seen_ids]
+            by_id = {str(p.get("id")): p for p in pages if p.get("id")}
             target: dict[str, Any] | None = None
-            if new_ids:
-                # Prefer a non-blank newly-opened tab (the agent navigates it a
-                # beat after opening); else take the newest new target.
-                for p in pages:
-                    if str(p.get("id")) in new_ids and not str(
-                        p.get("url", "")
-                    ).startswith("about:blank"):
-                        target = p
-                        break
-                if target is None:
-                    target = next(
-                        (p for p in pages if str(p.get("id")) == new_ids[0]), None
-                    )
-            elif state["target_id"] not in id_set:
+
+            if state["target_id"] not in id_set:
                 # The tab we were streaming closed — fall back to a live page.
                 target = pages[0]
                 for p in pages:
                     if not str(p.get("url", "")).startswith("about:blank"):
                         target = p
                         break
+            else:
+                # Switch to a tab whose URL just changed to a real page (and that
+                # isn't already the one we're showing). First such tab wins.
+                for tid in ids:
+                    url = str(by_id[tid].get("url", ""))
+                    if (
+                        url
+                        and not url.startswith("about:blank")
+                        and url != url_by_id.get(tid)
+                        and tid != state["target_id"]
+                    ):
+                        target = by_id[tid]
+                        break
+
+            # Refresh caches AFTER computing the target so a first-seen tab counts
+            # as "changed" exactly once.
+            url_by_id.clear()
+            for tid in ids:
+                url_by_id[tid] = str(by_id[tid].get("url", ""))
             seen_ids.update(ids)
             if target is not None:
                 tws = target.get("webSocketDebuggerUrl")
@@ -478,6 +499,9 @@ async def browser_stream(websocket: WebSocket) -> None:
             for p in await _list_pages(port):
                 if p.get("id"):
                     seen_ids.add(str(p.get("id")))
+                    # Seed URLs so the watcher's first poll doesn't treat the
+                    # already-open tabs as freshly "changed" and switch away.
+                    url_by_id[str(p.get("id"))] = str(p.get("url", ""))
                 if p.get("webSocketDebuggerUrl") == devtools_url:
                     desired["id"] = str(p.get("id"))
         except Exception:
