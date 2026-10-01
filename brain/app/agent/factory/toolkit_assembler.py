@@ -50,6 +50,7 @@ from app.agent.toolkit.human_toolkit import HumanToolkit
 from app.agent.toolkit.memory_toolkit import MemoryToolkit
 from app.agent.toolkit.project_context_toolkit import ProjectContextToolkit
 from app.agent.toolkit.code_query_toolkit import CodeQueryToolkit
+from app.agent.toolkit.code_search_toolkit import CodeSearchToolkit
 from app.agent.toolkit.hybrid_browser_toolkit import HybridBrowserToolkit
 from app.agent.toolkit.observable_todo_toolkit import ObservableTodoToolkit
 from app.agent.toolkit.screenshot_toolkit import ScreenshotToolkit
@@ -80,6 +81,7 @@ DEFAULT_SINGLE_AGENT_TOOLKIT_CONFIG: dict[str, Any] = {
     "memory": {"enabled": True},
     "project_context": {"enabled": True},
     "code_query": {"enabled": True},
+    "code_search": {"enabled": True},
     "search": {"enabled": True},
     "browser": {"enabled": True},
     "terminal": {"enabled": True},
@@ -608,6 +610,18 @@ async def assemble_single_agent_toolkits(
         assembly.add_tools(
             code_query_toolkit.get_tools(),
             CodeQueryToolkit.toolkit_name(),
+        )
+
+    if _enabled(config, "code_search"):
+        # Capped ripgrep-backed text search + directory listing so the agent
+        # finds code in one targeted call instead of spraying shell_exec greps.
+        code_search_toolkit = CodeSearchToolkit(
+            api_task_id=options.project_id,
+            working_directory=working_directory,
+        )
+        assembly.add_tools(
+            code_search_toolkit.get_tools(),
+            CodeSearchToolkit.toolkit_name(),
         )
 
     if _enabled(config, "search"):

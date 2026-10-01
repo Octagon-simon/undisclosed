@@ -63,6 +63,9 @@ _CORE_TOOLKIT_MARKERS: tuple[str, ...] = (
     # Surgical tree-sitter lookups (find_symbol / find_references / context_at)
     # — the precise companion to the broad repomix digest.
     "code query",
+    # Capped grep_search + list_dir — always present so the agent reaches for
+    # them instead of spraying shell_exec greps to find code.
+    "code search",
     "search",
 )
 
@@ -101,13 +104,28 @@ def _min_score() -> float:
 
 
 def _max_per_toolkit() -> int:
-    """Cap tools attached from a single toolkit. Atomic loading of a huge MCP
-    toolkit (30 tools, ~40K tokens of schemas) is re-sent every step — so take
-    only the most relevant N. Tune with UNDISCLOSED_TOOL_RAG_MAX_PER_TOOLKIT."""
+    """Cap tools attached from a single toolkit during AUTOMATIC selection.
+    Atomic loading of a huge MCP toolkit (30 tools, ~40K tokens of schemas) is
+    re-sent every step — so the auto-pass takes only the most relevant N. Tune
+    with UNDISCLOSED_TOOL_RAG_MAX_PER_TOOLKIT."""
     try:
         return max(1, int(env("UNDISCLOSED_TOOL_RAG_MAX_PER_TOOLKIT", "12")))
     except (TypeError, ValueError):
         return 12
+
+
+def _max_per_toolkit_explicit() -> int:
+    """Cap when the agent EXPLICITLY requests a toolkit via `load_capability`.
+    Much higher than the auto cap: the whole point of the escape hatch is to pull
+    in a capability that auto-selection missed (e.g. a connector's `search_*`
+    tool), so re-applying the small query-ranked auto cap here would hand back the
+    SAME partial set and leave the agent unable to reach the tool it asked for.
+    Only a pathologically huge MCP hits this ceiling. Tune with
+    UNDISCLOSED_TOOL_RAG_LOAD_CAP."""
+    try:
+        return max(1, int(env("UNDISCLOSED_TOOL_RAG_LOAD_CAP", "60")))
+    except (TypeError, ValueError):
+        return 60
 
 
 def _toolkit_of(tool: Any) -> str:
@@ -306,13 +324,18 @@ class ToolRAGSelector:
     def tools_for_capabilities(
         self, names: list[str], query: str | None = None
     ) -> list[Any]:
-        """Match requested capability names to toolkits; return their MOST
-        RELEVANT tools (capped per toolkit, ranked by `query` when given) — a
-        full MCP toolkit is ~40K tokens of schemas, far more than a task needs."""
+        """Match requested capability names to toolkits and return their tools.
+
+        This backs the `load_capability` escape hatch, so it returns the FULL
+        requested toolkit (up to a high safety ceiling) — NOT the small,
+        query-ranked auto cap. The agent only calls this when auto-selection
+        missed the tool it needs (e.g. a connector's `search_*`), and capping by
+        the same query here would hand back the same partial set (the exact bug
+        that left the agent unable to reach Asana's `search_objects`)."""
         wanted = [str(n).strip().lower() for n in (names or []) if str(n).strip()]
         if not wanted:
             return []
-        max_per = _max_per_toolkit()
+        max_per = _max_per_toolkit_explicit()
         score_by_name = self._score_names(query) if query else {}
         result: list[Any] = []
         for tk, tools in self.loadable_toolkits().items():

@@ -108,7 +108,11 @@ export default function BottomBox({
   onSelectModel,
 }: BottomBoxProps) {
   const { t } = useTranslation();
-  const enableQueuedBox = true; //TODO: Fix the reason of queued box disable in https://github.com/eigent-ai/eigent/issues/684
+  // Queued follow-ups are now acknowledged INLINE in the conversation thread
+  // (see QueuedFollowups in ProjectChatContainer) — a clear pending bubble in the
+  // reading flow, with cancel. This compact above-composer pill was easy to miss
+  // and duplicated that, so it's disabled.
+  const enableQueuedBox = false;
 
   // Picker panels (connector/skill) float above BoxMain and are mutually exclusive.
   const [openPanel, setOpenPanel] = useState<PickerPanelKind | null>(null);

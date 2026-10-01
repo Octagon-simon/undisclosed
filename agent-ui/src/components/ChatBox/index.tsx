@@ -32,7 +32,11 @@ import {
   setProjectAchievedState,
 } from '@/lib/projectAchievement';
 import { inferSessionModeFromTask } from '@/lib/sessionMode';
-import { evaluateContextWindow, resolveContextWindow } from '@/lib/contextWindow';
+import {
+  estimateContextTokens,
+  evaluateContextWindow,
+  resolveContextWindow,
+} from '@/lib/contextWindow';
 import { exportActiveConversationHandoff } from '@/lib/handoff';
 import { proxyUpdateTriggerExecution } from '@/service/triggerApi';
 import { useAuthStore } from '@/store/authStore';
@@ -440,30 +444,39 @@ export default function ChatBox(): JSX.Element {
   // single request is tiny, and the window only cares about the live context.
   // The window is resolved per model from the cached provider catalog, with a
   // 1M fallback. This never blocks sending; it points at the token-cheap exit.
-  const activeModelId = useMemo(() => {
+  const activeModel = useMemo(() => {
     const selection = activeProjectId
       ? projectStore.getProjectModel(activeProjectId)
       : null;
-    return (
-      selection?.model_type ||
-      selection?.cloud_model_type ||
-      selection?.codex_model_type ||
-      null
-    );
+    // BYOK/local only: the pinned custom/local provider row's `model_type` is the
+    // model whose window we resolve, scoped to its provider (`model_platform` ===
+    // the per-provider cache key). (The cloud/codex ids are being retired.)
+    return {
+      modelId: selection?.model_type || null,
+      providerId: selection?.model_platform || null,
+    };
   }, [activeProjectId, projectStore]);
 
   const contextWindowTokens = useMemo(
-    () => resolveContextWindow(activeModelId),
-    [activeModelId]
+    () =>
+      resolveContextWindow(activeModel.modelId, {
+        providerId: activeModel.providerId,
+      }),
+    [activeModel.modelId, activeModel.providerId]
   );
 
+  // Prefer the Brain-reported request size; on a reopened conversation that
+  // hasn't run a turn yet (lastRequestTokens resets to 0 and isn't persisted),
+  // estimate from the loaded transcript so a large context still warns.
+  const usedTokens = useMemo(() => {
+    const reported = activeTask?.lastRequestTokens ?? 0;
+    if (reported > 0) return reported;
+    return estimateContextTokens(activeTask);
+  }, [activeTask?.lastRequestTokens, activeTask]);
+
   const contextEval = useMemo(
-    () =>
-      evaluateContextWindow(
-        activeTask?.lastRequestTokens ?? 0,
-        contextWindowTokens
-      ),
-    [activeTask?.lastRequestTokens, contextWindowTokens]
+    () => evaluateContextWindow(usedTokens, contextWindowTokens),
+    [usedTokens, contextWindowTokens]
   );
 
   const [contextWindowNotice, setContextWindowNotice] = useState<{
@@ -1330,6 +1343,32 @@ export default function ChatBox(): JSX.Element {
       toast.success('Task stopped successfully', {
         closeButton: true,
       });
+
+      // Fallback recovery: normally we keep the SSE alive and let the backend
+      // `end` event flip the task to FINISHED (preserves multi-turn context).
+      // But a deferred/stuck follow-up turn can hang on the brain so that `end`
+      // never arrives — then the turn sits on "Preparing to execute" with a Stop
+      // button that appears to do nothing (the "needs a brain restart" case). If
+      // the task still isn't finished a few seconds after Stop, force it finished
+      // locally so the UI unlocks. `stopTask` won't abort the shared SSE here (no
+      // controller is keyed to a deferred turn's id), so other turns are safe.
+      const stuckTaskId = taskId;
+      const targetProjectId = projectStore.activeProjectId;
+      window.setTimeout(() => {
+        try {
+          const vanilla = targetProjectId
+            ? projectStore.getActiveChatStore(targetProjectId)
+            : null;
+          const live = vanilla?.getState();
+          const task = live?.tasks?.[stuckTaskId];
+          if (task && task.status !== ChatTaskStatus.FINISHED) {
+            live?.stopTask(stuckTaskId);
+            live?.setIsPending(stuckTaskId, false);
+          }
+        } catch {
+          /* best-effort UI recovery */
+        }
+      }, 5000);
     } catch (error) {
       console.error('[STOP-BUTTON] ❌ Failed to stop task:', error);
 

@@ -3712,6 +3712,36 @@ const chatStore = (initial?: Partial<ChatStore>) =>
               }
             }
 
+            // A single-agent task flips to RUNNING + starts its timer on the
+            // first `todo_state`. But a task that uses tools WITHOUT a todo list
+            // never emits one, so it stayed stuck on "Preparing to execute" (the
+            // work log self-hides until RUNNING) and later showed "Worked for
+            // 0m" — even though tool calls were streaming in the whole time.
+            // Seed the running state on the first tool activity so the UI tracks
+            // what the agent is actually doing.
+            const isSingleAgentToolEvent =
+              isSingleAgentEventName(agentMessages.data.agent_name) ||
+              tasks[currentTaskId].sessionMode === SessionMode.SINGLE_AGENT;
+            if (
+              isSingleAgentToolEvent &&
+              tasks[currentTaskId].status !== ChatTaskStatus.FINISHED
+            ) {
+              if (
+                tasks[currentTaskId].sessionMode !== SessionMode.SINGLE_AGENT
+              ) {
+                setTaskSessionMode(currentTaskId, SessionMode.SINGLE_AGENT);
+              }
+              if (tasks[currentTaskId].taskTime === 0) {
+                setTaskTime(currentTaskId, Date.now());
+              }
+              if (tasks[currentTaskId].status !== ChatTaskStatus.RUNNING) {
+                setStatus(currentTaskId, ChatTaskStatus.RUNNING);
+              }
+              if (tasks[currentTaskId].isPending) {
+                setIsPending(currentTaskId, false);
+              }
+            }
+
             if (
               agentMessages.data.toolkit_name === 'Browser Toolkit' &&
               agentMessages.data.method_name === 'browser visit page'

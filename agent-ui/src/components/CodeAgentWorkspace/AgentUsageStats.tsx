@@ -116,10 +116,6 @@ function FeedbackSummary() {
   }
   const total = up + down;
   const satisfaction = total > 0 ? Math.round((up / total) * 100) : null;
-  const recent = entries
-    .slice()
-    .sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
-    .slice(0, 12);
 
   return (
     <div className="mt-4">
@@ -158,27 +154,6 @@ function FeedbackSummary() {
                 />
                 {down}
               </span>
-              {recent.length > 0 && (
-                <span className="ml-auto flex items-center gap-0.5">
-                  {recent.map((e, i) =>
-                    e.rating === 'up' ? (
-                      <ThumbsUp
-                        key={i}
-                        size={12}
-                        aria-hidden
-                        className="text-ds-text-success-default-default"
-                      />
-                    ) : (
-                      <ThumbsDown
-                        key={i}
-                        size={12}
-                        aria-hidden
-                        className="text-ds-text-error-default-default"
-                      />
-                    )
-                  )}
-                </span>
-              )}
             </div>
           </>
         )}

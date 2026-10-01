@@ -16,9 +16,9 @@
 import useChatStoreAdapter from '@/hooks/useChatStoreAdapter';
 import { LiveReasoning } from './LiveReasoning';
 import { usePageTabStore } from '@/store/pageTabStore';
-import { useFeedbackStore } from '@/store/feedbackStore';
+import { useProjectRuntimeStore } from '@/store/projectRuntimeStore';
 import { AnimatePresence } from 'framer-motion';
-import { ThumbsDown, ThumbsUp } from 'lucide-react';
+import { X } from 'lucide-react';
 import React, {
   useCallback,
   useEffect,
@@ -29,6 +29,57 @@ import React, {
 import { PinnedPlanIndicator } from './MessageItem/PinnedPlanIndicator';
 import { ProjectSection } from './ProjectSection';
 
+/**
+ * Inline, in-thread acknowledgement for a follow-up the user sent while the
+ * agent was still working. The message is deferred (it runs as its own turn once
+ * the current one finishes), so it can't be inserted as a normal user bubble yet
+ * without stacking above the still-streaming response. Instead we render it here
+ * at the BOTTOM of the thread as a pending, right-aligned bubble — so the user
+ * unmistakably sees it was captured and will run next. It disappears when its
+ * turn actually starts (the `confirmed` handler clears the queued entry and the
+ * real user message takes over). Display-only entries have no `executionId`.
+ */
+function QueuedFollowups({ projectId }: { projectId: string }) {
+  const queued = useProjectRuntimeStore(
+    (s) => s.projects[projectId]?.queuedMessages
+  );
+  const removeQueuedMessage = useProjectRuntimeStore(
+    (s) => s.removeQueuedMessage
+  );
+  const pending = (queued || []).filter(
+    (m: any) => !m.executionId && m.content
+  );
+  if (pending.length === 0) return null;
+  return (
+    <div className="mt-2 flex flex-col gap-2">
+      {pending.map((m: any) => (
+        <div key={m.id ?? m.task_id} className="flex justify-end">
+          <div className="group relative max-w-[85%] rounded-2xl rounded-br-sm border border-dashed border-ds-border-neutral-default-default bg-ds-bg-neutral-muted-default px-3 py-2">
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <span className="flex items-center gap-1.5 text-label-xs font-medium text-ds-text-neutral-subtle-default">
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-ds-bg-status-running-default-default" />
+                Queued · runs after the current task
+              </span>
+              <button
+                type="button"
+                aria-label="Cancel queued message"
+                title="Cancel"
+                onClick={() => removeQueuedMessage(projectId, m.task_id)}
+                className="shrink-0 rounded p-0.5 text-ds-icon-neutral-subtle-default opacity-0 transition-opacity hover:text-ds-icon-neutral-default-default group-hover:opacity-100"
+              >
+                <X size={13} aria-hidden />
+              </button>
+            </div>
+            <div className="whitespace-pre-wrap break-words text-body-sm text-ds-text-neutral-default-default">
+              {m.content}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 interface ProjectChatContainerProps {
   className?: string;
   /** Scroll viewport lives in ChatBox (full width) so the scrollbar sits on the panel edge. */
@@ -37,83 +88,6 @@ interface ProjectChatContainerProps {
   scrollBottomInsetPx: number;
   onSkip: () => void;
   isPauseResumeLoading: boolean;
-}
-
-/** How long the thread feedback pill stays before it eases out (ms). */
-const FEEDBACK_PILL_VISIBLE_MS = 6000;
-const FEEDBACK_PILL_FADE_MS = 700;
-
-/**
- * Compact aggregate of the 👍/👎 the user has given agent answers, shown briefly
- * at the top of the conversation thread then eased out — a glance, not a fixture
- * (the persistent read-out lives in the Usage overview). Global tally (all
- * conversations), sourced from the feedback store. Hidden when nothing's rated.
- */
-function ThreadFeedbackSummary() {
-  const map = useFeedbackStore((s) => s.map);
-  const hydrate = useFeedbackStore((s) => s.hydrate);
-  const [phase, setPhase] = useState<'shown' | 'fading' | 'gone'>('shown');
-
-  useEffect(() => {
-    void hydrate();
-  }, [hydrate]);
-
-  // Show, then fade out and unmount so it never permanently occupies the top of
-  // the thread.
-  useEffect(() => {
-    const fade = setTimeout(() => setPhase('fading'), FEEDBACK_PILL_VISIBLE_MS);
-    const gone = setTimeout(
-      () => setPhase('gone'),
-      FEEDBACK_PILL_VISIBLE_MS + FEEDBACK_PILL_FADE_MS
-    );
-    return () => {
-      clearTimeout(fade);
-      clearTimeout(gone);
-    };
-  }, []);
-
-  let up = 0;
-  let down = 0;
-  for (const e of Object.values(map)) {
-    if (e.rating === 'up') up++;
-    else if (e.rating === 'down') down++;
-  }
-  const total = up + down;
-  if (total === 0 || phase === 'gone') return null;
-  const pct = Math.round((up / total) * 100);
-
-  return (
-    <div
-      className="mb-2 flex justify-center pt-2"
-      style={{
-        opacity: phase === 'fading' ? 0 : 1,
-        transition: `opacity ${FEEDBACK_PILL_FADE_MS}ms ease`,
-        pointerEvents: phase === 'fading' ? 'none' : undefined,
-      }}
-    >
-      <span className="inline-flex items-center gap-2 rounded-full border border-solid border-ds-border-neutral-subtle-default bg-ds-bg-neutral-muted-default px-2.5 py-0.5 text-label-xs text-ds-text-neutral-subtle-default">
-        <span className="font-semibold text-ds-text-neutral-default-default">
-          {pct}% positive
-        </span>
-        <span className="inline-flex items-center gap-0.5 tabular-nums">
-          <ThumbsUp
-            size={11}
-            aria-hidden
-            className="text-ds-text-success-default-default"
-          />
-          {up}
-        </span>
-        <span className="inline-flex items-center gap-0.5 tabular-nums">
-          <ThumbsDown
-            size={11}
-            aria-hidden
-            className="text-ds-text-error-default-default"
-          />
-          {down}
-        </span>
-      </span>
-    </div>
-  );
 }
 
 export const ProjectChatContainer: React.FC<ProjectChatContainerProps> = ({
@@ -439,8 +413,6 @@ export const ProjectChatContainer: React.FC<ProjectChatContainerProps> = ({
         className="mx-auto w-full max-w-[600px] pt-0"
         style={{ paddingBottom: scrollBottomInsetPx }}
       >
-        <ThreadFeedbackSummary />
-
         {/* ONE pinned plan/todo indicator, bound to the CURRENT (most recent)
             conversation's task — the last task section. Rendering it per-section
             pinned an OLDER task's plan over a newer conversation (the plan
@@ -472,6 +444,9 @@ export const ProjectChatContainer: React.FC<ProjectChatContainerProps> = ({
           })}
         </AnimatePresence>
         <LiveReasoning />
+        {activeProjectId ? (
+          <QueuedFollowups projectId={activeProjectId} />
+        ) : null}
       </div>
     </div>
   );

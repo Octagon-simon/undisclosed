@@ -22,14 +22,15 @@
  * request — `task.lastRequestTokens` — because the next request's prompt is
  * roughly that size plus the new turn.
  *
- * The window itself is resolved from the provider model catalog the Models
- * screen already cached in localStorage (`context_length` from the
- * OpenAI-compatible `/v1/models` listing). When we can't resolve the active
- * model (catalog not loaded, or a local runtime that omits it) we fall back to
- * 1,000,000, matching the vendor-window default the feature was specced around.
+ * The window itself is resolved from the user's OWN provider model catalog the
+ * Models screen cached in localStorage (`context_length` from each provider's
+ * OpenAI-compatible `/v1/models` listing) — BYOK/local, no hosted assumptions.
+ * When we can't resolve the active model (catalog not loaded, or a local runtime
+ * that omits `context_length`) we fall back to a generous default so the gauge
+ * simply doesn't nag.
  */
 
-/** Fallback window when the active model's `context_length` is unknown. */
+/** Generous fallback window when the active model's `context_length` is unknown. */
 export const DEFAULT_CONTEXT_WINDOW = 1_000_000;
 
 /** Fraction of the window at which we first nudge the user (500k on a 1M model). */
@@ -62,6 +63,40 @@ const normalizeId = (value: unknown): string =>
     .toLowerCase();
 
 /**
+ * Conservative fallback windows for well-known model FAMILIES, used only when
+ * the cached provider catalog can't resolve the model. Most OpenAI-compatible
+ * `/v1/models` endpoints (deepseek, anthropic, …) omit `context_length`, so
+ * without this the gauge would sit on the 1M default and never warn for a real
+ * 128k model. Matched by substring against the model id first, then the provider
+ * id. Values are deliberately on the LARGER side of each family so we under-warn
+ * rather than nag falsely; unknown models keep the 1M default. Easy to tune.
+ */
+const KNOWN_FAMILY_WINDOWS: Array<[RegExp, number]> = [
+  [/gemini/, 1_000_000],
+  [/claude|anthropic|sonnet|opus|haiku/, 200_000],
+  [/kimi|moonshot/, 200_000],
+  [/deepseek/, 128_000],
+  [/qwen|qwq|tongyi/, 131_072],
+  [/llama|nemotron|nvidia/, 128_000],
+  [/grok/, 131_072],
+  [/glm|z\.?ai/, 128_000],
+  [/gpt-5|gpt-4|gpt4|o1|o3|o4|codex|openai/, 128_000],
+  [/mistral|mixtral|codestral|magistral/, 128_000],
+];
+
+function windowFromKnownFamily(
+  modelId: string,
+  providerId?: string | null
+): number | null {
+  const hay = `${modelId} ${normalizeId(providerId)}`.trim();
+  if (!hay) return null;
+  for (const [pattern, window] of KNOWN_FAMILY_WINDOWS) {
+    if (pattern.test(hay)) return window;
+  }
+  return null;
+}
+
+/**
  * Catalog ids are often `provider/model` (e.g. `deepseek/deepseek-chat`) while
  * the runtime selection is the bare model (`deepseek-chat`). Match either
  * direction, and ignore a `:free`/`:tag` suffix.
@@ -76,43 +111,117 @@ function modelIdsMatch(catalogId: string, targetId: string): boolean {
   return false;
 }
 
+/** Find a matching model's context length within one cache entry's groups. */
+function windowFromGroups(groups: unknown, target: string): number | null {
+  if (!Array.isArray(groups)) return null;
+  for (const group of groups) {
+    const models = Array.isArray((group as { models?: unknown })?.models)
+      ? (group as { models: unknown[] }).models
+      : [];
+    for (const model of models) {
+      const length = Number((model as { contextLength?: unknown })?.contextLength);
+      if (
+        Number.isFinite(length) &&
+        length >= MIN_PLAUSIBLE_CONTEXT_LENGTH &&
+        modelIdsMatch((model as { id?: unknown })?.id as string, target)
+      ) {
+        return length;
+      }
+    }
+  }
+  return null;
+}
+
 /**
- * Resolve the active model's context window from the cached provider catalog.
- * Scans every cached provider group (the cache is keyed per provider id, not
- * per model) so we don't need to know which provider the model came from.
+ * Resolve a model's context window from the cached provider catalog
+ * (`context_length` the Models screen fetched from each provider's
+ * OpenAI-compatible `/v1/models`). This is BYOK/local-first: the window comes
+ * from the user's OWN configured provider, not any hosted default.
+ *
+ * Pass the selection's `providerId` (the provider catalog id === the pinned
+ * row's `model_platform`, e.g. `deepseek`) to resolve against THAT provider's
+ * cached models directly — the cache is keyed per provider, so this avoids a
+ * same-model-id collision across two providers with different windows. Without
+ * it we scan every cached provider group. When the model can't be resolved
+ * (Models screen never opened, or a local runtime that omits `context_length`)
+ * we fall back to a generous default so the gauge simply doesn't nag.
  */
-export function resolveContextWindow(modelId?: string | null): number {
+export function resolveContextWindow(
+  modelId?: string | null,
+  opts?: { providerId?: string | null }
+): number {
   const target = normalizeId(modelId);
   if (!target) return DEFAULT_CONTEXT_WINDOW;
 
   try {
     if (typeof localStorage === 'undefined') return DEFAULT_CONTEXT_WINDOW;
+
+    // 1. Exact provider scope when we know which provider the model is pinned to.
+    const providerId = String(opts?.providerId ?? '').trim();
+    if (providerId) {
+      const raw = localStorage.getItem(PROVIDER_MODELS_CACHE_PREFIX + providerId);
+      if (raw) {
+        const hit = windowFromGroups(JSON.parse(raw), target);
+        if (hit != null) return hit;
+      }
+    }
+
+    // 2. Fall back to scanning every cached provider group.
     for (let i = 0; i < localStorage.length; i += 1) {
       const key = localStorage.key(i);
       if (!key || !key.startsWith(PROVIDER_MODELS_CACHE_PREFIX)) continue;
       const raw = localStorage.getItem(key);
       if (!raw) continue;
-      const groups = JSON.parse(raw);
-      if (!Array.isArray(groups)) continue;
-      for (const group of groups) {
-        const models = Array.isArray(group?.models) ? group.models : [];
-        for (const model of models) {
-          const length = Number(model?.contextLength);
-          if (
-            Number.isFinite(length) &&
-            length >= MIN_PLAUSIBLE_CONTEXT_LENGTH &&
-            modelIdsMatch(model?.id, target)
-          ) {
-            return length;
-          }
-        }
-      }
+      const hit = windowFromGroups(JSON.parse(raw), target);
+      if (hit != null) return hit;
     }
   } catch {
-    // Malformed cache entry — fall through to the default window.
+    // Malformed cache entry — fall through below.
   }
 
+  // 3. Cache couldn't resolve it (provider omits context_length, or the Models
+  //    screen was never opened) — fall back to a known family window so the
+  //    gauge still works for common BYOK models, then the generous default.
+  const family = windowFromKnownFamily(target, opts?.providerId);
+  if (family != null) return family;
+
   return DEFAULT_CONTEXT_WINDOW;
+}
+
+/** Rough chars-per-token for a mixed code+prose transcript. */
+const CHARS_PER_TOKEN = 4;
+
+/**
+ * Estimate the live context size from the loaded conversation, for when the
+ * authoritative `lastRequestTokens` (reported by the Brain's request_usage event)
+ * isn't available — most importantly when a LONG conversation is REOPENED after a
+ * reload / brain restart: `lastRequestTokens` isn't persisted, so it resets to 0
+ * and the gauge would read empty even though the context is already large. This
+ * approximates the next request's input from the task's messages + tool I/O so
+ * the banner can warn immediately, before another big turn is spent. Superseded
+ * by the exact `lastRequestTokens` as soon as the next turn runs.
+ */
+export function estimateContextTokens(task: unknown): number {
+  const t = task as {
+    messages?: Array<{ content?: unknown; reasoning?: unknown }>;
+    taskAssigning?: Array<{ log?: Array<{ data?: { message?: unknown } }> }>;
+  } | null;
+  if (!t) return 0;
+  let chars = 0;
+  const add = (v: unknown) => {
+    if (typeof v === 'string') chars += v.length;
+  };
+  for (const m of t.messages ?? []) {
+    add(m?.content);
+    add(m?.reasoning);
+  }
+  // Tool call inputs/outputs usually dominate the context — include them.
+  for (const agent of t.taskAssigning ?? []) {
+    for (const entry of agent?.log ?? []) {
+      add(entry?.data?.message);
+    }
+  }
+  return Math.ceil(chars / CHARS_PER_TOKEN);
 }
 
 /** Classify how full the window is for the latest request. */
