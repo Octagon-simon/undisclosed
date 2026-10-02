@@ -51,7 +51,7 @@
     }
   },
   "theiaPluginsDir": "plugins",
-  "_theiaPlugins_note": "VS Code builtin extensions, pinned to 1.95.3 (the version open-vsx hosts under the `vscode` namespace for Theia 1.60). Only LANGUAGE-FEATURES (LSP) are added for languages undisclosed-languages already registers (ts/tsx/js/css/html) to avoid double language registration; the `vscode.json` grammar IS added because undisclosed-languages does not register json/jsonc. Run `npm run download:plugins` (network) before build.",
+  "_theiaPlugins_note": "VS Code builtin extensions, pinned to 1.95.3 (the version open-vsx hosts under the `vscode` namespace for Theia 1.60). Only LANGUAGE-FEATURES (LSP) are added for languages undisclosed-languages already registers (ts/tsx/js/css/html) to avoid double language registration; the `vscode.json` grammar IS added because undisclosed-languages does not register json/jsonc. Prettier is pinned to 11.0.3, its last CommonJS release: 12.x is `\"type\": \"module\"` and the Theia 1.60 plugin host (Electron 30 / Node 20) require()s extension entries, so ESM builds fail on activation with ERR_REQUIRE_ESM. Run `npm run download:plugins` (network) before build.",
   "theiaPlugins": {
     "vscode.typescript-language-features": "https://open-vsx.org/api/vscode/typescript-language-features/1.95.3/file/vscode.typescript-language-features-1.95.3.vsix",
     "vscode.css-language-features": "https://open-vsx.org/api/vscode/css-language-features/1.95.3/file/vscode.css-language-features-1.95.3.vsix",
@@ -61,7 +61,7 @@
     "vscode.emmet": "https://open-vsx.org/api/vscode/emmet/1.95.3/file/vscode.emmet-1.95.3.vsix",
     "vscode.markdown-language-features": "https://open-vsx.org/api/vscode/markdown-language-features/1.95.3/file/vscode.markdown-language-features-1.95.3.vsix",
     "vscode.markdown-math": "https://open-vsx.org/api/vscode/markdown-math/1.95.3/file/vscode.markdown-math-1.95.3.vsix",
-    "esbenp.prettier-vscode": "https://open-vsx.org/api/esbenp/prettier-vscode/12.4.0/file/esbenp.prettier-vscode-12.4.0.vsix",
+    "esbenp.prettier-vscode": "https://open-vsx.org/api/esbenp/prettier-vscode/11.0.3/file/esbenp.prettier-vscode-11.0.3.vsix",
     "dbaeumer.vscode-eslint": "https://open-vsx.org/api/dbaeumer/vscode-eslint/3.0.34/file/dbaeumer.vscode-eslint-3.0.34.vsix"
   },
   "dependencies": {
