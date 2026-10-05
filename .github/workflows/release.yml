@@ -42,7 +42,15 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest # x64
-          - os: windows-latest # x64
+          # Pin Windows to the 2022 image (VS 2022 toolchain). Do NOT use
+          # windows-latest: its image now ships Visual Studio 18, which the
+          # bundled node-gyp 9.4.1 cannot parse. It reports
+          #   find VS unknown version "undefined" found at
+          #     "C:\Program Files\Microsoft Visual Studio\18\Enterprise"
+          #   find VS could not find a version of Visual Studio 2017 or newer
+          # and @theia/ffmpeg's binding.gyp (win-ffmpeg.c) build dies with
+          # "Could not find any Visual Studio installation to use".
+          - os: windows-2022 # x64
           - os: macos-15 # Apple Silicon (arm64)
           - os: macos-15-intel # Intel (x64)
     env:
@@ -57,11 +65,6 @@ jobs:
       # ships Electron, not Chromium). Skip it to remove a network failure point.
       PUPPETEER_SKIP_DOWNLOAD: "true"
       PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: "true"
-      # @theia/ffmpeg compiles a small N-API addon (binding.gyp) during `npm ci`.
-      # On Windows node-gyp auto-detects the VS toolchain and can miss it, failing
-      # with "Could not find any Visual Studio installation to use". The runner has
-      # VS 2022, so pin it explicitly (ignored on non-Windows).
-      npm_config_msvs_version: "2022"
     steps:
       - uses: actions/checkout@v4
 

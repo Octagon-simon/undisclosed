@@ -67,3 +67,8 @@ linux:
     - AppImage
     - deb
   category: Development
+  # The .deb target requires a maintainer. Without one electron-builder fails
+  # with "Please specify author 'email' in the application package.json" at the
+  # packaging step (the AppImage still builds; the deb does not). Set it here
+  # rather than inventing an email in the npm author field.
+  maintainer: Simon Ugorji <ugorji757@gmail.com>
