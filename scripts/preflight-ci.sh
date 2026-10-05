@@ -101,6 +101,9 @@ if [ "$FULL" = 1 ]; then
   run "download VS Code plugins (bounded)" bash "$ROOT/scripts/ci-download-plugins.sh"
   run_in "apps/desktop" "build Theia app" npm run build
   if [ "$PACKAGE" = 1 ]; then
+    # Match CI: electron-builder hardlinks on CI and EEXISTs when a destination is
+    # written twice (builder-util). Real copies overwrite instead.
+    export USE_HARD_LINKS=false
     run_in "apps/desktop" "package (electron-builder --dir)" npm run package:dir
   fi
 else

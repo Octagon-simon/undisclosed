@@ -146,6 +146,11 @@ jobs:
           npm_config_python: ${{ steps.python.outputs.python-path }}
           # Unsigned builds: don't try to auto-discover a Developer ID identity.
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          # electron-builder hardlinks files on CI and throws EEXIST when the same
+          # destination is written twice (builder-util fs.js fs.link()s unless
+          # USE_HARD_LINKS=false). Real copies overwrite instead. This is what
+          # failed the Intel macOS package step on @babel/runtime/LICENSE.
+          USE_HARD_LINKS: "false"
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
