@@ -72,3 +72,11 @@ linux:
   # packaging step (the AppImage still builds; the deb does not). Set it here
   # rather than inventing an email in the npm author field.
   maintainer: Simon Ugorji <ugorji757@gmail.com>
+  # apps/desktop's npm name is the scoped "@undisclosed/desktop". electron-builder
+  # derives the deb file path from ${name}, so it tried to write
+  #   dist/@undisclosed/desktop_0.0.7_amd64.deb
+  # and fpm aborted with
+  #   "Parent directory does not exist: .../dist/@undisclosed"
+  # (and the deb would also have missed the upload-artifact dist/*.deb glob).
+  # Force a flat, unscoped artifact name.
+  artifactName: "${productName}-${version}-${arch}.${ext}"
