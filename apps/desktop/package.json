@@ -5,6 +5,10 @@
   "description": "Undisclosed desktop app — an Electron Theia shell that hosts the editor + agent and spawns the Python brain sidecar.",
   "license": "Apache-2.0",
   "author": "Simon Ugorji",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Octagon-simon/undisclosed.git"
+  },
   "main": "electron-entry.js",
   "engines": {
     "node": ">=18 <=20"

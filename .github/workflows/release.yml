@@ -57,6 +57,11 @@ jobs:
       # ships Electron, not Chromium). Skip it to remove a network failure point.
       PUPPETEER_SKIP_DOWNLOAD: "true"
       PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: "true"
+      # @theia/ffmpeg compiles a small N-API addon (binding.gyp) during `npm ci`.
+      # On Windows node-gyp auto-detects the VS toolchain and can miss it, failing
+      # with "Could not find any Visual Studio installation to use". The runner has
+      # VS 2022, so pin it explicitly (ignored on non-Windows).
+      npm_config_msvs_version: "2022"
     steps:
       - uses: actions/checkout@v4
 
@@ -79,6 +84,17 @@ jobs:
         uses: astral-sh/setup-uv@v5
       - name: Build brain binary
         run: npm run dist:brain
+
+      # 1b) Linux native build deps. `native-keymap` (a @theia/core dependency)
+      #     compiles from source on install and its binding.gyp shells out to
+      #     pkg-config for X11/xkbfile. The Ubuntu runner lacks those headers, so
+      #     `npm install` in apps/desktop dies with
+      #     "Package 'x11', required by 'virtual:world', not found".
+      - name: Install Linux native build deps (X11/xkbfile for native-keymap)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxkbfile-dev libsecret-1-dev
 
       # 2) Root deps. These also supply tsc (via @theia/cli) used to compile the
       #    packages/* Theia extensions during the desktop build.

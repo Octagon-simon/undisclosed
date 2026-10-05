@@ -49,6 +49,7 @@ apps/desktop/node_modules/
 apps/desktop/lib/
 apps/desktop/src-gen/
 apps/desktop/dist/
+apps/desktop/dist-fresh/
 apps/desktop/.theia/
 apps/desktop/gen-webpack*.js
 brain/dist/
