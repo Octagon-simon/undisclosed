@@ -269,7 +269,7 @@ Notable groups:
 | Agent panel shows a proxy/api error when adding a model | The `/api` proxy must target the **brain** (`:5001`), not a legacy `:3001` cloud proxy. In dev run via `scripts/dev.sh` (sets the target) or in `.env` set `UNDISCLOSED_PROXY_TARGET=http://127.0.0.1:5001`. |
 | Brain won't start | Ctrl+C a prior `uv run ...` may leave `uv_installing.lock`/`uv_installed.lock` in `brain/` - delete them, then `./scripts/brain.sh setup`. |
 | Packaged app is unsigned on macOS | Right-click → Open, or `xattr -cr /Applications/Undisclosed.app`. See `docs/PACKAGING.md` for signing/notarization. |
-| CI hangs forever at `collecting extension dependencies` | `theia download:plugins` fetches from open-vsx with no socket timeout, so a stalled connection never returns. CI downloads via `scripts/ci-download-plugins.sh` (per-attempt timeout + retries + plugin cache); reproduce locally with `bash scripts/ci-download-plugins.sh`. |
+| CI hangs forever at `collecting extension dependencies` | `theia download:plugins` talks to open-vsx over sockets with no timeout, and its "already downloaded - skipping" lines don't stop it running (or hanging) anyway. CI uses `scripts/ci-download-plugins.sh`: it skips the tool entirely when the pinned plugins are already present, bounds each attempt with a hard cap, and stops the tool as soon as the plugins verify. Reproduce locally with `bash scripts/ci-download-plugins.sh`. |
 
 On the browser side you can run the whole stack from one terminal with
 `./scripts/dev.sh`, which manages the brain + editor together (and defaults the proxy

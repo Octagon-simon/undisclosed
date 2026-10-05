@@ -109,13 +109,21 @@ jobs:
           npm_config_python: ${{ steps.python.outputs.python-path }}
 
       # 5) The pinned VS Code extensions are byte-identical on every OS, so cache
-      #    them across runners. A cache hit makes the next step a no-op (no network),
-      #    which is what actually fixes the Intel runaway. See the script header.
+      #    them across runners. The key hashes ONLY the `theiaPlugins` map, so
+      #    unrelated package.json edits don't churn the cache. On a hit the step
+      #    below is a ~2s no-op with zero network; on a miss it downloads and
+      #    re-caches. See the script header for why that matters.
+      - name: Compute VS Code plugins cache key
+        id: plugins_cache
+        shell: bash
+        run: |
+          hash="$(node -e "const p=require('./apps/desktop/package.json');const c=require('crypto');process.stdout.write(c.createHash('sha256').update(JSON.stringify(p.theiaPlugins||{})).digest('hex').slice(0,16))")"
+          echo "key=theia-plugins-$hash" >> "$GITHUB_OUTPUT"
       - name: Restore VS Code plugins cache
         uses: actions/cache@v4
         with:
           path: apps/desktop/plugins
-          key: theia-plugins-${{ hashFiles('apps/desktop/package.json') }}
+          key: ${{ steps.plugins_cache.outputs.key }}
           restore-keys: theia-plugins-
       - name: Download VS Code plugins (bounded)
         shell: bash
