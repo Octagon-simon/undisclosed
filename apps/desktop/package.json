@@ -1,7 +1,7 @@
 {
   "private": true,
   "name": "@undisclosed/desktop",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Undisclosed desktop app — an Electron Theia shell that hosts the editor + agent and spawns the Python brain sidecar.",
   "license": "Apache-2.0",
   "author": "Simon Ugorji",
@@ -22,16 +22,33 @@
           "window.titleBarStyle": "native",
           "window.menuBarVisibility": "classic",
           "terminal.integrated.profiles.osx": {
-            "zsh": { "path": "zsh" },
-            "zsh (login)": { "path": "zsh", "args": ["-l"] },
-            "bash": { "path": "bash" },
-            "sh": { "path": "sh" }
+            "zsh": {
+              "path": "zsh"
+            },
+            "zsh (login)": {
+              "path": "zsh",
+              "args": [
+                "-l"
+              ]
+            },
+            "bash": {
+              "path": "bash"
+            },
+            "sh": {
+              "path": "sh"
+            }
           },
           "terminal.integrated.defaultProfile.osx": "zsh",
           "terminal.integrated.profiles.linux": {
-            "bash": { "path": "bash" },
-            "zsh": { "path": "zsh" },
-            "sh": { "path": "sh" }
+            "bash": {
+              "path": "bash"
+            },
+            "zsh": {
+              "path": "zsh"
+            },
+            "sh": {
+              "path": "sh"
+            }
           },
           "terminal.integrated.defaultProfile.linux": "bash",
           "workbench.colorCustomizations": {

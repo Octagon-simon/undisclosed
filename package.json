@@ -1,7 +1,7 @@
 {
   "private": true,
   "name": "undisclosed",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Undisclosed's editor-first shell, built as a custom Eclipse Theia product. The code editor is the primary surface; Undisclosed's agent + features are added as native Theia contributions (Antigravity model).",
   "license": "Apache-2.0",
   "engines": {
@@ -18,16 +18,33 @@
           "workbench.startupEditor": "none",
           "files.enableTrash": false,
           "terminal.integrated.profiles.osx": {
-            "zsh": { "path": "zsh" },
-            "zsh (login)": { "path": "zsh", "args": ["-l"] },
-            "bash": { "path": "bash" },
-            "sh": { "path": "sh" }
+            "zsh": {
+              "path": "zsh"
+            },
+            "zsh (login)": {
+              "path": "zsh",
+              "args": [
+                "-l"
+              ]
+            },
+            "bash": {
+              "path": "bash"
+            },
+            "sh": {
+              "path": "sh"
+            }
           },
           "terminal.integrated.defaultProfile.osx": "zsh",
           "terminal.integrated.profiles.linux": {
-            "bash": { "path": "bash" },
-            "zsh": { "path": "zsh" },
-            "sh": { "path": "sh" }
+            "bash": {
+              "path": "bash"
+            },
+            "zsh": {
+              "path": "zsh"
+            },
+            "sh": {
+              "path": "sh"
+            }
           },
           "terminal.integrated.defaultProfile.linux": "bash",
           "workbench.colorCustomizations": {
