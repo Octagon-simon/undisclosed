@@ -122,13 +122,16 @@
     "clean": "theia clean",
     "download:plugins": "theia download:plugins",
     "build:packages": "npm --prefix ../../packages/undisclosed-agent run build && npm --prefix ../../packages/undisclosed-import run build && npm --prefix ../../packages/undisclosed-languages run build",
-    "build": "npm run build:packages && npm run download:plugins && theia build --mode production",
+    "build:theia": "theia build --mode production",
+    "build": "npm run build:packages && npm run build:theia",
     "watch": "theia build --watch --mode development",
     "start": "theia start",
     "rebuild": "theia rebuild:electron",
-    "dist": "npm run rebuild && npm run build && electron-builder --publish never -c electron-builder.yml",
-    "dist:mac": "npm run rebuild && npm run build && electron-builder --publish never -c electron-builder.yml --mac dmg zip",
-    "dist:win": "npm run rebuild && npm run build && electron-builder --publish never -c electron-builder.yml --win nsis",
-    "dist:linux": "npm run rebuild && npm run build && electron-builder --publish never -c electron-builder.yml --linux AppImage deb"
+    "package": "electron-builder --publish never -c electron-builder.yml",
+    "package:dir": "electron-builder --dir --publish never -c electron-builder.yml",
+    "dist": "npm run rebuild && npm run download:plugins && npm run build && npm run package",
+    "dist:mac": "npm run rebuild && npm run download:plugins && npm run build && npm run package -- --mac dmg zip",
+    "dist:win": "npm run rebuild && npm run download:plugins && npm run build && npm run package -- --win nsis",
+    "dist:linux": "npm run rebuild && npm run download:plugins && npm run build && npm run package -- --linux AppImage deb"
   }
 }

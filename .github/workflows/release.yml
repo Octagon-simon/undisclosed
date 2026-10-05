@@ -15,6 +15,9 @@
 # tags, so CI does NOT rebuild agent-ui here: its locally patched @stackframe/react
 # copy is gitignored and not reproducible from a clean checkout. CI only verifies
 # the committed bundle is present.
+#
+# Run `scripts/preflight-ci.sh --full` before tagging to reproduce these steps
+# locally and avoid burning a CI run.
 name: Release
 
 on:
@@ -29,6 +32,11 @@ jobs:
   package:
     name: package (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    # `theia download:plugins` resolves extension packs over sockets with no
+    # timeout; on the Intel macOS runner it once wedged for 1h30m+ (its log stopped
+    # at "collecting extension dependencies"). The download step below is bounded,
+    # but cap the whole job too so a wedged step fails in minutes, not hours.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -40,6 +48,15 @@ jobs:
     env:
       # Don't install git hooks on CI (husky runs on `npm ci` via `prepare`).
       HUSKY: "0"
+      # Authenticated GitHub requests for postinstall downloads. @vscode/ripgrep
+      # pulls its prebuilt binary from GitHub releases during install; unauthenticated
+      # requests share the runner IP's rate limit and fail intermittently (a very
+      # likely cause of the "Install root deps" failures on windows/macos).
+      GITHUB_TOKEN: ${{ github.token }}
+      # Puppeteer's Chromium download is large, flaky, and unneeded here (the app
+      # ships Electron, not Chromium). Skip it to remove a network failure point.
+      PUPPETEER_SKIP_DOWNLOAD: "true"
+      PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: "true"
     steps:
       - uses: actions/checkout@v4
 
@@ -91,10 +108,30 @@ jobs:
         env:
           npm_config_python: ${{ steps.python.outputs.python-path }}
 
-      # 5) Build the Electron Theia app + package installers for THIS runner's OS
+      # 5) The pinned VS Code extensions are byte-identical on every OS, so cache
+      #    them across runners. A cache hit makes the next step a no-op (no network),
+      #    which is what actually fixes the Intel runaway. See the script header.
+      - name: Restore VS Code plugins cache
+        uses: actions/cache@v4
+        with:
+          path: apps/desktop/plugins
+          key: theia-plugins-${{ hashFiles('apps/desktop/package.json') }}
+          restore-keys: theia-plugins-
+      - name: Download VS Code plugins (bounded)
+        shell: bash
+        run: bash ../../scripts/ci-download-plugins.sh
+        working-directory: apps/desktop
+
+      # 6) Build the Electron Theia app (build:packages + theia build — no plugin
+      #    download in here anymore) then package installers for THIS runner's OS
       #    and architecture (targets + arch come from electron-builder.yml).
+      - name: Build Theia app
+        run: npm run build
+        working-directory: apps/desktop
+        env:
+          npm_config_python: ${{ steps.python.outputs.python-path }}
       - name: Package installers
-        run: npm run dist
+        run: npm run package
         working-directory: apps/desktop
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

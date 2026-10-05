@@ -183,6 +183,18 @@ Full details + troubleshooting: **[docs/PACKAGING.md](docs/PACKAGING.md)**.
 Releases are **tag-driven**: CI builds installers on native runners and attaches them to
 a GitHub Release.
 
+Before tagging, reproduce CI locally so a broken lockfile / plugin download / build fails
+here instead of burning a CI run:
+
+```bash
+./scripts/preflight-ci.sh --full            # real install + rebuild + build + plugin download
+./scripts/preflight-ci.sh --full --package  # ...and package (electron-builder --dir)
+./scripts/preflight-ci.sh                   # fast: workflow YAML + lockfile sync + syntax only
+```
+
+`--full` runs the real install/build on THIS machine (host platform only), so it can't see
+Windows/Linux-only problems. Then release:
+
 ```bash
 npm run release [patch|minor|major]
 ```
@@ -257,6 +269,7 @@ Notable groups:
 | Agent panel shows a proxy/api error when adding a model | The `/api` proxy must target the **brain** (`:5001`), not a legacy `:3001` cloud proxy. In dev run via `scripts/dev.sh` (sets the target) or in `.env` set `UNDISCLOSED_PROXY_TARGET=http://127.0.0.1:5001`. |
 | Brain won't start | Ctrl+C a prior `uv run ...` may leave `uv_installing.lock`/`uv_installed.lock` in `brain/` - delete them, then `./scripts/brain.sh setup`. |
 | Packaged app is unsigned on macOS | Right-click → Open, or `xattr -cr /Applications/Undisclosed.app`. See `docs/PACKAGING.md` for signing/notarization. |
+| CI hangs forever at `collecting extension dependencies` | `theia download:plugins` fetches from open-vsx with no socket timeout, so a stalled connection never returns. CI downloads via `scripts/ci-download-plugins.sh` (per-attempt timeout + retries + plugin cache); reproduce locally with `bash scripts/ci-download-plugins.sh`. |
 
 On the browser side you can run the whole stack from one terminal with
 `./scripts/dev.sh`, which manages the brain + editor together (and defaults the proxy
