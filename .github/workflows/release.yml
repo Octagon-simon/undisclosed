@@ -6,9 +6,15 @@
 #   npm run release [patch|minor|major]
 # Or run manually from the Actions tab (build-only, no Release).
 #
-# PREREQUISITE: the Electron app at apps/desktop (docs/PACKAGING.md, Step 1) must
-# exist with dist:* scripts + electron-builder.yml. Until then the "Package
-# installers" step no-ops — the pipeline is committed so the path is ready.
+# macOS ships for BOTH architectures: macos-15 is Apple Silicon (arm64) and
+# macos-15-intel is Intel (x64). Each runner packages the host arch, so the native
+# modules (node-pty, ripgrep, ...) are rebuilt for the right CPU.
+#
+# The agent-embed bundle (packages/undisclosed-agent/assets/agent-embed/) is
+# committed to the repo and regenerated locally by scripts/release.sh before it
+# tags, so CI does NOT rebuild agent-ui here: its locally patched @stackframe/react
+# copy is gitignored and not reproducible from a clean checkout. CI only verifies
+# the committed bundle is present.
 name: Release
 
 on:
@@ -26,11 +32,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macOS disabled until Developer ID signing/notarization is set up
-        # (unsigned mac builds hit a Gatekeeper block). Swap it back in — and add
-        # CSC_LINK / APPLE_* secrets — once that's done.
-        os: [ubuntu-latest, windows-latest]
-        # os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest # x64
+          - os: windows-latest # x64
+          - os: macos-15 # Apple Silicon (arm64)
+          - os: macos-15-intel # Intel (x64)
+    env:
+      # Don't install git hooks on CI (husky runs on `npm ci` via `prepare`).
+      HUSKY: "0"
     steps:
       - uses: actions/checkout@v4
 
@@ -38,7 +47,12 @@ jobs:
         with:
           node-version: 20
           cache: npm
-      - uses: actions/setup-python@v5
+      # node-gyp needs a distutils-capable Python (repo .npmrc pins
+      # /usr/bin/python3, which only exists on macOS). Expose the 3.11 interpreter
+      # and point npm at it via npm_config_python on the install steps below.
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        id: python
         with:
           python-version: "3.11"
 
@@ -49,26 +63,44 @@ jobs:
       - name: Build brain binary
         run: npm run dist:brain
 
-      # 2) Build the agent embed + sync it into the agent extension's assets.
-      - run: npm ci
-      - name: Build agent embed
-        run: npm run dist:prepare
+      # 2) Root deps. These also supply tsc (via @theia/cli) used to compile the
+      #    packages/* Theia extensions during the desktop build.
+      - name: Install root deps
+        run: npm ci
+        env:
+          npm_config_python: ${{ steps.python.outputs.python-path }}
 
-      # 3) Install the desktop app's own deps (Electron, @theia/electron, the
+      # 3) The agent-embed bundle ships from the repo (see header). Guard against a
+      #    release tagged with it missing rather than silently rebuilding it.
+      - name: Verify committed agent bundle
+        shell: bash
+        run: |
+          test -s packages/undisclosed-agent/assets/agent-embed/agent-embed.umd.js
+          test -s packages/undisclosed-agent/assets/agent-embed/style.css
+
+      # 4) Install the desktop app's own deps (Electron, @theia/electron, the
       #    extensions) and rebuild native modules for Electron.
       - name: Install desktop app
         run: npm install
         working-directory: apps/desktop
+        env:
+          npm_config_python: ${{ steps.python.outputs.python-path }}
       - name: Rebuild native modules for Electron
         run: npm run rebuild
         working-directory: apps/desktop
+        env:
+          npm_config_python: ${{ steps.python.outputs.python-path }}
 
-      # 4) Build the Electron Theia app + package installers.
+      # 5) Build the Electron Theia app + package installers for THIS runner's OS
+      #    and architecture (targets + arch come from electron-builder.yml).
       - name: Package installers
         run: npm run dist
         working-directory: apps/desktop
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          npm_config_python: ${{ steps.python.outputs.python-path }}
+          # Unsigned builds: don't try to auto-discover a Developer ID identity.
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4

@@ -81,48 +81,67 @@ variable is optional - the app runs with sane defaults (see [Environment variabl
 
 ## Quick start (development)
 
-Run the brain in the background (it auto-restarts), then start the editor. You need a
-**workspace folder** open for the agent to act on.
+From a fresh clone you need three things: **Node 20**, **Python 3.11**, and **uv**
+(see [Prerequisites](#prerequisites)). You also need a **workspace folder** open for the
+agent to act on.
+
+**0. Point at a model (optional).** Copy the sample env and add any keys you want. Every
+variable is optional and the app runs with sane defaults:
+
+```bash
+cp .env.sample .env
+```
 
 **1. Start the brain** (agent backend, `:5001`):
 
 ```bash
-./scripts/brain.sh setup      # once — provisions brain/.venv via uv
+./scripts/brain.sh setup      # once - provisions brain/.venv via uv
 ./scripts/brain.sh start      # start (or: restart | stop | logs | status)
 ```
 
-**2. Build the agent UI bundle** and sync it into the editor extension (needed once,
-or after UI changes in `agent-ui/`):
+**2. Install, build and start the editor** (Theia, `:3000`):
 
 ```bash
-npm run build:agent-ui
+nvm use 20                    # Node 20 (.nvmrc); Theia's native modules need it
+npm install                   # root deps (Theia + the file: packages/*)
+npm run build                 # compile packages/* then bundle the editor (dev mode)
+npm start                     # -> http://127.0.0.1:3000
 ```
 
-**3. Install, build & start the editor** (Theia, `:3000`):
+`npm run build` first compiles the three `packages/*` Theia extensions with `tsc`
+(`build:packages`) and then bundles the editor. Both matter: the extensions' `lib/`
+output is gitignored, so a fresh clone has nothing for Theia to load until you build
+them. Open `http://127.0.0.1:3000`, open a workspace folder, add a model in the agent
+panel's **Models** UI, then talk to the agent.
+
+> The agent panel's UI bundle is **committed** to the repo
+> (`packages/undisclosed-agent/assets/agent-embed/`), so a normal dev build needs
+> nothing from `agent-ui/`. Rebuild it only when you are editing the agent UI (below).
+
+Prefer one command? `./scripts/dev.sh start` brings up the brain and the editor
+together, and `./scripts/dev.sh rebuild` does a full refresh (it pins Node 20 for you).
+
+### Working on the agent UI
+
+The editor's agent panel is `agent-ui/` (React + Vite). For component work use
+**Storybook** (hot reload, no editor rebuild):
 
 ```bash
-nvm use 20
-npm install
-npm run build                 # webpack the frontend + generate the backend
-npm start                     # → http://127.0.0.1:3000
+cd agent-ui && npm install && npm run storybook   # -> http://localhost:6006
 ```
 
-Open `http://127.0.0.1:3000` and open a workspace folder. Add a model (providers can be
-configured in the agent panel's Models UI), then talk to the agent.
-
-> **Tip:** after `npm install`, also run `npm install` inside each `packages/*` (
-> `undisclosed-agent`, `undisclosed-languages`, `undisclosed-import`) and `tsc` them if
-> the extension sources changed. The package.json at root wires these as
-> `file:` dependencies, but watch/watch-free rebuild still needs them built once.
-
-### Faster inner loop for the agent UI
-
-Rebuilding the whole Theia editor to see one UI change is slow. For component work use
-**Storybook** (hot reload, no rebuild):
+To rebuild the embed bundle that the editor ships, and refresh the committed copy:
 
 ```bash
-cd agent-ui && npm run storybook   # → http://localhost:6006
+npm run build:agent-ui   # vite build -> packages/undisclosed-agent/assets/agent-embed/
 ```
+
+> `agent-ui/` uses a locally patched `@stackframe/react` at
+> `agent-ui/package/@stackframe/react`. That directory is gitignored, so it is **not**
+> in a fresh clone and `npm install` inside `agent-ui/` fails until it is restored.
+> The committed embed bundle is exactly why a normal editor dev build does not need it.
+> `scripts/release.sh` runs `npm run build:agent-ui` as its pre-tag gate on a machine
+> that has the patch.
 
 ### Debugging
 
@@ -168,9 +187,12 @@ a GitHub Release.
 npm run release [patch|minor|major]
 ```
 
-This gates on a build, bumps the version, commits, tags `vX.Y.Z`, and pushes. The
-workflow (`.github/workflows/release.yml`) does the rest. **macOS is disabled in CI**
-until code-signing is configured - build it locally instead (above). The app id /
+This gates on `npm run build:agent-ui`, bumps the version, commits, tags `vX.Y.Z`, and
+pushes. The workflow (`.github/workflows/release.yml`) then builds on native runners
+(Linux `AppImage`/`deb`, Windows `nsis`, and **macOS for both Apple Silicon and Intel**
+via `macos-15` + `macos-15-intel`) and attaches the installers to the Release. macOS
+builds are **unsigned**: fine for self-install (right-click -> Open), but they warn
+under Gatekeeper until Developer ID signing/notarization is configured. The app id /
 product name / copyright used by packaging live in `apps/desktop/electron-builder.yml`.
 
 ---

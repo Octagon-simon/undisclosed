@@ -15,7 +15,8 @@ Actions on every release tag.
 
 ## 0. Build & install locally (macOS self-install)
 
-CI does **not** release macOS (unsigned builds hit Gatekeeper), but you can build
+CI builds macOS for both Apple Silicon (`macos-15`) and Intel (`macos-15-intel`), but
+the installers are **unsigned** (Gatekeeper warns on first open). You can also build
 an installable `.dmg` on your own Mac. Two toolchain requirements — Theia's
 native modules are picky:
 

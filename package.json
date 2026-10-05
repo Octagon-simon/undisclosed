@@ -109,8 +109,10 @@
   "scripts": {
     "clean": "theia clean",
     "download:plugins": "theia download:plugins",
-    "build": "npm run download:plugins && theia build --mode development",
-    "build:prod": "npm run download:plugins && theia build --mode production",
+    "build": "npm run build:packages && npm run download:plugins && theia build --mode development",
+    "build:prod": "npm run build:packages && npm run download:plugins && theia build --mode production",
+    "build:packages": "npm --prefix packages/undisclosed-agent run build && npm --prefix packages/undisclosed-import run build && npm --prefix packages/undisclosed-languages run build",
+    "setup": "npm install && npm run build:packages",
     "start": "THEIA_DEFAULT_PLUGINS=local-dir:plugins THEIA_WEBVIEW_EXTERNAL_ENDPOINT='{{hostname}}' theia start --hostname 0.0.0.0 --port 3000",
     "watch": "theia build --watch --mode development",
     "build:agent-ui": "npm --prefix agent-ui run build:agent-embed && npm run sync:agent-bundle",
