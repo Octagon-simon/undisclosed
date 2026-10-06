@@ -33,6 +33,18 @@ files:
   - "!**/*.ts"
   - "!**/*.map"
 
+# electron-builder prunes any directory ending in `node_modules` from the app
+# files (see app-builder-lib/out/util/AppFileWalker.js:createAppFilter) unless
+# this is set. Some VS Code extensions keep a runtime dependency OUT of their
+# webpack bundle and require() it at activation from their own node_modules:
+# esbenp.prettier-vscode does `require("prettier")` from dist/extension.js, and
+# the vsix ships it at extension/node_modules/prettier. Without this the packaged
+# app activates the plugin and throws "Cannot find module 'prettier'" (the dir is
+# simply absent under Resources/app/plugins/.../extension/node_modules).
+# Files inside those node_modules still have to match a positive `files` pattern
+# (here `plugins/**`), so the app's own top-level node_modules is NOT swept in.
+includeSubNodeModules: true
+
 # The frozen Python brain (scripts/build-brain.sh → brain/dist/undisclosed-brain
 # or .exe). BrainLauncher resolves it at <resources>/brain/ in the packaged app.
 extraResources:

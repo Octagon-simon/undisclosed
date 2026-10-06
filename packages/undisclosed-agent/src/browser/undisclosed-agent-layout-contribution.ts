@@ -107,12 +107,14 @@ export class UndisclosedAgentLayoutContribution
     this.injectHeaderStyles();
     this.injectActivityBarStyles();
     this.injectBottomPanelStyles();
+    this.injectExtensionsListStyles();
   }
 
   onStart(): void {
     this.injectHeaderStyles();
     this.injectActivityBarStyles();
     this.injectBottomPanelStyles();
+    this.injectExtensionsListStyles();
     this.setupViewGuard();
   }
 
@@ -120,6 +122,7 @@ export class UndisclosedAgentLayoutContribution
     this.injectHeaderStyles();
     this.injectActivityBarStyles();
     this.injectBottomPanelStyles();
+    this.injectExtensionsListStyles();
     this.removeViews();
     this.setupViewGuard();
     // Layout restore can re-add a view a tick later; sweep once more. Also pin
@@ -606,6 +609,55 @@ export class UndisclosedAgentLayoutContribution
       }
       #theia-bottom-content-panel .lm-TabBar-tab.lm-mod-closable .lm-TabBar-tabCloseIcon:hover {
         opacity: 1 !important;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  /**
+   * Keep each VSX extension row's Install/Uninstall action on-screen when the
+   * publisher name is long (e.g. Cherry Markdown).
+   *
+   * A row's action bar (@theia/vsx-registry) is a flex row with
+   * `justify-content: space-between`:
+   *   [verified icon + publisher name]  ...  [action button(s)]
+   * The publisher span carries `.noWrapInfo` (which does ellipsize), but as a
+   * flex item it keeps the default `min-width: auto`, so its min-content width
+   * is the full, unbreakable publisher name. That inflates the publisher cell
+   * and `space-between` pushes the Install button past the right edge, so it
+   * only reappears once the panel is widened. Let the publisher cell shrink and
+   * ellipsize, and pin the action(s) so the NAME truncates instead of the
+   * button disappearing. (The package `style/` file is not loaded by Theia
+   * 1.60, so this lives here with the other injected shell styles.)
+   */
+  private injectExtensionsListStyles(): void {
+    if (typeof document === 'undefined') {
+      return;
+    }
+    const styleId = 'undisclosed-extensions-list-style';
+    if (document.getElementById(styleId)) {
+      return;
+    }
+    const style = document.createElement('style');
+    style.id = styleId;
+    style.textContent = `
+      .theia-vsx-extension-action-bar .theia-vsx-extension-publisher-container {
+        flex: 1 1 auto !important;
+        min-width: 0 !important;
+        overflow: hidden !important;
+      }
+      .theia-vsx-extension-action-bar .theia-vsx-extension-publisher-container .codicon {
+        flex: 0 0 auto !important;
+      }
+      .theia-vsx-extension-action-bar .theia-vsx-extension-publisher {
+        flex: 1 1 auto !important;
+        min-width: 0 !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+      }
+      .theia-vsx-extension-action-bar .action {
+        flex-shrink: 0 !important;
       }
     `;
     document.head.appendChild(style);
