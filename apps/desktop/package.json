@@ -1,7 +1,7 @@
 {
   "private": true,
   "name": "@undisclosed/desktop",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "description": "Undisclosed desktop app — an Electron Theia shell that hosts the editor + agent and spawns the Python brain sidecar.",
   "license": "Apache-2.0",
   "author": "Simon Ugorji",
