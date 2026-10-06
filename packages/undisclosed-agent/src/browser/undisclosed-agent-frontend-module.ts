@@ -22,6 +22,7 @@ import { TerminalWidget } from '@theia/terminal/lib/browser/base/terminal-widget
 import { PersistentTerminalWidget } from './persistent-terminal-widget';
 import { UndisclosedWelcomeWidget } from './undisclosed-welcome-widget';
 import { UndisclosedWelcomeContribution } from './undisclosed-welcome-contribution';
+import { UndisclosedExplorerAutoRevealContribution } from './undisclosed-explorer-auto-reveal-contribution';
 import { MenusContributionPointHandler } from '@theia/plugin-ext/lib/main/browser/menus/menus-contribution-handler';
 import { UndisclosedMenusContributionHandler } from './vscode-git-ui-suppressor';
 
@@ -84,6 +85,14 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
   bind(UndisclosedWelcomeContribution).toSelf().inSingletonScope();
   bind(FrontendApplicationContribution).toService(
     UndisclosedWelcomeContribution
+  );
+
+  // Re-sync the Explorer with the active editor on every tab click, including a
+  // re-click of the already-active tab (the stock navigator only reacts to
+  // current-widget *changes*). See undisclosed-explorer-auto-reveal-contribution.ts.
+  bind(UndisclosedExplorerAutoRevealContribution).toSelf().inSingletonScope();
+  bind(FrontendApplicationContribution).toService(
+    UndisclosedExplorerAutoRevealContribution
   );
 
   // Extra git commands (Undo Last Commit, unstage/discard all) + AI commit
