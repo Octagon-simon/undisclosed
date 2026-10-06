@@ -109,6 +109,7 @@
     "@theia/vsx-registry": "1.60.0",
     "@theia/workspace": "1.60.0",
     "undisclosed-agent": "file:../../packages/undisclosed-agent",
+    "undisclosed-git": "file:../../packages/undisclosed-git",
     "undisclosed-import": "file:../../packages/undisclosed-import",
     "undisclosed-languages": "file:../../packages/undisclosed-languages",
     "lodash": "^4.18.1"
@@ -125,7 +126,7 @@
   "scripts": {
     "clean": "theia clean",
     "download:plugins": "theia download:plugins",
-    "build:packages": "npm --prefix ../../packages/undisclosed-agent run build && npm --prefix ../../packages/undisclosed-import run build && npm --prefix ../../packages/undisclosed-languages run build",
+    "build:packages": "npm --prefix ../../packages/undisclosed-agent run build && npm --prefix ../../packages/undisclosed-git run build && npm --prefix ../../packages/undisclosed-import run build && npm --prefix ../../packages/undisclosed-languages run build",
     "build:theia": "theia build --mode production",
     "build": "npm run build:packages && npm run build:theia",
     "watch": "theia build --watch --mode development",

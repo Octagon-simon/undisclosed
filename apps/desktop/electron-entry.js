@@ -147,11 +147,12 @@ try {
   //     holds the task. /health can still answer 200 in this state, which is why
   //     a pure health probe is not enough.
   //
-  // So on 'resume' we decide whether to (re)start the brain, wait for it to
-  // answer, then reload every window so Theia restores layout/editors and the
-  // agent panel reattaches against a clean brain. In the packaged app the
-  // supervisor is the backend's BrainLauncher; in dev it is scripts/brain.sh.
-  // Both respawn the brain when it exits, so killing the listener is enough.
+  // So on 'resume' we first probe /health. Only if the brain is UNRESPONSIVE do
+  // we recycle it, wait for it to answer, then reload every window so the agent
+  // panel reattaches. A HEALTHY brain (the common lock/sleep case) is KEPT and
+  // the windows are NOT reloaded, so in-memory conversation state survives. In
+  // the packaged app the supervisor is the backend's BrainLauncher; in dev it is
+  // scripts/brain.sh. Both respawn the brain when it exits.
   //
   // Opt out with UNDISCLOSED_DISABLE_RESUME_RECOVERY=1.
   const BRAIN_PORT = Number(process.env.UNDISCLOSED_BRAIN_PORT || 5001);
@@ -164,15 +165,22 @@ try {
   const recoveryDisabled =
     process.env.UNDISCLOSED_DISABLE_RESUME_RECOVERY === '1';
 
-  // Whether to force a fresh brain on wake even when /health still answers:
-  //   auto (default): restart when the brain is unresponsive OR we were asleep
-  //                   at least UNDISCLOSED_RESUME_FORCE_RESTART_SLEEP_MS.
+  // Whether to recycle the brain on wake even when /health still answers:
+  //   auto (default): restart ONLY when the brain is unresponsive on /health.
+  //                   A HEALTHY brain is kept across a lock/sleep regardless of
+  //                   how long we were out.
   //   always / never: override.
   const FORCE_RESTART = (
     process.env.UNDISCLOSED_RESUME_FORCE_BRAIN_RESTART || 'auto'
   ).toLowerCase();
+  // Duration-based force restart. 0 (default) = DISABLED: a healthy brain is KEPT
+  // for any sleep length. A positive value recycles the brain (and reloads the
+  // editor) when we were asleep at least that many ms EVEN IF /health answers —
+  // useful only if you distrust a long-slept brain. The old default (60000)
+  // recycled brain + editor on every lock longer than a minute, which is what
+  // dropped in-memory conversations after a lock/sleep.
   const FORCE_RESTART_SLEEP_MS = Number(
-    process.env.UNDISCLOSED_RESUME_FORCE_RESTART_SLEEP_MS || 60000
+    process.env.UNDISCLOSED_RESUME_FORCE_RESTART_SLEEP_MS ?? 0
   );
 
   // Backstop watchdog. A wedged-but-listening brain never exits, so neither the
@@ -400,7 +408,9 @@ try {
       FORCE_RESTART === 'always' ||
       (FORCE_RESTART !== 'never' &&
         (!healthy ||
-          (sleptMs > 0 && sleptMs >= FORCE_RESTART_SLEEP_MS)));
+          (FORCE_RESTART_SLEEP_MS > 0 &&
+            sleptMs > 0 &&
+            sleptMs >= FORCE_RESTART_SLEEP_MS)));
 
     if (force) {
       // A brain that slept can still answer /health while its outbound sockets
@@ -482,6 +492,17 @@ try {
       const sleptMs = sleepStartedAt ? Date.now() - sleepStartedAt : 0;
       sleepStartedAt = 0;
       void recoverAfterWake(sleptMs);
+    });
+    // A screen LOCK is not a suspend: RAM is retained, sockets survive and the
+    // brain keeps running, so there is nothing to recover. These listeners are
+    // deliberately NO-OPS (they only log) — a lock must never restart the brain
+    // or reload the editor. (A lock that also sleeps the display still surfaces
+    // as suspend/resume, which recoverAfterWake now health-gates.)
+    electron.powerMonitor.on('lock-screen', () => {
+      logLine('screen locked — no recovery (editor + brain stay up)');
+    });
+    electron.powerMonitor.on('unlock-screen', () => {
+      logLine('screen unlocked — no recovery (editor + brain stay up)');
     });
     logLine('sleep/wake recovery armed');
   };

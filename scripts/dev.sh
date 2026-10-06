@@ -49,14 +49,51 @@ is_up() { curl -s -o /dev/null -w "%{http_code}" "http://localhost:$PORT" 2>/dev
 # the Theia server that's actually listening.
 port_pids() { lsof -nP -iTCP:"$PORT" -sTCP:LISTEN -t 2>/dev/null || true; }
 
+# Recursively list every descendant pid of $1 (children first as we unwind).
+# Theia forks its plugin host out of the backend, and that plugin host forks
+# the language servers (tsserver, yaml/eslint/json LS, phptools, ...). A hard
+# kill of the listener (:3000) leaves all of them orphaned — they keep running
+# forever. Over many restarts they pile up and exhaust memory, which is what
+# produces the "Plugin runtime crashed unexpectedly / not enough memory" toast.
+descendants() {
+  local pid="$1" child
+  for child in $(pgrep -P "$pid" 2>/dev/null); do
+    descendants "$child"
+    echo "$child"
+  done
+}
+
+kill_tree() {
+  local pid="$1" d
+  d="$(descendants "$pid")"
+  [ -n "$d" ] && echo "$d" | xargs kill -9 2>/dev/null || true
+  kill -9 "$pid" 2>/dev/null || true
+}
+
+# Reap plugin hosts that an earlier hard-killed backend left behind. Scoped to
+# THIS repo's build output so the packaged Undisclosed.app (a separate process
+# tree under /Applications) is never touched.
+reap_orphan_plugin_hosts() {
+  local hosts d n
+  hosts="$(pgrep -f "$ROOT/lib/backend/plugin-host" 2>/dev/null || true)"
+  [ -z "$hosts" ] && { echo "no orphaned plugin hosts"; return 0; }
+  d="$(for h in $hosts; do descendants "$h"; done | sort -u)"
+  [ -n "$d" ] && echo "$d" | xargs kill -9 2>/dev/null || true
+  echo "$hosts" | xargs kill -9 2>/dev/null || true
+  n="$(echo "$d" | grep -c . || true)"
+  echo "reaped $(echo "$hosts" | wc -l | tr -d ' ') orphaned plugin host(s) + $n language server(s)"
+}
+
 stop() {
   local pids
   pids="$(port_pids)"
   if [ -n "$pids" ]; then
     echo "stopping server on :$PORT (pids: $pids)"
-    echo "$pids" | xargs kill -9 2>/dev/null || true
+    local pid
+    for pid in $pids; do kill_tree "$pid"; done
     sleep 1
   fi
+  reap_orphan_plugin_hosts
   if [ -z "$(port_pids)" ]; then echo "port $PORT: free"; else echo "port $PORT: still busy ($(port_pids | tr '\n' ' '))"; fi
   "$BRAIN_SH" stop || true
 }

@@ -25,6 +25,8 @@ import { UndisclosedWelcomeContribution } from './undisclosed-welcome-contributi
 import { UndisclosedExplorerAutoRevealContribution } from './undisclosed-explorer-auto-reveal-contribution';
 import { MenusContributionPointHandler } from '@theia/plugin-ext/lib/main/browser/menus/menus-contribution-handler';
 import { UndisclosedMenusContributionHandler } from './vscode-git-ui-suppressor';
+import { WebviewEnvironment } from '@theia/plugin-ext/lib/main/browser/webview/webview-environment';
+import { UndisclosedWebviewEnvironment } from './undisclosed-webview-environment';
 
 /**
  * Frontend DI module (referenced by `theiaExtensions` in package.json). Binds
@@ -54,6 +56,13 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
   // Our frontend module loads after @theia/plugin-ext, so this rebind wins.
   rebind(MenusContributionPointHandler)
     .to(UndisclosedMenusContributionHandler)
+    .inSingletonScope();
+
+  // Webview resource URLs lose the empty-authority separator under the stock
+  // @theia/plugin-ext URI.resolve(), 404ing every webview asset (pets render a
+  // blue fallback). Bind the concat-based subclass so the '//' survives.
+  rebind(WebviewEnvironment)
+    .to(UndisclosedWebviewEnvironment)
     .inSingletonScope();
 
   bindViewContribution(bind, UndisclosedAgentContribution);
