@@ -1,7 +1,9 @@
 # Theia Overrides Register
 
-Status: **register drafted 2026-10-06. Guards (startup assertion, audit script) are
-planned but not implemented yet; they belong on the upgrade branch, not `main`.**
+Status: **updated 2026-10-06 for the Theia 1.76 upgrade.** `@theia/git` was removed
+upstream, so **B4 and B12 are retired** and **B7 was reworked** onto the built-in
+`vscode.git` extension (see the rows, and "Theia 1.76 migration" below). The guards
+(startup assertion, audit script) are still planned, not implemented.
 Owner: Simon Ugorji
 Related: `docs/plans/theia-upgrade-plan.md` (the 1.60.0 -> 1.76.0 plan),
 `docs/features/webview-blue-background.md` (the defect behind B1).
@@ -16,6 +18,26 @@ what behavior we change, and how to prove it still works after a bump.
 
 Read this first when you upgrade Theia. If a row's upstream symbol moved, that row
 is the bug you are about to hit.
+
+## Theia 1.76 migration (2026-10-06)
+
+- **`@theia/git` was removed** (last publish 1.60.2; npm-deprecated: "use the built-in
+  VS Code Git extension"). Source Control is now the bundled `vscode.git` extension.
+  - **B4 retired:** the `MenusContributionPointHandler` suppressor would now blank
+    Source Control (no `@theia/git` left to dedupe against).
+  - **B7 reworked:** git runs through a new backend `POST /undisclosed-agent/git/exec`;
+    the commit box is read from `ScmService` (`selectedRepository.input`).
+  - **B12 retired:** the `GitScmProvider.getUriToOpen` patch targeted `@theia/git`; the
+    `undisclosed-git` package is now an empty stub. Re-verify the staged-file save.
+- **`@theia/scm-extra` was removed** (final 1.74.1); we only depended on it.
+- **webpack -> esbuild** (Theia 1.75): B13 moved from `webpack.config.js` to
+  `esbuild.mjs` as an `onEnd` plugin.
+- **React 19**: `@types/react`/`@types/react-dom` ^19 are now an *optional* peer of
+  `@theia/core` and must be supplied by the app; `.tsx` uses a default React import.
+- **Path moves**: B5 `navigator-preferences` -> `@theia/navigator/lib/common/...`;
+  `PreferenceScope` / `PreferenceService` -> `@theia/core/lib/common/preferences/*`.
+
+See `docs/plans/theia-upgrade-plan.md` section 11 for the full list.
 
 ## How to use it
 
@@ -33,16 +55,16 @@ is the bug you are about to hit.
 | B1 | `WebviewEnvironment` (singleton) | `src/browser/undisclosed-webview-environment.ts` | `@theia/plugin-ext/lib/main/browser/webview/webview-environment` | Rebuilds the `theia-resource/...` template by string concatenation so the `//` before `{{authority}}` survives `URI.resolve()`. Without it every webview resource 404s (pets, media preview). | Deep import path; `resourceRoot(host)` signature; whether the rebind still wins after module ordering. |
 | B2 | `SidePanelHandler` | `src/browser/undisclosed-side-panel-handler.ts` | `@theia/core/lib/browser/shell/side-panel-handler` | `refresh()` override keeps the RIGHT tab strip hidden. | Reads protected internals `tabBar.parent`, `topMenu`, `bottomMenu`, `additionalViewsMenu`, `container`, `dockPanel`; the `side` field. Any rename/retype breaks the override at compile time. |
 | B3 | `TerminalWidget` (transient) | `src/browser/persistent-terminal-widget.ts` | `@theia/terminal/lib/browser/terminal-widget-impl` (`TerminalWidgetImpl`) + `xterm-addon-serialize` | Serializes the terminal buffer on close and replays it after reload. | **Highest risk.** Terminal internals and the `xterm` -> `@xterm/*` package split both move in this window. `SerializeAddon` may no longer resolve. |
-| B4 | `MenusContributionPointHandler` (singleton) | `src/browser/vscode-git-ui-suppressor.ts` | `@theia/plugin-ext/lib/main/browser/menus/menus-contribution-handler` | Keeps the `vscode.git` API but withholds its Source Control menu items so it stops duplicating `@theia/git`. | Deep import; handler method signatures and menu registration flow; load-order dependency (ours must load after plugin-ext). |
-| B5 | `FileNavigatorContribution` (injected, not rebound) | `src/browser/undisclosed-explorer-auto-reveal-contribution.ts` | `@theia/navigator/lib/browser/navigator-contribution`, `navigator-preferences`, Lumino `TabBar.tabActivateRequested` | Re-reveals the Explorer file when the already-active tab is clicked again. | Injected service may be renamed/split; navigator internals; Lumino version (shared `@lumino/widgets`); private preference access is brittle. |
+| B4 | ~~`MenusContributionPointHandler`~~ **RETIRED in 1.76** | ~~`src/browser/vscode-git-ui-suppressor.ts`~~ (deleted) | ~~`@theia/plugin-ext/.../menus-contribution-handler`~~ | Obsolete: `@theia/git` was removed in 1.76, so the built-in `vscode.git` extension *is* the Source Control provider. The suppressor would now blank Source Control, so the rebind was removed. | None — retired. Re-add only if a duplicate SCM provider ever reappears. |
+| B5 | `FileNavigatorContribution` (injected, not rebound) | `src/browser/undisclosed-explorer-auto-reveal-contribution.ts` | `@theia/navigator/lib/browser/navigator-contribution`, `@theia/navigator/lib/common/navigator-preferences` (moved out of `lib/browser` in 1.76), Lumino `TabBar.tabActivateRequested` | Re-reveals the Explorer file when the already-active tab is clicked again. | Injected service may be renamed/split; navigator internals; Lumino version (shared `@lumino/widgets`); private preference access is brittle. |
 | B6 | Native media preview opener | `undisclosed-languages/src/browser/media-preview/media-preview-open-handler.ts` + `media-preview-widget.ts` | `@theia/core/lib/browser/widget-open-handler` (`WidgetOpenHandler`), `OpenHandler`, `EditorManager` priority | Opens image/audio/video in our own widget with priority above the `vscode.media-preview` builtin (~400). | `WidgetOpenHandler` / `WidgetOpenerOptions` API drift; opener priority semantics; overlap with `EditorManager`'s default opener. |
-| B7 | Git extras | `src/browser/git-extras-contribution.ts` | `@theia/git` `Git`, `GitRepositoryProvider`; `@theia/scm` `ScmService`, `ScmWidget`; `TabBarToolbarContribution` | Adds Undo Last Commit, stage/discard-all, and the AI commit-message button. | `ScmService` / `ScmWidget` signatures; menu/toolbar contribution APIs. |
+| B7 | Git extras | `src/browser/git-extras-contribution.ts` | `@theia/scm` `ScmService` (`selectedRepository.provider.rootUri` + `.input`), `ScmWidget`; `TabBarToolbarContribution`; local backend `POST /undisclosed-agent/git/exec` (**@theia/git removed in 1.76**) | Adds Undo Last Commit, stage/discard-all, and the AI commit-message button. | `ScmService` / `ScmWidget` signatures; menu/toolbar contribution APIs. |
 | B8 | Agent panel + welcome + layout | `src/browser/undisclosed-agent-widget.tsx`, `undisclosed-welcome-*.ts(x)`, `undisclosed-agent-layout-contribution.ts` | `@theia/core` shell, `bindViewContribution`, `FrontendApplicationContribution`, Lumino shell layout | The agent panel, branded welcome, bottom-panel expand button, first-boot layout. | `FrontendApplicationContribution` lifecycle; `ApplicationShell` layout APIs. |
-| B9 | Monaco language + editor pin | `undisclosed-languages/src/browser/undisclosed-languages-contribution.ts` | `@theia/monaco`, `@theia/monaco-editor-core` (pinned 1.96.302) | Monarch tokenizers against Theia's Monaco; ships the media preview. | `monaco-editor-core` pin must be re-aligned to 1.76's Monaco or we risk type/runtime errors and a double Monaco. |
+| B9 | Monaco language + editor pin | `undisclosed-languages/src/browser/undisclosed-languages-contribution.ts` | `@theia/monaco`, `@theia/monaco-editor-core` (re-pinned to **1.108.201** for 1.76) | Monarch tokenizers against Theia's Monaco; ships the media preview. | `monaco-editor-core` pin must be re-aligned to 1.76's Monaco or we risk type/runtime errors and a double Monaco. |
 | B10 | VS Code builtins + import-from-VS Code | `apps/desktop` `theiaPlugins`, `undisclosed-import` | `@theia/vsx-registry`, plugin host | Bundled language features pinned to 1.95.3; Prettier pinned to 11.0.3 (last CJS release). | Theia 1.76's plugin API target may require a newer builtin set; the Prettier CJS constraint may change. |
 | B11 | Backend brain lifecycle | `src/browser/undisclosed-agent-backend-module.ts` (`BrainLauncher`), `src/electron-main/brain-teardown.ts` | `@theia/core` backend `BackendApplicationContribution`, `@theia/core` electron-main | Spawns/tears down the Python brain; caps restarts at 10. | Backend contribution API; Electron main API changes (Electron 30 -> 42). |
 
-| B12 | `GitScmProvider.getUriToOpen` (method swap on the factory output) | `packages/undisclosed-git/src/browser/writable-git-scm-provider.ts` | `@theia/git/lib/browser/git-scm-provider`, `@theia/git/lib/browser/git-frontend-module` (`createGitScmProviderFactory`), `git-resource` | Staged changes open the writable working-tree file on the right of the diff instead of a read-only `gitrev:` blob, so `Cmd+S` actually saves. | Deep import; `createGitScmProviderFactory` must still exist and still return a wrappable provider; `getUriToOpen` / `GitFileChange` signatures; load order (ours after `@theia/git`). |
+| B12 | ~~`GitScmProvider.getUriToOpen` patch~~ **RETIRED in 1.76** | ~~`packages/undisclosed-git/src/browser/writable-git-scm-provider.ts`~~ (deleted; package is now an empty stub) | ~~`@theia/git/...`~~ | Obsolete: it patched `@theia/git`, which 1.76 removed. Source Control is now `vscode.git`, which opens the working-tree file directly. Re-verify the staged-save test (section 7) on 1.76; re-populate the stub only if it regresses. | n/a — retired; pending the B12 runtime check. |
 | B13 | Webview default stylesheet (`body { padding: 0 20px }`) | `webpack.config.js` + `apps/desktop/webpack.config.js` (`applyWebviewFullWidth`) | `@theia/plugin-ext/src/main/browser/webview/pre/main.js` (`defaultCssRules`), copied to `lib/webview/pre` by `gen-webpack.config.js` | Theia injects `padding: 0 20px` into every webview; a webview that sizes to `width:100%` (Capibara Pet `#stage`) renders 40px narrower than its panel. We rewrite the declaration during the build's copy step so the content is full width. **Global: changes every webview, not just pets.** | Not a DI rebind, so it fails *silently*: it depends on the copy `from` path ending `webview/pre` and on the literal `padding: 0 20px;`. If either moves, the transform no-ops and the build still succeeds. |
 
 ### Mechanism risk shared by B1, B4 and B12

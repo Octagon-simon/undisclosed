@@ -8,6 +8,7 @@ lib/
 src-gen/
 .browser_modules/
 gen-webpack*.js
+gen-esbuild*.mjs
 .theia/
 plugins/
 *.log
@@ -52,6 +53,7 @@ apps/desktop/dist/
 apps/desktop/dist-fresh/
 apps/desktop/.theia/
 apps/desktop/gen-webpack*.js
+apps/desktop/gen-esbuild*.mjs
 brain/dist/
 brain/build/
 brain/*.spec

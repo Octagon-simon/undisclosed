@@ -141,11 +141,11 @@ function resolveAssetsDir(): string {
  * an upstream body (GETs are unaffected).
  */
 export default new ContainerModule((bind) => {
-  // NOTE: We deliberately do NOT prune the VS Code git built-ins
-  // (vscode.git / vscode.git-base) here. They stay deployed and active so that
-  // extensions consuming `vscode.git`'s API (e.g. GitLens) keep working; their
-  // duplicate Source Control UI is suppressed on the frontend instead. See
-  // ../browser/vscode-git-ui-suppressor.ts.
+  // NOTE: The VS Code git built-ins (vscode.git / vscode.git-base) are a
+  // first-class part of the app now: Theia 1.76 removed `@theia/git`, so
+  // `vscode.git` IS the Source Control provider. They are pinned in
+  // `theiaPlugins` and must NOT be pruned. (The old frontend menu suppressor,
+  // B4, was retired — it would blank Source Control.)
 
   // Spawn the frozen Python brain in a packaged desktop app (no-op in dev).
   bind(BrainLauncher).toSelf().inSingletonScope();
@@ -228,6 +228,71 @@ export default new ContainerModule((bind) => {
               res as unknown as http.ServerResponse,
               { target: PROXY_TARGET, agent: BRAIN_PROXY_AGENT }
             );
+          }
+        );
+
+        // Run a whitelisted `git` subcommand in a working dir and return its
+        // output. Used by the frontend git-extras (Undo Last Commit,
+        // unstage/discard all, AI commit message) now that Theia 1.76 removed
+        // the `@theia/git` service and Source Control is served by the built-in
+        // `vscode.git` extension. The subcommand whitelist keeps this endpoint
+        // from becoming a generic process runner.
+        const GIT_SUBCOMMANDS = new Set([
+          'diff',
+          'reset',
+          'checkout',
+          'status',
+          'rev-parse',
+          'log',
+        ]);
+        app.post(
+          '/undisclosed-agent/git/exec',
+          express.json({ limit: '5mb' }),
+          (req: express.Request, res: express.Response) => {
+            const body = (req.body ?? {}) as { cwd?: unknown; args?: unknown };
+            const rawArgs = Array.isArray(body.args) ? body.args : undefined;
+            const args = rawArgs?.filter(
+              (a): a is string => typeof a === 'string'
+            );
+            const cwd = typeof body.cwd === 'string' ? body.cwd : undefined;
+            if (
+              !cwd ||
+              !args ||
+              args.length === 0 ||
+              args.length !== rawArgs?.length
+            ) {
+              res
+                .status(400)
+                .json({ error: 'expected { cwd: string, args: string[] }' });
+              return;
+            }
+            if (!GIT_SUBCOMMANDS.has(args[0])) {
+              res
+                .status(400)
+                .json({ error: `git subcommand not allowed: ${args[0]}` });
+              return;
+            }
+            let child: ReturnType<typeof spawn>;
+            try {
+              child = spawn('git', args, { cwd });
+            } catch (err) {
+              res.status(500).json({ error: (err as Error).message });
+              return;
+            }
+            let stdout = '';
+            let stderr = '';
+            child.stdout?.on('data', (d) => (stdout += d.toString()));
+            child.stderr?.on('data', (d) => (stderr += d.toString()));
+            child.on('error', (err) => {
+              if (!res.headersSent) {
+                res.status(500).json({ error: err.message });
+              }
+            });
+            child.on('close', (code) => {
+              if (!res.headersSent) {
+                res.json({ stdout, stderr, exitCode: code });
+              }
+            });
           }
         );
 

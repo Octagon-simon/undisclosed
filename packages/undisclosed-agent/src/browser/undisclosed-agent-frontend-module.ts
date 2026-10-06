@@ -23,8 +23,6 @@ import { PersistentTerminalWidget } from './persistent-terminal-widget';
 import { UndisclosedWelcomeWidget } from './undisclosed-welcome-widget';
 import { UndisclosedWelcomeContribution } from './undisclosed-welcome-contribution';
 import { UndisclosedExplorerAutoRevealContribution } from './undisclosed-explorer-auto-reveal-contribution';
-import { MenusContributionPointHandler } from '@theia/plugin-ext/lib/main/browser/menus/menus-contribution-handler';
-import { UndisclosedMenusContributionHandler } from './vscode-git-ui-suppressor';
 import { WebviewEnvironment } from '@theia/plugin-ext/lib/main/browser/webview/webview-environment';
 import { UndisclosedWebviewEnvironment } from './undisclosed-webview-environment';
 
@@ -49,14 +47,11 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
   // degrades to a normal terminal if the addon fails, so this is non-breaking.
   rebind(TerminalWidget).to(PersistentTerminalWidget).inTransientScope();
 
-  // "Keep the API, kill the duplicate UI." The VS Code git built-ins stay
-  // deployed (so `vscode.git`'s API remains available to GitLens et al.), but
-  // their Source Control menu contributions are withheld so they stop
-  // duplicating @theia/git's inline actions. See vscode-git-ui-suppressor.ts.
-  // Our frontend module loads after @theia/plugin-ext, so this rebind wins.
-  rebind(MenusContributionPointHandler)
-    .to(UndisclosedMenusContributionHandler)
-    .inSingletonScope();
+  // NOTE (Theia 1.76): the Source Control UI is now served by the built-in
+  // `vscode.git` extension (upstream removed `@theia/git`). The previous
+  // `MenusContributionPointHandler` rebind that suppressed vscode.git's SCM
+  // menus to avoid duplicating @theia/git has been retired — suppressing them
+  // now would remove Source Control entirely. Its API stays available as-is.
 
   // Webview resource URLs lose the empty-authority separator under the stock
   // @theia/plugin-ext URI.resolve(), 404ing every webview asset (pets render a

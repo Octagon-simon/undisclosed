@@ -472,3 +472,52 @@ for this one. Land them on the upgrade branch after Phase 7 passes, so they are
 written against the 1.76 surfaces they must protect. F6 is the other way around:
 it belongs to the plugin-host crash investigation, not the upgrade, so it is
 tracked here only so the offer is not lost.
+
+---
+
+## 11. Execution notes (2026-10-06, on `upgrade/theia-1.76`)
+
+Landed: branch + tag `pre-theia-1.76-upgrade`; Node 24 (`.nvmrc`, both `engines`,
+CI `release.yml`, `scripts/dev.sh`); `@theia/*` -> 1.76.0 everywhere;
+`@theia/monaco-editor-core` -> 1.108.201; Electron 42.8.1; both `npm install`s
+green on Node 24; all four extension packages `tsc`-clean; root browser
+`theia build` green.
+
+Breaking changes the plan did **not** anticipate:
+
+1. **`@theia/git` and `@theia/scm-extra` are gone.** `@theia/git`'s last publish is
+   1.60.2 (npm-deprecated: "use the built-in VS Code Git extension");
+   `@theia/scm-extra` stops at 1.74.1. Source Control is now the bundled
+   `vscode.git` extension. This forced: **B4 retired** (its menu suppressor would
+   blank Source Control), **B7 reworked** (git runs via a backend
+   `POST /undisclosed-agent/git/exec`; the commit box is read from `ScmService`),
+   and **B12 retired** (the `GitScmProvider` patch is obsolete, pending the
+   staged-save runtime check).
+2. **webpack was removed in Theia 1.75; the build is esbuild now.** `theia build`
+   generates `gen-esbuild.*.mjs` + `esbuild.mjs` and ignores `webpack.config.js`.
+   B13 (webview full-width) was ported from `webpack.config.js` into `esbuild.mjs`
+   as an `onEnd` plugin; the webpack configs are deleted. Verified: the built
+   `lib/webview/pre/main.js` now contains `padding: 0;`.
+3. **Theia 1.76 uses React 19, and `@theia/core` ships `@types/react` only as an
+   *optional* peer.** The app must supply it: added `@types/react` +
+   `@types/react-dom` ^19 to the root (and the agent package) devDependencies. The
+   `@theia/core/shared/react` wrapper is now `export =`, so `.tsx` must
+   default-import React (`import React from '@theia/core/shared/react'`).
+4. **The `@vscode/ripgrep` override must go.** The old `1.15.9` pin blocked
+   `@theia/file-search`/`@theia/search-in-workspace`'s `^1.18.0`, and the new
+   `@theia/bundle-plugin` esbuild step needs the platform package
+   `@vscode/ripgrep-<platform>-<arch>` (the 1.18 layout). Override removed.
+5. **`@theia/monaco-editor-core` must be a direct dependency** so it hoists to the
+   app's top-level `node_modules` (the generated esbuild entry imports it by bare
+   specifier). Added `1.108.201` to root + `apps/desktop` dependencies.
+6. **`yargs` must be >=16 at the app root.** The generated `gen-esbuild.*.mjs`
+   imports `yargs/helpers`; a transitive `yargs@15` hoisted to the root broke it.
+   Added `yargs` `^17.7.3` to the root devDependencies.
+7. **API moves that broke our code:**
+   `@theia/navigator/lib/browser/navigator-preferences` ->
+   `lib/common/navigator-preferences` (B5); `PreferenceScope` / `PreferenceService`
+   -> `@theia/core/lib/common/preferences/*` (import extension).
+
+Still to do: Phase 6 desktop package build; Phase 7 binding verification
+(especially B7's `ScmService` -> `vscode.git` binding, B12 staged-save, B3 terminal
+serialize, B1 webview); Phase 8 plugin set; Phase 9 docs.

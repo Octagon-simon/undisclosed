@@ -70,7 +70,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
       # node-gyp needs a distutils-capable Python (repo .npmrc pins
       # /usr/bin/python3, which only exists on macOS). Expose the 3.11 interpreter

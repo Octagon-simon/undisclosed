@@ -32,7 +32,8 @@ import {
 } from '@theia/core/lib/browser';
 import { TabBar, Widget } from '@theia/core/shared/@lumino/widgets';
 import { FileNavigatorContribution } from '@theia/navigator/lib/browser/navigator-contribution';
-import { FileNavigatorPreferences } from '@theia/navigator/lib/browser/navigator-preferences';
+// Theia 1.76 moved the preference symbol from lib/browser to lib/common.
+import { FileNavigatorPreferences } from '@theia/navigator/lib/common/navigator-preferences';
 
 /**
  * Reveals the file backing a tab in the Explorer whenever that tab is clicked,
