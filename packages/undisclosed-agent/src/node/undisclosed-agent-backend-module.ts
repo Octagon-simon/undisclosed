@@ -141,6 +141,12 @@ function resolveAssetsDir(): string {
  * an upstream body (GETs are unaffected).
  */
 export default new ContainerModule((bind) => {
+  // NOTE: We deliberately do NOT prune the VS Code git built-ins
+  // (vscode.git / vscode.git-base) here. They stay deployed and active so that
+  // extensions consuming `vscode.git`'s API (e.g. GitLens) keep working; their
+  // duplicate Source Control UI is suppressed on the frontend instead. See
+  // ../browser/vscode-git-ui-suppressor.ts.
+
   // Spawn the frozen Python brain in a packaged desktop app (no-op in dev).
   bind(BrainLauncher).toSelf().inSingletonScope();
   bind(BackendApplicationContribution).toService(BrainLauncher);

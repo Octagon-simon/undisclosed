@@ -135,7 +135,7 @@ export class UndisclosedWelcomeWidget extends ReactWidget {
         <div style={row}>
           <button
             style={primaryBtn}
-            onClick={() => this.run(WorkspaceCommands.OPEN_WORKSPACE.id)}
+            onClick={() => this.run(WorkspaceCommands.OPEN_FOLDER.id)}
           >
             Open Folder…
           </button>

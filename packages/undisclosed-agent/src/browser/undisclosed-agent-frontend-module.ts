@@ -22,6 +22,8 @@ import { TerminalWidget } from '@theia/terminal/lib/browser/base/terminal-widget
 import { PersistentTerminalWidget } from './persistent-terminal-widget';
 import { UndisclosedWelcomeWidget } from './undisclosed-welcome-widget';
 import { UndisclosedWelcomeContribution } from './undisclosed-welcome-contribution';
+import { MenusContributionPointHandler } from '@theia/plugin-ext/lib/main/browser/menus/menus-contribution-handler';
+import { UndisclosedMenusContributionHandler } from './vscode-git-ui-suppressor';
 
 /**
  * Frontend DI module (referenced by `theiaExtensions` in package.json). Binds
@@ -43,6 +45,15 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
   // to newly created terminals. The subclass only ADDS serialize/restore and
   // degrades to a normal terminal if the addon fails, so this is non-breaking.
   rebind(TerminalWidget).to(PersistentTerminalWidget).inTransientScope();
+
+  // "Keep the API, kill the duplicate UI." The VS Code git built-ins stay
+  // deployed (so `vscode.git`'s API remains available to GitLens et al.), but
+  // their Source Control menu contributions are withheld so they stop
+  // duplicating @theia/git's inline actions. See vscode-git-ui-suppressor.ts.
+  // Our frontend module loads after @theia/plugin-ext, so this rebind wins.
+  rebind(MenusContributionPointHandler)
+    .to(UndisclosedMenusContributionHandler)
+    .inSingletonScope();
 
   bindViewContribution(bind, UndisclosedAgentContribution);
   bind(FrontendApplicationContribution).toService(UndisclosedAgentContribution);
