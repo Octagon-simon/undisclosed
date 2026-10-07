@@ -19,6 +19,11 @@
       "config": {
         "applicationName": "Undisclosed",
         "warnOnPotentiallyInsecureHostPattern": false,
+        "electron": {
+          "windowOptions": {
+            "titleBarStyle": "hiddenInset"
+          }
+        },
         "preferences": {
           "security.workspace.trust.enabled": false,
           "workbench.startupEditor": "none",

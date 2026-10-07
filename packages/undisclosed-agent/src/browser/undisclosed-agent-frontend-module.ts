@@ -18,11 +18,13 @@ import { UndisclosedAgentWidget } from './undisclosed-agent-widget';
 import { UndisclosedAgentContribution } from './undisclosed-agent-contribution';
 import { UndisclosedAgentLayoutContribution } from './undisclosed-agent-layout-contribution';
 import { GitExtrasContribution } from './git-extras-contribution';
+import { GitCommitGuardContribution } from './git-commit-guard-contribution';
 import { TerminalWidget } from '@theia/terminal/lib/browser/base/terminal-widget';
 import { PersistentTerminalWidget } from './persistent-terminal-widget';
 import { UndisclosedWelcomeWidget } from './undisclosed-welcome-widget';
 import { UndisclosedWelcomeContribution } from './undisclosed-welcome-contribution';
 import { UndisclosedExplorerAutoRevealContribution } from './undisclosed-explorer-auto-reveal-contribution';
+import { UndisclosedTitleBarContribution } from './undisclosed-title-bar-contribution';
 import { WebviewEnvironment } from '@theia/plugin-ext/lib/main/browser/webview/webview-environment';
 import { UndisclosedWebviewEnvironment } from './undisclosed-webview-environment';
 
@@ -99,10 +101,24 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
     UndisclosedExplorerAutoRevealContribution
   );
 
+  // Custom centered macOS title bar: replaces the (macOS 26) native, left
+  // aligned window title while keeping the native traffic lights. Electron +
+  // macOS only; a no-op in the browser and on Windows/Linux, where Theia
+  // already draws its own centered title bar.
+  bind(UndisclosedTitleBarContribution).toSelf().inSingletonScope();
+  bind(FrontendApplicationContribution).toService(
+    UndisclosedTitleBarContribution
+  );
+
   // Extra git commands (Undo Last Commit, unstage/discard all) + AI commit
   // message button in the Source Control toolbar.
   bind(GitExtrasContribution).toSelf().inSingletonScope();
   bind(CommandContribution).toService(GitExtrasContribution);
   bind(MenuContribution).toService(GitExtrasContribution);
   bind(TabBarToolbarContribution).toService(GitExtrasContribution);
+
+  // Stop the Source Control commit box from hanging on an empty message: force
+  // the prompt flow (not the editor hand-off) and show an inline validation.
+  bind(GitCommitGuardContribution).toSelf().inSingletonScope();
+  bind(FrontendApplicationContribution).toService(GitCommitGuardContribution);
 });

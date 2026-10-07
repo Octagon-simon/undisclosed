@@ -66,6 +66,8 @@ See `docs/plans/theia-upgrade-plan.md` section 11 for the full list.
 
 | B12 | ~~`GitScmProvider.getUriToOpen` patch~~ **RETIRED in 1.76** | ~~`packages/undisclosed-git/src/browser/writable-git-scm-provider.ts`~~ (deleted; package is now an empty stub) | ~~`@theia/git/...`~~ | Obsolete: it patched `@theia/git`, which 1.76 removed. Source Control is now `vscode.git`, which opens the working-tree file directly. Re-verify the staged-save test (section 7) on 1.76; re-populate the stub only if it regresses. | n/a — retired; pending the B12 runtime check. |
 | B13 | Webview default stylesheet (`body { padding: 0 20px }`) | `webpack.config.js` + `apps/desktop/webpack.config.js` (`applyWebviewFullWidth`) | `@theia/plugin-ext/src/main/browser/webview/pre/main.js` (`defaultCssRules`), copied to `lib/webview/pre` by `gen-webpack.config.js` | Theia injects `padding: 0 20px` into every webview; a webview that sizes to `width:100%` (Capibara Pet `#stage`) renders 40px narrower than its panel. We rewrite the declaration during the build's copy step so the content is full width. **Global: changes every webview, not just pets.** | Not a DI rebind, so it fails *silently*: it depends on the copy `from` path ending `webview/pre` and on the literal `padding: 0 20px;`. If either moves, the transform no-ops and the build still succeeds. |
+| B14 | macOS window title bar | `src/browser/undisclosed-title-bar-contribution.ts` (+ `apps/desktop/package.json`: `theia.frontend.config.electron.windowOptions.titleBarStyle = "hiddenInset"`) | `@theia/core` `ElectronMainApplication.getDefaultOptions()` (merges `config.electron.windowOptions` into the `BrowserWindow` options) + `WindowTitleService` | macOS 26 "Tahoe" left-aligns the OS window title and Theia only ever uses the NATIVE macOS title bar (its centered `CustomTitleWidget` path is Windows/Linux only, and the Electron main hard-returns `native` on macOS). We create the window `hiddenInset` (keeps the native traffic lights, hides the native title text) and paint our own centered drag-region strip, offsetting the shell down by its height. | Config-only: depends on Theia still spreading `config.electron.windowOptions` into the window options, and on stored window state never carrying a `titleBarStyle` that overrides it. Gated to Electron+OSX, so it silently no-ops in the browser / on Windows/Linux. The strip height assumes Electron's default `hiddenInset` traffic-light position (native ~28px); re-check the lights if the height changes. |
+| B15 | Diff rendering for empty originals (`renderSideBySide` + `compactMode`) | `packages/undisclosed-git/src/browser/empty-diff-inline-contribution.ts` (+ `packages/undisclosed-git/style/undisclosed-git.css`) | `@theia/monaco/lib/browser/monaco-editor-provider` (`MonacoEditorProvider.createMonacoDiffEditorOptions(original, modified)`); option semantics from `@theia/monaco-editor-core` (`diffEditorWidget.js` `originalWidth` / `inlineViewHideOriginalLineNumbers`, `diffEditorOptions.js` `compactMode`) | Clicking an UNTRACKED file in Source Control opens a diff whose original side is an empty blob (no committed version). Monaco defaults to `renderSideBySide: true`, so that empty left pane is drawn as a blank half of the editor and the content is pushed right, the "huge spacing on the left" seen when opening a new file. We wrap `createMonacoDiffEditorOptions` and, when the original model's `getValueLength()` is 0, force `renderSideBySide: false` AND `compactMode: true`. Inline alone still reserves a left column for the empty original's line numbers (`originalWidth = max(5, original.layoutInfoDecorationsLeft)`); `compactMode` sets `inlineViewHideOriginalLineNumbers`, collapsing that column to 0. Modified/deleted-file diffs keep side-by-side. The residual 35px hunk `gutter` that stays on the inline diff is transparent by default, so on a black editor background it reads as dead space before the content; `style/undisclosed-git.css` gives it a visible background (the theme's inserted-line colour), matching how Antigravity renders the same strip. | Prototype-patch on a protected method: if upstream renames or moves `createMonacoDiffEditorOptions`, the wrapper no-ops (falls back to side-by-side) with no error. Depends on `MonacoEditorModel.textEditorModel.getValueLength()` and on the frontend bundler not mangling method names (esbuild property mangling is opt-in, so it does not). Installed at module-load time so an untracked diff restored on reload is also covered. |
 
 ### Mechanism risk shared by B1, B4 and B12
 
@@ -117,6 +119,43 @@ Run these after any bump. B1, B3, B4, B6 must also be repeated on a packaged
   20px inset). Confirm other webviews (media preview, markdown) still render. This
   one is a *build* transform, so it must be checked on a freshly built bundle
   (`npm run build` / `theia build`), not just a running server.
+- **B14 macOS title bar (packaged only):** with a file open, the window title
+  (`<file> - <workspace>`) is CENTERED in a strip at the top, the native traffic
+  lights are visible and vertically aligned with the strip, and the activity bar /
+  editor start BELOW it (nothing sits under the lights). Dragging the strip moves
+  the window. Only meaningful in the packaged Electron app — the browser build has
+  no OS chrome, so this is a no-op there.
+- **B15 empty-original diff:** in Source Control, click an UNTRACKED file; the diff
+  opens unified (one column), with NO empty original column. In the DOM, the root is
+  `.monaco-diff-editor` (no `side-by-side` class), `.editor.original` has width 0, and
+  `.editor.modified` starts at the diff's hunk `gutter` (35px). A modified file still
+  opens side-by-side. Reload with the untracked diff open and confirm it stays unified.
+  Note: Monaco's own hunk `gutter` (35px, holds the hover "Revert Block" toolbar, shown
+  because the modified side is writable) is standard inline-diff chrome and is not
+  removed by this override. It is TINTED by `style/undisclosed-git.css` (imported from
+  the frontend module) so the 35px reads as chrome rather than blank space: in DevTools
+  the computed `background-color` of `.monaco-diff-editor:not(.side-by-side) .gutter`
+  should resolve to the theme's inserted-line colour, e.g. `rgba(155, 185, 85, 0.2)`
+  on the HALFLIFE/dark theme (composited over the black editor that is `#202514`, the
+  same olive band Antigravity paints), not `rgba(0, 0, 0, 0)`.
+
+  **Variable-name trap (cost a whole debug cycle):** the workbench theme vars are
+  `--theia-<colorId with dots -> dashes>`, NOT `--vscode-<...>`. Theia's
+  `ColorRegistry.toCssVariableName(id, prefix = 'theia')` builds the `--theia-` name;
+  the `--vscode-` spelling is emitted ONLY inside webviews
+  (`@theia/plugin-ext/lib/main/browser/webview/webview-theme-data-provider`), so on the
+  workbench `var(--vscode-diffEditor-insertedLineBackground)` is undefined and silently
+  falls through to whatever fallback you wrote. Reference the `--theia-` name.
+  Also: `diffEditorGutter.insertedLineBackground` has no theme default (Monaco
+  registers it as `null`), so `--theia-diffEditorGutter-insertedLineBackground` is
+  normally unset and the rule lands on `--theia-diffEditor-insertedLineBackground`.
+
+  **Stale-bundle trap:** the browser dev target caches `bundle.css` hard. After a
+  rebuild with an open tab, a plain server restart does NOT pull the new CSS; the
+  running page keeps the old stylesheet (its rules simply lack the new selector).
+  Hard-reload (ignore cache) the tab before judging the fix. Quick check in DevTools:
+  `document.styleSheets` contains a `bundle.css` whose rules include
+  `.monaco-diff-editor:not(.side-by-side) .gutter`.
 
 ## Guards (planned, implement on the upgrade branch)
 
@@ -131,17 +170,6 @@ These are small additions that make a future silent failure impossible. They are
 
 2. **Deep-import isolation.** Wrap each `@theia/plugin-ext/lib/...` deep import
    (B1, B4) in one small module per override, so a path change is a one-line fix
-   instead of a search.
-
-3. **`scripts/theia-override-audit.sh`.** Greps the installed `node_modules/@theia`
-   for each symbol/path in the register and exits non-zero if any are missing. Also
-   checks whether the webview defect line still exists upstream, so we know whether
-   B1 can ever be retired. Run it as the first step of any bump.
-
-4. **`tsc` gate in CI.** `build:packages` already runs tsc; make sure CI runs it
-   against the pinned Theia so signature drift is caught on the upgrade branch, not
-   at runtime.
-s a one-line fix
    instead of a search.
 
 3. **`scripts/theia-override-audit.sh`.** Greps the installed `node_modules/@theia`

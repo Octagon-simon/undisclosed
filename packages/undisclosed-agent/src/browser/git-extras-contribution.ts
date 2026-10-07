@@ -27,14 +27,18 @@ import {
   Disposable,
 } from '@theia/core/lib/common';
 import { Widget } from '@theia/core/lib/browser';
+import { Endpoint } from '@theia/core/lib/browser/endpoint';
 import { FileUri } from '@theia/core/lib/common/file-uri';
 import {
   TabBarToolbarContribution,
   TabBarToolbarRegistry,
 } from '@theia/core/lib/browser/shell/tab-bar-toolbar';
+import { QuickInputService } from '@theia/core/lib/browser/quick-input/quick-input-service';
 import { WorkspaceService } from '@theia/workspace/lib/browser';
 import { ScmService } from '@theia/scm/lib/browser/scm-service';
 import { ScmWidget } from '@theia/scm/lib/browser/scm-widget';
+import { ScmTreeWidget } from '@theia/scm/lib/browser/scm-tree-widget';
+import { SCM_TITLE_MENU } from '@theia/scm/lib/browser/scm-repositories-widget';
 import {
   GENERATE_MESSAGE_ITEM_ID,
   renderCommitMessageButton,
@@ -43,8 +47,21 @@ import {
 /** The Brain (agent backend) — the AI commit-message endpoint lives here. */
 const BRAIN_BASE_URL = 'http://localhost:5001';
 
-/** Same-origin backend endpoint that runs `git` and returns its output. */
-const GIT_EXEC_URL = '/undisclosed-agent/git/exec';
+/** Same-origin backend endpoint that runs `git` and returns its output.
+ *
+ * Resolved through Theia's `Endpoint`, NOT a bare root-relative URL. In the dev
+ * browser build the frontend origin IS the backend, so a path like
+ * `/undisclosed-agent/git/exec` worked by accident; in the packaged Electron app
+ * the renderer loads from a `file://` page, so the same path resolved to
+ * `file:///undisclosed-agent/git/exec` and `fetch` failed ("Failed to fetch").
+ * `Endpoint` resolves the real backend host:port in every mode. See the same
+ * one-liner in `undisclosed-agent-widget.tsx` `serverUrl()` and in
+ * `undisclosed-import/src/browser/backend-url.ts`. */
+const GIT_EXEC_URL = new Endpoint({
+  path: '/undisclosed-agent/git/exec',
+})
+  .getRestUrl()
+  .toString();
 
 /** A "Git" submenu in the main menu bar (discoverable; also in the palette). */
 const GIT_MENU: MenuPath = [...MAIN_MENU_BAR, '8_git_extras'];
@@ -64,6 +81,18 @@ const UNSTAGE_ALL: Command = {
 const DISCARD_ALL: Command = {
   id: 'undisclosed.git.discardAll',
   label: 'Git: Discard All Changes',
+};
+/** Create a commit with no file changes (a "placeholder" commit), like VS Code's
+ *  `git.commitEmpty`. Kept explicit here because the empty commit-message box no
+ *  longer falls through to an empty commit. */
+const COMMIT_EMPTY: Command = {
+  id: 'undisclosed.git.commitEmpty',
+  label: 'Git: Commit Empty…',
+  // Rendered beside the label wherever the command appears (the Changes group
+  // context menu, the SCM title "…" menu, the main Git submenu). Theia takes a
+  // menu entry's icon from the command's `iconClass`, so without this the item
+  // shows as a bare label next to the sparkle icon of Generate Commit Message.
+  iconClass: 'codicon codicon-git-commit',
 };
 const GENERATE_MESSAGE: Command = {
   id: 'undisclosed.git.generateCommitMessage',
@@ -97,6 +126,7 @@ export class GitExtrasContribution
   @inject(MessageService) protected readonly messages!: MessageService;
   @inject(ScmService) protected readonly scm!: ScmService;
   @inject(WorkspaceService) protected readonly workspace!: WorkspaceService;
+  @inject(QuickInputService) protected readonly quickInput!: QuickInputService;
 
   /** True while the AI commit-message request is in flight — drives the toolbar
    *  button's spinner (and disables it so it can't be double-fired). */
@@ -224,6 +254,35 @@ export class GitExtrasContribution
     }
   }
 
+  /**
+   * Create a commit with no file changes. Prefers the message already in the
+   * Source Control box; otherwise prompts for one so the empty commit still has
+   * a meaningful subject.
+   */
+  protected async commitEmpty(): Promise<void> {
+    const root = this.repositoryRoot();
+    if (!root) {
+      this.messages.warn('No git repository is selected.');
+      return;
+    }
+    let message = (this.scm.selectedRepository?.input.value ?? '').trim();
+    if (!message) {
+      message = (
+        (await this.quickInput.input({
+          prompt: 'Message for the empty commit',
+          placeHolder: 'chore: empty commit',
+        })) ?? ''
+      ).trim();
+    }
+    if (!message) {
+      return;
+    }
+    await this.run(
+      ['commit', '--allow-empty', '-m', message],
+      'Created an empty commit.'
+    );
+  }
+
   protected async run(args: string[], okMessage: string): Promise<void> {
     const root = this.repositoryRoot();
     if (!root) {
@@ -294,12 +353,16 @@ export class GitExtrasContribution
       isEnabled: () => !this.generating,
       execute: () => this.trigger(),
     });
+    commands.registerCommand(COMMIT_EMPTY, {
+      execute: () => this.commitEmpty(),
+    });
   }
 
   registerMenus(menus: MenuModelRegistry): void {
     menus.registerSubmenu(GIT_MENU, 'Git');
     for (const command of [
       GENERATE_MESSAGE,
+      COMMIT_EMPTY,
       UNDO_SOFT,
       UNDO_HARD,
       UNSTAGE_ALL,
@@ -310,6 +373,20 @@ export class GitExtrasContribution
         label: (command.label ?? command.id).replace(/^Git: /, ''),
       });
     }
+
+    // "Commit Empty…" in the Source Control UI: the "Changes" group context
+    // menu (right-click the group) and the view's "…" title menu, beside the
+    // built-in Commit/Refresh actions.
+    menus.registerMenuAction(ScmTreeWidget.RESOURCE_GROUP_CONTEXT_MENU, {
+      commandId: COMMIT_EMPTY.id,
+      label: 'Commit Empty…',
+      order: 'z',
+    });
+    menus.registerMenuAction(SCM_TITLE_MENU, {
+      commandId: COMMIT_EMPTY.id,
+      label: 'Commit Empty…',
+      order: 'z',
+    });
   }
 
   registerToolbarItems(registry: TabBarToolbarRegistry): void {

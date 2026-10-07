@@ -4,6 +4,7 @@
 import { inject, injectable } from '@theia/core/shared/inversify';
 import {
   AbstractViewContribution,
+  ContextMenuRenderer,
   FrontendApplicationContribution,
   StorageService,
   Widget,
@@ -21,6 +22,10 @@ import {
 } from '@theia/core/lib/common';
 import { EditorWidget } from '@theia/editor/lib/browser';
 import { UndisclosedAgentWidget } from './undisclosed-agent-widget';
+import {
+  GOVERNANCE_ITEM_ID,
+  renderGovernanceMenuButton,
+} from './governance-menu-button';
 
 export const UNDISCLOSED_AGENT_TOGGLE_COMMAND_ID = 'undisclosed-agent:toggle';
 const INTRODUCED_KEY = 'undisclosed-agent.introduced';
@@ -69,6 +74,9 @@ export class UndisclosedAgentContribution
   @inject(StorageService)
   protected readonly storageService!: StorageService;
 
+  @inject(ContextMenuRenderer)
+  protected readonly contextMenuRenderer!: ContextMenuRenderer;
+
   /** Fired when the agent panel opens/closes/(un)collapses, so the editor
    * toolbar re-renders and the "Chat with Agent" button shows/hides LIVE
    * (otherwise it only refreshed when you next clicked the editor). */
@@ -88,6 +96,33 @@ export class UndisclosedAgentContribution
   protected isAgentPanelVisible(): boolean {
     const widget = this.tryGetWidget();
     return !!(widget && widget.isVisible);
+  }
+
+  /**
+   * Open the "⋯" governance menu (Usage overview / Memory / Models / Settings /
+   * …) anchored to the toolbar button that was clicked. This is the click handler
+   * for the React toolbar item in `governance-menu-button.tsx`; we render the
+   * button ourselves because a `menuPath` item loses its `priority` in Theia 1.76
+   * (so it jumps to the front of the toolbar) and only its chevron opens the menu.
+   */
+  openGovernanceMenu(
+    event: {
+      preventDefault(): void;
+      stopPropagation(): void;
+      currentTarget: EventTarget & HTMLElement;
+    },
+    widget?: Widget
+  ): void {
+    event.preventDefault();
+    event.stopPropagation();
+    const target = event.currentTarget;
+    const rect = target.getBoundingClientRect();
+    this.contextMenuRenderer.render({
+      menuPath: MORE_MENU,
+      args: [widget],
+      anchor: { x: rect.left, y: rect.bottom },
+      context: (widget?.node as HTMLElement) ?? target,
+    });
   }
 
   override registerCommands(commands: CommandRegistry): void {
@@ -261,13 +296,13 @@ export class UndisclosedAgentContribution
       isVisible,
     });
     registry.registerItem({
-      id: 'undisclosed-agent.more',
-      icon: 'codicon codicon-ellipsis',
-      tooltip: 'Governance mode',
-      text: 'Governance mode',
-      menuPath: MORE_MENU,
+      id: GOVERNANCE_ITEM_ID,
       priority: 4,
       isVisible,
+      // Keyboard/`when`-agnostic custom button: a React item keeps our `priority`
+      // (unlike a `menuPath` item, whose priority the 1.76 wrapper drops) and
+      // makes the whole ellipsis open the menu. See governance-menu-button.tsx.
+      render: (widget) => renderGovernanceMenuButton(this, widget),
     });
     registry.registerItem({
       id: CLOSE.id,
