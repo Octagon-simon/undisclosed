@@ -33,6 +33,11 @@ dependencies = [
     "tree-sitter>=0.23.0",
     "tree-sitter-language-pack>=0.4.0",
     "tree-sitter-python>=0.23.0",
+    # GitHub REST toolkit (app/agent/toolkit/github_toolkit.py) — issues, PRs,
+    # branches, repo search. camel's GithubToolkit requires this package
+    # (`@dependencies_required('github')`), so it must ship or the toolkit
+    # raises when GITHUB_ACCESS_TOKEN is set.
+    "PyGithub>=2.5.0",
 ]
 
 

@@ -188,6 +188,37 @@ def _filter_kwargs_for_callable(
     return {k: v for k, v in kwargs.items() if k in allowed}
 
 
+def kwargs_tolerant(func: Callable[..., Any]) -> Callable[..., Any]:
+    """Wrap a callable so kwargs it doesn't accept are dropped before the call.
+
+    For toolkits whose methods are NOT wrapped by ``listen_toolkit`` (custom
+    toolkits that lack ``@auto_listen_toolkit``, e.g. GitToolkit / FigmaToolkit).
+    A weaker model that emits a stray kwarg (e.g. ``attachment`` conflated with
+    the message-integration ``message_attachment``) would otherwise raise
+    ``TypeError: got an unexpected keyword argument`` and fail the whole tool
+    call. Wrapping at ``get_tools()`` makes every tool callable from any harness
+    while preserving its name and signature (via ``@wraps``).
+    """
+    if getattr(func, "__kwargs_tolerant__", False):
+        return func
+
+    if iscoroutinefunction(func):
+
+        @wraps(func)
+        async def async_wrapper(*args, **kwargs):
+            return await func(*args, **_filter_kwargs_for_callable(func, kwargs))
+
+        async_wrapper.__kwargs_tolerant__ = True  # type: ignore[attr-defined]
+        return async_wrapper
+
+    @wraps(func)
+    def sync_wrapper(*args, **kwargs):
+        return func(*args, **_filter_kwargs_for_callable(func, kwargs))
+
+    sync_wrapper.__kwargs_tolerant__ = True  # type: ignore[attr-defined]
+    return sync_wrapper
+
+
 def _safe_put_queue(task_lock, data):
     """Safely put data to the queue, handling both sync and async contexts"""
     try:

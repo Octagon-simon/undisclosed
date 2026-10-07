@@ -22,6 +22,7 @@ from camel.toolkits import MCPToolkit
 from app.agent.toolkit.abstract_toolkit import AbstractToolkit
 from app.agent.toolkit.audio_analysis_toolkit import AudioAnalysisToolkit
 from app.agent.toolkit.excel_toolkit import ExcelToolkit
+from app.agent.toolkit.figma_toolkit import FigmaToolkit
 from app.agent.toolkit.file_write_toolkit import FileToolkit
 from app.agent.toolkit.github_toolkit import GithubToolkit
 from app.agent.toolkit.google_calendar_toolkit import GoogleCalendarToolkit
@@ -72,6 +73,7 @@ async def get_toolkits(
         "audio_analysis_toolkit": AudioAnalysisToolkit,
         "openai_image_toolkit": OpenAIImageToolkit,
         "excel_toolkit": ExcelToolkit,
+        "figma_toolkit": FigmaToolkit,
         "file_write_toolkit": FileToolkit,
         "github_toolkit": GithubToolkit,
         "google_calendar_toolkit": GoogleCalendarToolkit,
