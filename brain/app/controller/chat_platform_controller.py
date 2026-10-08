@@ -918,6 +918,13 @@ def _config_info_map() -> dict[str, dict]:
             "env_vars": ["GITHUB_ACCESS_TOKEN"],
             "toolkit": "github_toolkit",
         },
+        "MongoDB": {
+            # Must match the key MongoDBToolkit.get_can_use_tools() gates on
+            # (MONGO_URL); the read-only query toolkit stays disabled until a
+            # connection string is set via the Connectors UI or .env.
+            "env_vars": ["MONGO_URL"],
+            "toolkit": "mongodb_toolkit",
+        },
         "Google Calendar": {
             "env_vars": [
                 "GOOGLE_CLIENT_ID",

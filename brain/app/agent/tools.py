@@ -31,6 +31,7 @@ from app.agent.toolkit.google_gmail_mcp_toolkit import GoogleGmailMCPToolkit
 from app.agent.toolkit.lark_toolkit import LarkToolkit
 from app.agent.toolkit.linkedin_toolkit import LinkedInToolkit
 from app.agent.toolkit.mcp_search_toolkit import McpSearchToolkit
+from app.agent.toolkit.mongodb_toolkit import MongoDBToolkit
 from app.agent.toolkit.notion_mcp_toolkit import NotionMCPToolkit
 from app.agent.toolkit.openai_image_toolkit import OpenAIImageToolkit
 from app.agent.toolkit.pptx_toolkit import PPTXToolkit
@@ -82,6 +83,7 @@ async def get_toolkits(
         "linkedin_toolkit": LinkedInToolkit,
         "lark_toolkit": LarkToolkit,
         "mcp_search_toolkit": McpSearchToolkit,
+        "mongodb_toolkit": MongoDBToolkit,
         "notion_mcp_toolkit": NotionMCPToolkit,
         "pptx_toolkit": PPTXToolkit,
         "rag_toolkit": RAGToolkit,

@@ -46,6 +46,10 @@ from app.agent.toolkit.github_toolkit import (
     WRITE_TOOL_NAMES as GITHUB_WRITE_TOOL_NAMES,
     GithubToolkit,
 )
+from app.agent.toolkit.mongodb_toolkit import (
+    WRITE_TOOL_NAMES as MONGO_WRITE_TOOL_NAMES,
+    MongoDBToolkit,
+)
 from app.agent.toolkit.governance_toolkit import (
     GovernanceMode,
     wrap_with_approval,
@@ -659,6 +663,23 @@ async def assemble_single_agent_toolkits(
                 api_task_id=options.project_id,
             )
         assembly.add_tools(github_tools, GithubToolkit.toolkit_name())
+
+    # MongoDB: read-only ad-hoc queries (find/count/distinct/aggregate) over
+    # mongosh. No-op unless a connection string is configured (MONGO_URL et al;
+    # get_can_use_tools returns []). The free-form escape hatch (mongo_eval) is
+    # the only mutating-capable tool, so it is gated under Ask mode.
+    mongo_tools = MongoDBToolkit.get_can_use_tools(options.project_id)
+    if mongo_tools:
+        mongo_tools = message_integration.register_functions(mongo_tools)
+        if governance_mode is GovernanceMode.ASK:
+            mongo_tools = _gate_tool_if_named(
+                mongo_tools,
+                target_names=MONGO_WRITE_TOOL_NAMES,
+                field_name="mongo_write",
+                agent_name=Agents.single_agent,
+                api_task_id=options.project_id,
+            )
+        assembly.add_tools(mongo_tools, MongoDBToolkit.toolkit_name())
 
     if _enabled(config, "browser") and (
         hands is None or hands.can_use_browser()

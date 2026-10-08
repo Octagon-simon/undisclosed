@@ -257,10 +257,14 @@ Notable groups:
   Most provider/model setup is configurable inside the app's Models UI; these vars are
   read directly where a toolkit needs a key without a UI-configured provider.
 - **Design/dev integrations** (each enables its corresponding agent toolkit **only when
-  set**): `FIGMA_ACCESS_TOKEN`, `GITHUB_ACCESS_TOKEN`. The GitHub toolkit (needs the
-  `PyGithub` package declared in `brain/pyproject.toml`) covers issue
+  set**): `FIGMA_ACCESS_TOKEN`, `GITHUB_ACCESS_TOKEN`, `MONGO_URL`. The GitHub toolkit
+  (needs the `PyGithub` package declared in `brain/pyproject.toml`) covers issue
   create/update/close/reopen, issue and PR comments, PR create/merge/close, branch
-  create/list, repository listing, and cross-repo issue search.
+  create/list, repository listing, and cross-repo issue search. The MongoDB toolkit is
+  a **read-only** query surface (find/count/distinct/aggregate plus a write-guarded
+  escape hatch) run through the `mongosh` CLI; it redacts the connection string from
+  every result and error, defaults to the `dev` database (`MONGO_DB` to override), and
+  never enables without a connection string.
 - **Web search** (any one enables web search): Google PSE (key+engine id), Tavily,
   Brave, Exa, Linkup, Bocha.
 - **Productivity/comms**: Notion, Slack, Google Workspace (Gmail/Calendar/Drive OAuth +
