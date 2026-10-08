@@ -127,6 +127,7 @@
     "dist:win": "npm run dist:brain && npm run dist:prepare && npm --prefix apps/desktop run dist:win",
     "dist:linux": "npm run dist:brain && npm run dist:prepare && npm --prefix apps/desktop run dist:linux",
     "release": "bash scripts/release.sh",
+    "release:beta": "bash scripts/release.sh beta",
     "verify:fresh": "bash scripts/verify-fresh.sh"
   }
 }

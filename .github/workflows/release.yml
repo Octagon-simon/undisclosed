@@ -197,8 +197,16 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+      # A tag with a semver pre-release suffix (v0.1.0-beta.0, -rc.1, …) is
+      # published as a GitHub PRE-release. That is the whole isolation story for
+      # the upgrade branch: a pre-release carries the "Pre-release" badge and
+      # GitHub never promotes it to "latest", so the stable line on main
+      # (currently v0.0.9) keeps the latest release and anyone on stable is
+      # unaffected. Stable tags keep the default (latest) behavior.
       - name: Publish installers to the Release
         uses: softprops/action-gh-release@v2
         with:
           files: artifacts/**/*
           fail_on_unmatched_files: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          make_latest: ${{ contains(github.ref_name, '-') && 'false' || 'true' }}
