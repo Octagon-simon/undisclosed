@@ -515,6 +515,12 @@ export const UserQueryGroup: React.FC<UserQueryGroupProps> = ({
     return getTaskElapsedMs(summaryTask);
   };
 
+  // Live twin of `turnWorkedForMs`: the turn's start (the user send). The running
+  // Execution Summary clocks "Working for Xs" from here, so while the agent works
+  // the user sees the count climb instead of a static header; on finish the
+  // Thought Process shows the matching "Worked for Xs".
+  const turnStartedAtMs = Date.parse(queryGroup.userMessage?.createdAt ?? '');
+
   return (
     <motion.div
       ref={groupRef}
@@ -644,6 +650,9 @@ export const UserQueryGroup: React.FC<UserQueryGroupProps> = ({
             <ExecutionSummary
               activities={summaryActivities}
               running={summaryRunning}
+              startedAt={
+                Number.isFinite(turnStartedAtMs) ? turnStartedAtMs : undefined
+              }
             />
           ) : null}
         </motion.div>

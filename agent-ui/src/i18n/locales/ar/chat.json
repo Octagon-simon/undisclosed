@@ -64,6 +64,7 @@
   "splitting-tasks": "تقسيم المهام",
   "working-on-tasks-for": "العمل على المهام لمدة <elapsed>{{time}}</elapsed>",
   "worked-for": "عُمل لمدة <elapsed>{{time}}</elapsed>",
+  "working-for": "يعمل منذ <elapsed>{{time}}</elapsed>",
   "start-task": "نفّذ الآن",
   "auto-start-in": "بدء تلقائي خلال {{seconds}}ث",
   "message-cannot-be-empty": "لا يمكن أن تكون الرسالة فارغة",

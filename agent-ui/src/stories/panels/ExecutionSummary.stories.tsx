@@ -124,9 +124,14 @@ export const Expanded: Story = {
   args: { activities: MOCK_ACTIVITIES, defaultOpen: true },
 };
 
-/** A still-running turn: groups start open. */
+/** A still-running turn: groups start open and the title clocks "Working for Xs". */
 export const Running: Story = {
-  args: { activities: MOCK_ACTIVITIES, running: true },
+  args: {
+    activities: MOCK_ACTIVITIES,
+    running: true,
+    // Started ~53s ago so the live "Working for Xs" pill has something to show.
+    startedAt: Date.now() - 53_000,
+  },
 };
 
 /** A short turn: a single read, correct singular group. */

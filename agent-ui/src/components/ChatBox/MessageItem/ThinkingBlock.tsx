@@ -32,6 +32,7 @@
  * degrades to just the title + chevron.
  */
 
+import ShinyText from '@/components/ui/ShinyText/ShinyText';
 import { cn } from '@/lib/utils';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Brain, ChevronDown } from 'lucide-react';
@@ -46,6 +47,7 @@ export function ThinkingBlock({
   durationMs,
   stepCount,
   defaultOpen = false,
+  running = false,
 }: {
   /** Reasoning text; when empty the block does not render at all. */
   reasoning?: string;
@@ -61,6 +63,13 @@ export function ThinkingBlock({
   stepCount?: number;
   /** Initial disclosure state. Collapsed by default; pass true to start open. */
   defaultOpen?: boolean;
+  /**
+   * Live turn, still thinking. The header then reads "Thinking" with the same
+   * running shimmer the activity classifier puts on a running step (the loader),
+   * instead of the finished "Thought Process" label. Once the turn settles the
+   * block falls back to "Thought Process".
+   */
+  running?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const text = (reasoning ?? '').trim();
@@ -81,7 +90,17 @@ export function ThinkingBlock({
       }
       title={
         <>
-          Thought Process
+          {running ? (
+            // Live: present-continuous "Thinking" with the running shimmer
+            // (the same loader the classifier shows for an in-flight step).
+            <ShinyText
+              text="Thinking"
+              speed={2.5}
+              className="!text-sm font-medium"
+            />
+          ) : (
+            'Thought Process'
+          )}
           {duration ? (
             <Pill>{duration}</Pill>
           ) : typeof durationMs === 'number' && durationMs > 0 ? (

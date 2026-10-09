@@ -36,9 +36,10 @@ export interface PanelSectionProps {
   /** Disclosure state passed to `aria-expanded` when `onToggle` is set. */
   expanded?: boolean;
   /**
-   * When true the box gets an animated, rotating conic-gradient border to show
-   * the section is LIVE (the agent is still working). Off by default so the
-   * finished cards stay flat.
+   * When true the box wears a live ring: a single bright comet sweeps clockwise
+   * around the section (top-left -> top-right -> bottom-right -> bottom-left,
+   * looping) to show the agent is still working. Off by default so the finished
+   * cards stay flat.
    */
   active?: boolean;
   /** Extra classes for the outer box (e.g. spacing). */
@@ -93,12 +94,16 @@ export function PanelSection({
           aria-hidden
           className="pointer-events-none absolute inset-0 overflow-hidden rounded-lg"
         >
-          {/* Rotating conic gradient = "this section is live". Google-palette
-              hexes on purpose (like the diff +N/−M greens/reds): a recognizable
-              "working" accent that reads on both light and dark. `animate-spin`
-              supplies the keyframes; duration is overridden so the sweep is
-              calm. Respects prefers-reduced-motion. */}
-          <div className="absolute left-1/2 top-1/2 h-[300%] w-[300%] -translate-x-1/2 -translate-y-1/2 animate-spin [animation-duration:3.5s] motion-reduce:animate-none [background:conic-gradient(from_0deg,#4285F4,#EA4335,#FBBC05,#34A853,#4285F4)]" />
+          {/* Faint base ring under the comet so the box keeps a thin edge even
+              where the comet isn't. */}
+          <div className="absolute inset-0 rounded-lg bg-ds-border-neutral-subtle-default" />
+          {/* "This section is live": a slow, multi-colour comet travels clockwise
+              around the box (top-left -> top-right -> bottom-right ->
+              bottom-left) and loops until the turn ends, the band shifting blue
+              -> green -> the rest of the palette as it goes. The gradient + its
+              keyframes live in `style/index.css` (`.panel-border-comet`) and use
+              `--colors-*` palette tokens; respects prefers-reduced-motion. */}
+          <div className="panel-border-comet absolute inset-0 rounded-lg" />
         </div>
       ) : null}
       <div

@@ -57,6 +57,19 @@ export const Collapsed: Story = {
 };
 
 /**
+ * Live, still thinking: the header reads "Thinking" with the running shimmer
+ * (the same loader the activity classifier puts on an in-flight step). It falls
+ * back to "Thought Process" once the turn settles.
+ */
+export const Thinking: Story = {
+  args: {
+    reasoning: REASONING,
+    defaultOpen: true,
+    running: true,
+  },
+};
+
+/**
  * The current live shape before duration/step-count wiring: just reasoning.
  * Header degrades to Brain + title + chevron.
  */

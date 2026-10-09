@@ -66,6 +66,31 @@ export const Titled: Story = {
   },
 };
 
+/**
+ * Live section: the ring is a soft multi-colour comet that travels clockwise
+ * around the box (top-left -> top-right -> bottom-right -> bottom-left) and
+ * loops slowly until the turn finishes, at which point the box goes flat. The
+ * band runs blue -> green -> the rest of the palette as it goes, so it changes
+ * hue rather than reading as one colour. Give it some height so you can watch it
+ * round each side.
+ */
+export const Active: Story = {
+  args: {
+    icon: (
+      <Zap className="h-4 w-4 text-ds-text-warning-default-default" aria-hidden />
+    ),
+    title: 'Execution Summary',
+    active: true,
+    children: (
+      <div className="mt-2.5 space-y-2 border-t border-ds-border-neutral-subtle-default pt-2.5 text-label-xs text-ds-text-neutral-subtle-default">
+        <p>The comet starts at the top-left and runs clockwise, slowly.</p>
+        <p>The band cycles blue {'->'} green {'->'} the rest of the palette.</p>
+        <p>When the turn ends the ring disappears and the card is flat.</p>
+      </div>
+    ),
+  },
+};
+
 /** No title: the box renders as a plain container for arbitrary content. */
 export const NoTitle: Story = {
   args: {

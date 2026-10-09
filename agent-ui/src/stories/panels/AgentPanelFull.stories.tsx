@@ -126,7 +126,12 @@ function PanelFull({
           />
 
           {/* Section 5 */}
-          <ExecutionSummary activities={activities} running={running} />
+          <ExecutionSummary
+            activities={activities}
+            running={running}
+            // Live "Working for Xs" pill only makes sense while running.
+            startedAt={running ? Date.now() - 53_000 : undefined}
+          />
 
           {/* Section 3 (reply) - after the work summaries, per the live order. */}
           <AgentMessageCard

@@ -29,13 +29,31 @@ import {
 } from '@/lib/activityClassifier';
 import { cn } from '@/lib/utils';
 import { Zap } from 'lucide-react';
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { Trans } from 'react-i18next';
 import {
   ActivityCategoryGroups,
   METRIC_META,
   METRIC_ORDER,
 } from './ActivityTraceCard';
-import { PanelSection } from './PanelSection';
+import { PanelSection, Pill } from './PanelSection';
+import { formatSplittingElapsed } from './TokenUtils';
+
+/**
+ * Re-render every second while `active` so a live "Working for Xs" clock ticks
+ * between chat-store updates (the store streams during a turn, but a long tool
+ * call can go quiet for a while — the interval keeps the timer honest). Returns
+ * `Date.now()` on each render; callers derive the elapsed figure from it.
+ */
+function useLiveNow(active: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return;
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [active]);
+  return now;
+}
 
 export interface ExecutionMetric {
   label: string;
@@ -86,6 +104,13 @@ export interface ExecutionSummaryProps {
    * reads as "the agent is working" at a glance. The finished snapshot is flat.
    */
   running?: boolean;
+  /**
+   * Epoch ms the turn began (the user message's `createdAt`). While `running`,
+   * the title row shows a live "Working for Xs" pill clocked from here, so the
+   * card reads as in-progress the way "Worked for Xs" reads as finished. Omit to
+   * hide the pill.
+   */
+  startedAt?: number;
   /** Start every group expanded (stories / preview). */
   defaultOpen?: boolean;
   className?: string;
@@ -94,6 +119,7 @@ export interface ExecutionSummaryProps {
 export function ExecutionSummary({
   activities,
   running = false,
+  startedAt,
   defaultOpen = false,
   className,
 }: ExecutionSummaryProps) {
@@ -101,6 +127,11 @@ export function ExecutionSummary({
     () => executionMetricsFromActivities(activities),
     [activities]
   );
+
+  const startedAtValid =
+    running && typeof startedAt === 'number' && Number.isFinite(startedAt);
+  const now = useLiveNow(Boolean(startedAtValid));
+  const workingMs = startedAtValid ? Math.max(0, now - (startedAt as number)) : 0;
 
   if (!metrics.length) return null;
 
@@ -112,7 +143,22 @@ export function ExecutionSummary({
           aria-hidden
         />
       }
-      title="Execution Summary"
+      title={
+        <>
+          Execution Summary
+          {workingMs > 0 ? (
+            // Present-tense twin of the finished "Worked for Xs" pill, so the
+            // user watches the turn's clock run instead of a static header.
+            <Pill>
+              <Trans
+                i18nKey="chat.working-for"
+                values={{ time: formatSplittingElapsed(workingMs) }}
+                components={{ elapsed: <span className="tabular-nums" /> }}
+              />
+            </Pill>
+          ) : null}
+        </>
+      }
       meta={metrics.map((metric) => (
         <MetricPill key={metric.label} metric={metric} />
       ))}

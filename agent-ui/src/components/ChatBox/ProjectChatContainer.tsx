@@ -522,7 +522,7 @@ export const ProjectChatContainer: React.FC<ProjectChatContainerProps> = ({
             ? chatStore?.tasks[activeTaskId]?.liveReasoning
             : '';
           return liveReasoning ? (
-            <ThinkingBlock reasoning={liveReasoning} defaultOpen />
+            <ThinkingBlock reasoning={liveReasoning} defaultOpen running />
           ) : null;
         })()}
         {activeProjectId ? (

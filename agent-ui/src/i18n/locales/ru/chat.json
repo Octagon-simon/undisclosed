@@ -64,6 +64,7 @@
   "splitting-tasks": "Разделение задач",
   "working-on-tasks-for": "Работа над задачами · <elapsed>{{time}}</elapsed>",
   "worked-for": "Работал <elapsed>{{time}}</elapsed>",
+  "working-for": "Работает <elapsed>{{time}}</elapsed>",
   "start-task": "Выполнить сейчас",
   "auto-start-in": "Автозапуск через {{seconds}} с",
   "message-cannot-be-empty": "Сообщение не может быть пустым",
