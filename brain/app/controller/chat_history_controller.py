@@ -24,6 +24,11 @@ class Message:
     step: str | None
     content: str
     reasoning: str | None = None
+    # Execution Summary rows for the turn, persisted with the END message so the
+    # panel can re-render the summary after a reload (the live tool log is not
+    # persisted). Stored opaquely: the route keeps the raw posted dict, so this
+    # field is only here to document the shape.
+    activities: list[dict] | None = None
     attaches: list[dict] = field(default_factory=list)
     fileList: list[dict] = field(default_factory=list)
     agent_name: str | None = None
@@ -43,6 +48,14 @@ class Turn:
     # Token usage for this turn, summed into the conversation total on the usage
     # overview. Set when the turn completes; never lowered by later appends.
     tokens: int = 0
+    # Size of the LATEST single model request for this conversation (input +
+    # output tokens), reported by the Brain's `request_usage` events. Unlike
+    # `tokens` (cumulative billed spend), this is the real context-window gauge,
+    # and it only ever moves forward (a late/duplicate smaller value must not
+    # un-warn a conversation that crossed a threshold). Persisted so the gauge
+    # survives a reload instead of resetting to 0 and falling back to a coarse
+    # transcript estimate.
+    lastRequestTokens: int = 0
 
 
 def _turns_root() -> Path:
@@ -84,6 +97,7 @@ def _load_turn(chat_id: str, query_id: str) -> Turn:
     turn.otherMessages = list(data.get("otherMessages") or [])
     turn.sessionMode = data.get("sessionMode")
     turn.tokens = int(data.get("tokens") or 0)
+    turn.lastRequestTokens = int(data.get("lastRequestTokens") or 0)
     return turn
 
 
@@ -100,6 +114,7 @@ async def post_message(
     message: dict = Body(..., embed=True),
     session_mode: str | None = Body(None, embed=True),
     tokens: int | None = Body(None, embed=True),
+    last_request_tokens: int | None = Body(None, embed=True),
 ):
     """Append a message to a turn; upsert turn by (chatId, queryId)."""
     turn = _load_turn(chat_id, query_id)
@@ -111,6 +126,10 @@ async def post_message(
     # message). Keep the max so a late 0 never wipes a real count.
     if tokens:
         turn.tokens = max(turn.tokens, int(tokens))
+    # Context-window gauge for the conversation: the largest single request so
+    # far. Keep the max so a late/duplicate smaller value never lowers it.
+    if last_request_tokens:
+        turn.lastRequestTokens = max(turn.lastRequestTokens, int(last_request_tokens))
     if role == "user":
         turn.userMessage = message
     else:
@@ -250,9 +269,4 @@ async def get_feedback_map():
     The panel uses this to restore each answer's thumb after a reload and to
     derive the aggregate tally (up/down/recent) shown in the Stats panel.
     """
-    messages = _read_feedback()
-    return {
-        mid: {"rating": v.get("rating"), "updatedAt": v.get("updatedAt")}
-        for mid, v in messages.items()
-        if v.get("rating") in ("up", "down")
-    }
+   

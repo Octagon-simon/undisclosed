@@ -221,6 +221,9 @@ export class UndisclosedAgentLayoutContribution
       /* Panel Title ("UNDISCLOSED AGENT") Flush Left */
       .theia-sidepanel-toolbar.theia-right-side-panel .theia-sidepanel-title,
       #theia-right-content-panel .theia-sidepanel-title {
+        /* Keep the panel's original font (the UI sans stack); no mono override.
+           Spec Section 1 suggested font-mono, but the user asked to keep the
+           font the agent panel already had. */
         font-size: 11px !important;
         font-weight: 600 !important;
         letter-spacing: 0.5px !important;

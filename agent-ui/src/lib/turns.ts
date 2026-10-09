@@ -24,6 +24,8 @@ export type TurnMessage = {
   step?: string;
   content: string;
   reasoning?: string | null;
+  /** Execution Summary rows for the turn, so the summary survives a reload. */
+  activities?: unknown[] | null;
   attaches?: any[];
   fileList?: any[];
   agent_name?: string | null;
@@ -37,6 +39,8 @@ type QueueItem = {
     message: TurnMessage;
     session_mode?: string;
     tokens?: number;
+    /** Peak single-request size (context gauge); backend keeps the max. */
+    last_request_tokens?: number;
   };
   attempts: number;
 };
@@ -101,7 +105,11 @@ export function enqueueTurnPost(
   sessionMode?: string,
   // Cumulative token count for the conversation, sent with assistant appends so
   // the usage overview can report a real total. Backend keeps the max.
-  tokens?: number
+  tokens?: number,
+  // Peak single-request size for the conversation, sent with assistant appends
+  // so the context-window gauge survives a reload instead of resetting to 0 and
+  // falling back to a coarse transcript estimate. Backend keeps the max.
+  lastRequestTokens?: number
 ): void {
   if (!chatId || !queryId) return;
   if (!message || !message.id) return;
@@ -112,6 +120,7 @@ export function enqueueTurnPost(
   const body: QueueItem['body'] = { role, message };
   if (sessionMode) body.session_mode = sessionMode;
   if (tokens) body.tokens = tokens;
+  if (lastRequestTokens) body.last_request_tokens = lastRequestTokens;
   // Coalesce by (url, message.id): a streamed assistant message may be
   // re-enqueued as it is updated (e.g. the END step gaining its fileList).
   // Replacing the still-queued item keeps last-write-wins and prevents the

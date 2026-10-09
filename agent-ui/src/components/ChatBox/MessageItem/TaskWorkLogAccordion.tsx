@@ -23,12 +23,12 @@ import ShinyText from '@/components/ui/ShinyText/ShinyText';
 import { agentMap, type WorkflowAgentType } from '@/components/WorkFlow/agents';
 import { MarkDown } from '@/components/WorkFlow/MarkDown';
 import { isActivityTraceEnabled } from '@/lib/activityClassifier';
+import { getTaskElapsedMs } from '@/lib/taskTime';
 import { cn } from '@/lib/utils';
 import type { VanillaChatStore } from '@/store/chatStore';
 import {
   AgentStep,
   ChatTaskStatus,
-  type ChatTaskStatusType,
   SessionMode,
   TaskStatus,
 } from '@/types/constants';
@@ -67,16 +67,8 @@ function normalizeToolkitMessage(value: unknown): string {
 }
 
 /** Matches `getFormattedTaskTime` / task timer fields on the chat task. */
-function getTaskElapsedMs(task: {
-  status: ChatTaskStatusType;
-  taskTime: number;
-  elapsed: number;
-}): number {
-  if (task.status === ChatTaskStatus.RUNNING && task.taskTime !== 0) {
-    return Math.max(0, Date.now() - task.taskTime + task.elapsed);
-  }
-  return Math.max(0, task.elapsed);
-}
+// `getTaskElapsedMs` now lives in `@/lib/taskTime` so the Thought Process pill
+// and the work log share one definition (see the import above).
 
 type TaggedLog = {
   entry: AgentMessage;
@@ -364,7 +356,16 @@ export function buildAgentBlocks(
 
     if (entry.step === AgentStep.DEACTIVATE_AGENT) {
       const cur = cursor.current;
-      if (cur && cur.agentId === tag.agentId) cur.status = 'done';
+      if (cur && cur.agentId === tag.agentId) {
+        cur.status = 'done';
+        // No further DEACTIVATE can arrive for this agent, so any tool still
+        // "running" is orphaned (its result was never emitted, e.g. an
+        // unwrapped tool that raised). Settle it so the row stops shimmering
+        // "still working" forever with a blank Response.
+        for (const it of cur.items) {
+          if (it.kind === 'tool' && it.status === 'running') it.status = 'done';
+        }
+      }
       continue;
     }
 
@@ -1335,7 +1336,9 @@ export function TaskWorkLogAccordion({
             transition={HEIGHT_MOTION}
             className="overflow-hidden"
           >
-            <div className="flex min-w-0 flex-col gap-2.5 pb-1">
+            {/* Capped + scrollable: a long run (many reads/searches) would
+                otherwise grow unbounded and push the answer off-screen. */}
+            <div className="flex max-h-[28rem] min-w-0 flex-col gap-2.5 overflow-y-auto overscroll-contain pb-1 pr-1">
               {effectiveGroups.map((entry) =>
                 entry.kind === 'agent-group' ? (
                   <AgentGroupRow

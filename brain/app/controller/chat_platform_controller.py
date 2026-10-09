@@ -1217,7 +1217,10 @@ async def chat_steps_playback(task_id: str, delay_time: float = Query(0.0)):
                         "createdAt": msg.get("createdAt"),
                         "attaches": msg.get("attaches") or [],
                         "fileList": msg.get("fileList") or [],
-                        "reasoning": msg.get("reasoning")
+                        "reasoning": msg.get("reasoning"),
+                        # Execution Summary snapshot, replayed so the panel
+                        # rebuilds the summary from history (not just live runs).
+                        "activities": msg.get("activities"),
                     }
                 }
                 

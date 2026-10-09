@@ -30,7 +30,6 @@ import { MarkDown } from '@/components/WorkFlow/MarkDown';
 import {
   buildActivityRenderEntries,
   type ActivityCategory,
-  type ActivityGroup,
   type ActivityItem,
 } from '@/lib/activityClassifier';
 import { cn } from '@/lib/utils';
@@ -216,7 +215,11 @@ const HEIGHT_MOTION = {
   opacity: { duration: 0.16, ease: CONTENT_EASE },
 } as const;
 
-const CATEGORY_ICON: Record<ActivityCategory, LucideIcon> = {
+/**
+ * Category -> leading icon. Exported so the Execution Summary can label its
+ * per-category groups with the same glyphs the trace rows already use.
+ */
+export const ACTIVITY_CATEGORY_ICON: Record<ActivityCategory, LucideIcon> = {
   search: Search,
   edit: Pencil,
   shell: Terminal,
@@ -227,14 +230,20 @@ const CATEGORY_ICON: Record<ActivityCategory, LucideIcon> = {
   other: FileText,
 };
 
-const ActivityItemRow = memo(function ActivityItemRow({
+/**
+ * One activity-trace row: `[icon] [verb] [file icon + clickable filename]
+ * [+N/−M] [badge]`, the whole row expanding to the tool's Request / Response.
+ * Exported so the Execution Summary renders the exact same rows it loves in the
+ * live work log instead of inventing a parallel rendering.
+ */
+export const ActivityItemRow = memo(function ActivityItemRow({
   item,
 }: {
   item: ActivityItem;
 }) {
   const [open, setOpen] = useState(false);
   const host = useHost();
-  const Icon = CATEGORY_ICON[item.category];
+  const Icon = ACTIVITY_CATEGORY_ICON[item.category];
   const hasDetail = Boolean(item.input || item.output);
   const openable = Boolean(item.filePath && host?.openFile);
 
@@ -246,15 +255,18 @@ const ActivityItemRow = memo(function ActivityItemRow({
         disabled={!hasDetail}
         onClick={() => setOpen((v) => !v)}
         className={cn(
-          'group flex w-full min-w-0 items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors',
+          'group flex w-full min-w-0 items-center gap-2 rounded-md px-3 py-2 text-left transition-colors',
           hasDetail && 'hover:bg-ds-bg-neutral-muted-default'
         )}
       >
+        {/*
+        Not sure if we want to duplicate the icons
         <Icon
           size={14}
           aria-hidden
           className="shrink-0 text-ds-icon-neutral-subtle-default"
-        />
+        /> */}
+        
         {item.running ? (
           <ShinyText
             text={item.verb}
@@ -361,46 +373,143 @@ const ActivityItemRow = memo(function ActivityItemRow({
 });
 ActivityItemRow.displayName = 'ActivityItemRow';
 
-const ActivityGroupRow = memo(function ActivityGroupRow({
-  group,
-  running,
-}: {
-  group: ActivityGroup;
-  running: boolean;
-}) {
-  const [override, setOverride] = useState<boolean | null>(null);
-  const open = override ?? running;
+/** Every meaningful category, minus `other` (nothing to show). */
+export type MeaningCategory = Exclude<ActivityCategory, 'other'>;
 
-  // A single-item group reads better as one row than a group with a
-  // one-line summary that just repeats it.
-  if (group.items.length === 1) {
-    return <ActivityItemRow item={group.items[0]} />;
+/**
+ * Presentation for each category, shared by the Execution Summary title pills
+ * and the group headers in both the summary and the live trace: the pill noun,
+ * the group name, and the count tone.
+ */
+export const METRIC_META: Record<
+  MeaningCategory,
+  { label: string; groupLabel: string; tone: string; description: string }
+> = {
+  search: {
+    label: 'searches',
+    groupLabel: 'Codebase Discovery',
+    tone: 'text-ds-text-information-default-default',
+    description: 'searching the codebase',
+  },
+  read: {
+    label: 'read',
+    groupLabel: 'Files Read',
+    tone: 'text-ds-text-neutral-default-default',
+    description: 'reading a file',
+  },
+  edit: {
+    label: 'modified',
+    groupLabel: 'Files Changed',
+    tone: 'text-ds-text-status-completed-default-default',
+    description: 'editing a file',
+  },
+  shell: {
+    label: 'commands',
+    groupLabel: 'Commands Run',
+    tone: 'text-ds-text-neutral-default-default',
+    description: 'running a command',
+  },
+  browser: {
+    label: 'browser actions',
+    groupLabel: 'Web Browsing',
+    tone: 'text-ds-text-information-default-default',
+    description: 'browsing the web',
+  },
+  memory: {
+    label: 'memories',
+    groupLabel: 'Project Memory',
+    tone: 'text-ds-text-neutral-default-default',
+    description: 'recalling project memory',
+  },
+  mcp: {
+    label: 'connector actions',
+    groupLabel: 'Connectors',
+    tone: 'text-ds-text-neutral-default-default',
+    description: 'calling a connector',
+  },
+};
+
+/** Stable order the pills and the groups render in. */
+export const METRIC_ORDER: MeaningCategory[] = [
+  'search',
+  'read',
+  'edit',
+  'shell',
+  'browser',
+  'memory',
+  'mcp',
+];
+
+/** One category plus the operations that fired in it. */
+export interface ActivityGroupView {
+  category: MeaningCategory;
+  items: ActivityItem[];
+}
+
+/**
+ * Bucket activities by category, dropping `other` and keeping METRIC_ORDER so
+ * Codebase Discovery, Files Read and Files Changed always lead.
+ */
+export function groupActivitiesByCategory(
+  items: ActivityItem[]
+): ActivityGroupView[] {
+  const byCategory = new Map<MeaningCategory, ActivityItem[]>();
+  for (const item of items) {
+    if (item.category === 'other') continue;
+    const bucket = byCategory.get(item.category);
+    if (bucket) bucket.push(item);
+    else byCategory.set(item.category, [item]);
   }
+  return METRIC_ORDER.filter((category) => byCategory.has(category)).map(
+    (category) => ({ category, items: byCategory.get(category)! })
+  );
+}
+
+/**
+ * One expandable group: a header (chevron, category icon, group name, count)
+ * over the real trace rows for that category.
+ */
+function ActivityGroup({
+  group,
+  open,
+  onToggle,
+}: {
+  group: ActivityGroupView;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const meta = METRIC_META[group.category];
+  const Icon = ACTIVITY_CATEGORY_ICON[group.category];
 
   return (
-    <div className="flex w-full min-w-0 flex-col">
+    <div className="flex flex-col">
       <button
         type="button"
+        onClick={onToggle}
         aria-expanded={open}
-        onClick={() => setOverride((v) => !(v ?? running))}
-        className="flex w-fit min-w-0 max-w-full items-center gap-1 px-2.5 py-1.5 text-left transition-opacity hover:opacity-80"
+        className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left outline-none transition-colors hover:bg-ds-bg-neutral-muted-default"
       >
-        <span className="truncate text-label-sm font-normal text-ds-text-neutral-subtle-default">
-          {group.summary}
+        <span className="inline-flex min-w-0 items-center gap-1.5 text-sm text-ds-text-neutral-default-default">
+          {open ? (
+            <ChevronDown className="h-3 w-3 shrink-0" aria-hidden />
+          ) : (
+            <ChevronRight className="h-3 w-3 shrink-0" aria-hidden />
+          )}
+          <Icon
+            size={13}
+            aria-hidden
+            className="shrink-0 text-ds-icon-neutral-subtle-default"
+          />
+          <span className="truncate font-medium">{meta.groupLabel}</span>
         </span>
-        {open ? (
-          <ChevronDown
-            size={14}
-            aria-hidden
-            className="shrink-0 text-ds-icon-neutral-subtle-default"
-          />
-        ) : (
-          <ChevronRight
-            size={14}
-            aria-hidden
-            className="shrink-0 text-ds-icon-neutral-subtle-default"
-          />
-        )}
+        <span
+          className={cn(
+            'shrink-0 font-mono text-xs font-semibold tabular-nums',
+            meta.tone
+          )}
+        >
+          {group.items.length}
+        </span>
       </button>
       <AnimatePresence initial={false}>
         {open ? (
@@ -412,7 +521,7 @@ const ActivityGroupRow = memo(function ActivityGroupRow({
             transition={HEIGHT_MOTION}
             className="min-w-0 overflow-hidden"
           >
-            <div className="flex flex-col gap-0.5 pl-4">
+            <div className="flex flex-col gap-1.5 px-1.5 pb-2 pt-0.5">
               {group.items.map((item) => (
                 <ActivityItemRow key={item.id} item={item} />
               ))}
@@ -422,8 +531,64 @@ const ActivityGroupRow = memo(function ActivityGroupRow({
       </AnimatePresence>
     </div>
   );
+}
+
+/**
+ * The grouped activity body: one expandable group per category that fired, in
+ * METRIC_ORDER, inside the shared bordered surface. This is the SAME rendering
+ * the Execution Summary mounts and the live `ActivityTimeline` mounts per
+ * tool-run, so the summary and the live trace read identically.
+ *
+ * While `running`, every group starts open so progress is visible without a
+ * click; once the run settles they collapse (unless the user toggled one).
+ */
+export const ActivityCategoryGroups = memo(function ActivityCategoryGroups({
+  activities,
+  running = false,
+  defaultOpen = false,
+  className,
+}: {
+  activities: ActivityItem[];
+  running?: boolean;
+  defaultOpen?: boolean;
+  className?: string;
+}) {
+  const groups = useMemo(
+    () => groupActivitiesByCategory(activities),
+    [activities]
+  );
+  const [overrides, setOverrides] = useState<Record<string, boolean>>({});
+
+  if (!groups.length) return null;
+
+  const defaultExpanded = defaultOpen || running;
+  const isOpen = (category: MeaningCategory) =>
+    overrides[category] ?? defaultExpanded;
+  const toggle = (category: MeaningCategory) =>
+    setOverrides((prev) => ({
+      ...prev,
+      [category]: !(prev[category] ?? defaultExpanded),
+    }));
+
+  return (
+    <div
+      className={cn(
+        'divide-y divide-ds-border-neutral-subtle-default overflow-hidden rounded-md border border-ds-border-neutral-subtle-default bg-ds-bg-neutral-subtle-default',
+        className
+      )}
+    >
+      {groups.map((group) => (
+        <ActivityGroup
+          key={group.category}
+          group={group}
+          open={isOpen(group.category)}
+          onToggle={() => toggle(group.category)}
+        />
+      ))}
+    </div>
+  );
 });
-ActivityGroupRow.displayName = 'ActivityGroupRow';
+ActivityCategoryGroups.displayName = 'ActivityCategoryGroups';
 
 export interface ActivityTimelineProps {
   items: TimelineItem[];
@@ -431,7 +596,13 @@ export interface ActivityTimelineProps {
   running: boolean;
 }
 
-/** Drop-in replacement for the flat message/tool row list inside a block. */
+/**
+ * Drop-in replacement for the flat message/tool row list inside a block. Each
+ * run of tool calls renders through `ActivityCategoryGroups`, so the live trace
+ * is grouped by KIND of work (Codebase Discovery / Files Read / Files Changed …)
+ * exactly like the Execution Summary — it fills in dynamically instead of only
+ * appearing at the end.
+ */
 export const ActivityTimeline = memo(function ActivityTimeline({
   items,
   running,
@@ -449,11 +620,13 @@ export const ActivityTimeline = memo(function ActivityTimeline({
             running={entry.item.running && running}
           />
         ) : (
-          <ActivityGroupRow
+          <ActivityCategoryGroups
             // Groups aren't individually id-stable across re-classification;
-            // index + first-item id is stable enough for this list's order.
+            // the run's first-item id is stable enough for this list's order.
             key={entry.group.id}
-            group={entry.group}
+            activities={entry.group.items}
+            // Only the newest run auto-opens while the block is live; older
+            // runs collapse to their category headers so the trace stays short.
             running={running && index === entries.length - 1}
           />
         )

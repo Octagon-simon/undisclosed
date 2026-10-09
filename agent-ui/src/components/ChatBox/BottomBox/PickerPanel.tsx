@@ -167,7 +167,7 @@ export function PickerPanel({
           items, so once you've added connectors/skills there was no way back to
           the manage screen. Keep it reachable here. */}
       {totalItems > 0 && (
-        <div className="flex justify-end border-t border-solid border-ds-border-neutral-subtle-default px-2 py-1.5">
+        <div className="flex justify-end px-2 py-1.5">
           <Button
             variant="ghost"
             size="xs"

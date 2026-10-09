@@ -12,6 +12,7 @@ import {
   CommandContribution,
   MenuContribution,
 } from '@theia/core/lib/common';
+import { KeybindingContribution } from '@theia/core/lib/browser';
 import { SidePanelHandler } from '@theia/core/lib/browser/shell/side-panel-handler';
 import { UndisclosedSidePanelHandler } from './undisclosed-side-panel-handler';
 import { UndisclosedAgentWidget } from './undisclosed-agent-widget';
@@ -27,6 +28,7 @@ import { UndisclosedExplorerAutoRevealContribution } from './undisclosed-explore
 import { UndisclosedTitleBarContribution } from './undisclosed-title-bar-contribution';
 import { WebviewEnvironment } from '@theia/plugin-ext/lib/main/browser/webview/webview-environment';
 import { UndisclosedWebviewEnvironment } from './undisclosed-webview-environment';
+import { JsxCommentContribution } from './jsx-comment-contribution';
 
 /**
  * Frontend DI module (referenced by `theiaExtensions` in package.json). Binds
@@ -121,4 +123,11 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
   // the prompt flow (not the editor hand-off) and show an inline validation.
   bind(GitCommitGuardContribution).toSelf().inSingletonScope();
   bind(FrontendApplicationContribution).toService(GitCommitGuardContribution);
+
+  // `Cmd/Ctrl+/` in `.tsx`/`.jsx` files: Monaco's line comment emits `//`, which
+  // is invalid inside JSX. This contribution rebinds the chord for those two
+  // languages to a JSX-aware `{/* … */}` toggle. See jsx-comment-contribution.ts.
+  bind(JsxCommentContribution).toSelf().inSingletonScope();
+  bind(CommandContribution).toService(JsxCommentContribution);
+  bind(KeybindingContribution).toService(JsxCommentContribution);
 });

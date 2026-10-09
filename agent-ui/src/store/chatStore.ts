@@ -53,6 +53,11 @@ import {
   toRemoteSubAgentRuntimeConfig,
 } from '@/lib/remoteSubAgent';
 import { isLocalWorkspaceSpace } from '@/lib/spaceLabel';
+import {
+  collectTaskActivities,
+  toPersistedActivities,
+  type ActivityItem,
+} from '@/lib/activityClassifier';
 import { getOpenFolderRoot } from '@/lib/openFolder';
 import { deriveAttachFileName } from '@/lib/attachmentUrl';
 import { proxyUpdateTriggerExecution } from '@/service/triggerApi';
@@ -1553,6 +1558,10 @@ const chatStore = (initial?: Partial<ChatStore>) =>
                 // assistant turn so the usage overview reports a real total
                 // (backend keeps the max across turns).
                 const turnTokens = get().tasks[taskId]?.tokens || 0;
+                // Persist the peak single-request size alongside the turn so the
+                // context-window gauge survives a reload (backend keeps the max).
+                const turnLastRequestTokens =
+                  get().tasks[taskId]?.lastRequestTokens || 0;
                 enqueueTurnPost(
                   chatId,
                   queryId,
@@ -1562,13 +1571,15 @@ const chatStore = (initial?: Partial<ChatStore>) =>
                     step,
                     content: String(content ?? ''),
                     reasoning: (message as any)?.reasoning ?? null,
+                    activities: (message as any)?.activities ?? null,
                     agent_name: (message as any)?.agent_name || null,
                     attaches: (message as any)?.attaches || [],
                     fileList: (message as any)?.fileList || [],
                     createdAt: new Date().toISOString(),
                   },
                   undefined,
-                  turnTokens
+                  turnTokens,
+                  turnLastRequestTokens
                 );
               })().catch((e) =>
                 console.warn('Failed to enqueue assistant turn update persist:', e)
@@ -3854,6 +3865,18 @@ const chatStore = (initial?: Partial<ChatStore>) =>
                 (task: TaskInfo) => task.id === resolvedProcessTaskId
               )
             );
+            // Fallback: if task ID not found, try finding by agent type — this
+            // mirrors the ACTIVATE_TOOLKIT path exactly. Without it a DEACTIVATE
+            // could resolve to no agent (assigneeAgentIndex === -1) and never be
+            // appended to the log, even though its ACTIVATE had been — leaving
+            // that tool row stuck on "still working" forever with a blank
+            // Response, since the trace only flips a row to done when it sees
+            // the matching DEACTIVATE.
+            if (assigneeAgentIndex === -1 && agentMessages.data.agent_name) {
+              assigneeAgentIndex = taskAssigning!.findIndex(
+                (agent: Agent) => agent.type === agentMessages.data.agent_name
+              );
+            }
             if (
               assigneeAgentIndex === -1 &&
               (isSingleAgentEventName(agentMessages.data.agent_name) ||
@@ -4294,6 +4317,17 @@ const chatStore = (initial?: Partial<ChatStore>) =>
             const liveReasoning = tasks[currentTaskId]?.liveReasoning;
             const finalReasoning = endReasoning || liveReasoning || undefined;
             if (liveReasoning) clearLiveReasoning(currentTaskId);
+            // A REPLAY end event carries the Execution Summary snapshot that was
+            // persisted with the turn (see the playback endpoint); a LIVE end
+            // event doesn't, so derive it from the run's tool log instead. Either
+            // way the END message ends up carrying `activities`, which is what
+            // the summary renders from after a reload.
+            const endActivities =
+              typeof endData === 'object' &&
+              endData !== null &&
+              Array.isArray((endData as { activities?: unknown }).activities)
+                ? (endData as { activities: ActivityItem[] }).activities
+                : undefined;
             const endMessageId = generateUniqueId();
             const endUiMessage: Message = {
               id: endMessageId,
@@ -4303,6 +4337,11 @@ const chatStore = (initial?: Partial<ChatStore>) =>
               isConfirm: false,
               fileList: [],
               reasoning: finalReasoning,
+              activities:
+                endActivities ??
+                toPersistedActivities(
+                  collectTaskActivities(tasks[currentTaskId]?.taskAssigning)
+                ),
             };
 
             addMessages(currentTaskId, endUiMessage);
@@ -5042,13 +5081,23 @@ const chatStore = (initial?: Partial<ChatStore>) =>
       });
     },
     addMessages(taskId, message) {
+      // Stamp the wall-clock time on user turns so the turn header can render
+      // "when" it was sent (Phase 4). Persistence already writes its own
+      // createdAt; this keeps the in-memory copy in sync so LIVE turns show a
+      // timestamp too, mirroring the reference design. Agent messages (and
+      // hydrated/replayed messages, which arrive via setMessages) are left
+      // untouched, and an existing createdAt is preserved.
+      const storedMessage =
+        message?.role === 'user' && !(message as Message)?.createdAt
+          ? { ...message, createdAt: new Date().toISOString() }
+          : message;
       set((state) => ({
         ...state,
         tasks: {
           ...state.tasks,
           [taskId]: {
             ...state.tasks[taskId],
-            messages: [...state.tasks[taskId].messages, message],
+            messages: [...state.tasks[taskId].messages, storedMessage],
           },
         },
       }));
@@ -5134,6 +5183,10 @@ const chatStore = (initial?: Partial<ChatStore>) =>
                 // assistant turn so the usage overview reports a real total
                 // (backend keeps the max across turns).
                 const turnTokens = get().tasks[taskId]?.tokens || 0;
+                // Persist the peak single-request size alongside the turn so the
+                // context-window gauge survives a reload (backend keeps the max).
+                const turnLastRequestTokens =
+                  get().tasks[taskId]?.lastRequestTokens || 0;
                 enqueueTurnPost(
                   chatId,
                   queryId,
@@ -5143,13 +5196,15 @@ const chatStore = (initial?: Partial<ChatStore>) =>
                     step,
                     content: String(content ?? ''),
                     reasoning: (message as any)?.reasoning ?? null,
+                    activities: (message as any)?.activities ?? null,
                     agent_name: (message as any)?.agent_name || null,
                     attaches: (message as any)?.attaches || [],
                     fileList: (message as any)?.fileList || [],
                     createdAt: new Date().toISOString(),
                   },
                   undefined,
-                  turnTokens
+                  turnTokens,
+                  turnLastRequestTokens
                 );
               })().catch((e) =>
                 console.warn('Failed to enqueue assistant turn persist:', e)

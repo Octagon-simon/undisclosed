@@ -47,6 +47,14 @@
   --ds-text-neutral-default-default: var(--theia-foreground);
   --ds-text-neutral-subtle-default: var(--theia-descriptionForeground, var(--theia-foreground));
   --ds-text-neutral-muted-default: var(--theia-descriptionForeground, var(--theia-foreground));
+  /* Disabled variants. These were UNMAPPED (and the bundle defines no --ds-* at
+     all), so `color: var(--ds-text-neutral-*-disabled)` was invalid at
+     computed-value time -> the color INHERITED -> initial black -> invisible in
+     dark theme (the composer's rotating hint copy, the plan subtask placeholder,
+     disabled tool/menu labels). Map to Theia's disabled foreground. */
+  --ds-text-neutral-default-disabled: var(--theia-disabledForeground, var(--theia-descriptionForeground, var(--theia-foreground)));
+  --ds-text-neutral-subtle-disabled: var(--theia-disabledForeground, var(--theia-descriptionForeground, var(--theia-foreground)));
+  --ds-text-neutral-muted-disabled: var(--theia-disabledForeground, var(--theia-descriptionForeground, var(--theia-foreground)));
 
   /* Icons */
   --ds-icon-neutral-default-default: var(--theia-icon-foreground, var(--theia-foreground));
@@ -264,14 +272,25 @@
   color: var(--theia-textLink-foreground, #58a6ff) !important;
 }
 
-/* The composer shows an unwanted blue focus outline (browser/Theia default) —
- * the input has its own border, so drop the outline. */
-.undisclosed-agent-root textarea:focus,
-.undisclosed-agent-root textarea:focus-visible,
-.undisclosed-agent-root [contenteditable]:focus,
-.undisclosed-agent-root [contenteditable]:focus-visible,
-.undisclosed-agent-root input:focus-visible {
+/* Theia's core sheet draws a focus ring on EVERY focused element:
+ *   :focus:not(iframe) { outline-width: 1px; outline-style: solid;
+ *     outline-offset: -1px; opacity: 1; outline-color: var(--theia-focusBorder); }
+ * That selector has specificity 0,1,1, which BEATS Tailwind's `.outline-none`
+ * utility (0,1,0) — and `.outline-none` only sets a *transparent* 2px outline
+ * anyway. So the utility never actually hides the ring: the composer, the
+ * section disclosure buttons, the dropdown triggers and every other focused
+ * control still flash a blue `--theia-focusBorder` outline no matter what we do
+ * in JSX. Kill it for the whole panel with a scoped !important rule. Radix
+ * menus/selects render in a portal OUTSIDE the panel root, so cover the popper
+ * wrapper too. Controls keep their own hover/active affordances. */
+.undisclosed-agent-root:focus,
+.undisclosed-agent-root:focus-visible,
+.undisclosed-agent-root :focus,
+.undisclosed-agent-root :focus-visible,
+[data-radix-popper-content-wrapper] :focus,
+[data-radix-popper-content-wrapper] :focus-visible {
   outline: none !important;
+  outline-offset: 0 !important;
 }
 
 /* A menuPath toolbar item (our ⋯) renders as [ellipsis] + a separate chevron

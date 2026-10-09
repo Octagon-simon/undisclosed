@@ -14,7 +14,12 @@
 // ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
 
 import useChatStoreAdapter from '@/hooks/useChatStoreAdapter';
-import { LiveReasoning } from './LiveReasoning';
+// NOTE: `LiveReasoning` (the old plain "Thinking…" box) is intentionally
+// retained on disk but no longer mounted. The live, streaming reasoning now
+// renders through the designed `ThinkingBlock` (Thought Process card), so the
+// live and folded views read identically. Delete `LiveReasoning` in a later
+// pass once we're sure nothing else needs it.
+import { ThinkingBlock } from './MessageItem/ThinkingBlock';
 import { usePageTabStore } from '@/store/pageTabStore';
 import { useProjectRuntimeStore } from '@/store/projectRuntimeStore';
 import { AnimatePresence } from 'framer-motion';
@@ -505,7 +510,21 @@ export const ProjectChatContainer: React.FC<ProjectChatContainerProps> = ({
             );
           })}
         </AnimatePresence>
-        <LiveReasoning />
+        {/* Live, streaming reasoning — the designed Thought Process card, fed
+            the active task's `liveReasoning`. Starts EXPANDED so the user can
+            watch the agent think while it works (this block only exists during
+            an active turn); the user can still collapse it, and it unmounts when
+            the turn ends (the store clears `liveReasoning`), at which point the
+            turn's own folded `ThinkingBlock` takes over. Replaces the old
+            `LiveReasoning` "Thinking…" box. */}
+        {(() => {
+          const liveReasoning = activeTaskId
+            ? chatStore?.tasks[activeTaskId]?.liveReasoning
+            : '';
+          return liveReasoning ? (
+            <ThinkingBlock reasoning={liveReasoning} defaultOpen />
+          ) : null;
+        })()}
         {activeProjectId ? (
           <QueuedFollowups projectId={activeProjectId} />
         ) : null}

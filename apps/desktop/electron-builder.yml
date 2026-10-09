@@ -69,6 +69,16 @@ mac:
   #   xattr -cr /Applications/Undisclosed.app
   # Set an identity + hardenedRuntime:true later when notarizing for release.
   identity: null
+  # macOS App Nap opt-out. Without this the OS may silently NAP the app once it
+  # is idle (or its window is occluded / hidden fullscreen): a napped process
+  # stops running timers, so socket.io's heartbeat and Theia's 5s connection
+  # ping miss their deadlines and the status bar flips to
+  # "Offline - Cannot connect to backend." even though nothing is actually wrong.
+  # NSAppSleepDisabled tells macOS not to nap this app. `extendInfo` adds it to
+  # the generated Contents/Info.plist. The runtime powerSaveBlocker in
+  # electron-entry.js is the belt to this suspenders.
+  extendInfo:
+    NSAppSleepDisabled: true
 
 win:
   target:
