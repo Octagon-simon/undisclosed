@@ -1,5 +1,7 @@
 # Undisclosed
 
+<img width="1728" height="1117" alt="Screenshot 2026-10-09 at 14 56 48" src="https://github.com/user-attachments/assets/f81c8418-601f-48f4-9613-459c2f5979e9" />
+
 **An on-device AI coding editor.** At its core it is a customized [Eclipse Theia](https://theia-ide.org/)
 editor with an AI coding agent built in as a **native panel that lives inside the
 editor** - the agent is not docked next to a separate window the way it works in
