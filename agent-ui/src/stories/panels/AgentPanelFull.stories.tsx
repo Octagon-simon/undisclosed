@@ -67,6 +67,8 @@ export interface PanelFullProps {
   windowTokens?: number;
 
   /** Turn (Sections 3-6). */
+  /** Earlier turns stacked above the current one (scroll-chaining story). */
+  history?: ReactNode;
   prompt: string;
   timestamp?: string;
   reply: string;
@@ -91,6 +93,7 @@ function PanelFull({
   brainState = 'live',
   usedTokens = 4_420_000,
   windowTokens = 8_000_000,
+  history,
   prompt,
   timestamp,
   reply,
@@ -121,6 +124,7 @@ function PanelFull({
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto flex w-full max-w-[600px] flex-col gap-2 px-6 py-3">
           {/* Section 3 (user) */}
+          {history}
           <UserMessageCard id="user-1" content={prompt} timestamp={timestamp} />
 
           {/* Section 4 - duration/stepCount are passed here so the designed
@@ -441,5 +445,145 @@ export const BrainOffline: Story = {
     brainState: 'dead',
     usedTokens: 0,
     windowTokens: 1_000_000,
+  },
+};
+
+/* ------------------------------------------------------------------------- *
+ * Scroll-chaining story
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Three prior turns stacked ABOVE the current one. The scroll-chaining story
+ * needs real content up there: the point is to reach the top of the Plan /
+ * Execution boxes and confirm the wheel then scrolls the panel, revealing these
+ * earlier turns. Without predecessors there is nothing above to scroll to and
+ * the behaviour is invisible.
+ */
+const HISTORY = (
+  <>
+    <UserMessageCard
+      id="user-0"
+      content="first, scan the repo and tell me where the panel's scroll containers are defined"
+      timestamp="2026-10-08T22:40:02"
+    />
+    <AgentMessageCard
+      id="reply-0"
+      content={
+        'The panel body scroller is the min-h-0 flex-1 overflow-y-auto wrapper in ' +
+        'ChatBox/index.tsx. The compact scroll regions live in MessageItem: PlanCard ' +
+        '(max-h-64), ExecutionSummary (max-h-96), ThinkingBlock (max-h-64), plus ' +
+        'LiveReasoning (max-h-40) and TaskWorkLogAccordion (max-h-[28rem]). Each is ' +
+        'overflow-y-auto with its own max-height, so it scrolls internally before the ' +
+        'panel does.'
+      }
+      indicator
+      typewriter={false}
+    />
+    <UserMessageCard
+      id="user-0b"
+      content="and what happens when I scroll to the bottom of one of those little boxes?"
+      timestamp="2026-10-08T22:44:19"
+    />
+    <AgentMessageCard
+      id="reply-0b"
+      content={
+        'That depends on overscroll-behavior. With overscroll-contain the wheel stops ' +
+        'dead at the box edge and never reaches the panel, so you get stuck. With the ' +
+        'browser default (auto) the scroll chains to the nearest scrollable ancestor ' +
+        'once the box hits its edge. For a nested box inside a scrollable panel, auto ' +
+        'is exactly what you want.'
+      }
+      indicator
+      typewriter={false}
+    />
+  </>
+);
+
+/** A long plan so the Plan card's own max-h-64 list actually scrolls. */
+const LONG_PLAN: PlanStep[] = [
+  'Locate the panel scroll container in ChatBox/index.tsx',
+  'Inventory every inline scroll region in MessageItem',
+  'Confirm each region has overflow-y-auto plus a max-h',
+  'Grep the panel for overscroll-contain',
+  'Remove overscroll-contain from the Plan card',
+  'Remove overscroll-contain from the Execution Summary',
+  'Remove overscroll-contain from the Thinking block',
+  'Remove overscroll-contain from LiveReasoning',
+  'Remove overscroll-contain from the work-log accordion',
+  'Leave input-select untouched (a dropdown must contain)',
+  'Wire the Storybook scroll-chaining story',
+  'Run the agent-ui type-check',
+  'Rebuild the agent-embed bundle',
+  'Eyeball the change in the running app',
+].map((content, i) => ({
+  id: `sp${i}`,
+  content,
+  status: TaskStatus.COMPLETED,
+  durationMs: 400 + i * 130,
+}));
+
+/** A long activity log so the Execution Summary's max-h-96 group scrolls. */
+const LONG_ACTIVITIES: ActivityItem[] = [
+  ...ACTIVITIES,
+  readItem('agent-ui/src/components/ChatBox/index.tsx', 'r2', '1-1720'),
+  editItem(
+    'agent-ui/src/components/ChatBox/MessageItem/PlanCard.tsx',
+    3,
+    3,
+    'e4'
+  ),
+  editItem(
+    'agent-ui/src/components/ChatBox/MessageItem/ThinkingBlock.tsx',
+    2,
+    2,
+    'e5'
+  ),
+  editItem('agent-ui/src/components/ChatBox/LiveReasoning.tsx', 2, 2, 'e6'),
+  editItem(
+    'agent-ui/src/components/ChatBox/MessageItem/TaskWorkLogAccordion.tsx',
+    4,
+    4,
+    'e7'
+  ),
+  readItem('agent-ui/src/components/ui/input-select.tsx', 'r3', '360-372'),
+];
+
+/** Long reasoning so the Thought Process body's max-h-64 box scrolls too. */
+const LONG_REASONING = [
+  'The panel body is the only unconstrained scroller, so it is the correct place for the wheel to land once a nested box hits its edge.',
+  'Each inline box keeps its own overflow-y-auto and max-h so short content stays compact; only the chaining behaviour changes.',
+  'overscroll-behavior: contain is the single property that blocks chaining, so removing it restores the browser default, auto.',
+  'input-select is a dropdown and must keep contain; that is the one deliberate exception in the panel.',
+  'Chaining is a spec default, so no JavaScript wheel handler is needed: the browser walks up to the nearest scrollable ancestor for us.',
+  'If the whole page ever starts scrolling when the panel hits its end, the fix is overscroll-contain on the PANEL root, not on these inner boxes.',
+].join('\n');
+
+/**
+ * Proof of the nested-scroll fix.
+ *
+ * The Plan card, Execution Summary and Thought Process are each `overflow-y-auto`
+ * with a `max-h`, and NONE of them sets `overscroll-contain` any more.
+ *
+ * Test it like this (the whole point of the story):
+ *   1. Hover the Plan card and scroll. You scroll INSIDE the card first.
+ *   2. Keep scrolling in the SAME direction once the card hits its edge. The
+ *      wheel now chains to the panel body and the earlier turns above scroll
+ *      into view. Before the fix, `overscroll-contain` ate that wheel and you
+ *      were stuck in the box.
+ *   3. Repeat over the Execution Summary and the Thought Process box.
+ *
+ * Both inner regions are padded past their max-h, and three prior turns are
+ * stacked above, so there is always something to reach.
+ */
+export const ScrollChaining: Story = {
+  args: {
+    ...Conversation.args,
+    history: HISTORY,
+    reply:
+      'Done. The inner boxes no longer trap the wheel: once a box hits its edge, ' +
+      'the panel takes over and the earlier turns scroll into view.',
+    reasoning: LONG_REASONING,
+    activities: LONG_ACTIVITIES,
+    planSteps: LONG_PLAN,
   },
 };

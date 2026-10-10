@@ -215,8 +215,13 @@ export function PlanCard({
             className="overflow-hidden"
           >
             {/* Capped + scrollable so a long plan can't push the answer off
-                screen; `overscroll-contain` keeps the wheel off the panel. */}
-            <ul className="m-0 mt-2.5 flex max-h-64 list-none flex-col gap-1 overflow-y-auto overscroll-contain p-0">
+                screen. We deliberately do NOT set `overscroll-contain`: that
+                trapped the wheel inside the list at its top/bottom, so a user
+                trying to scroll up to earlier chat stayed stuck here. Leaving
+                the browser default (`auto`) chains the wheel to the panel once
+                this list hits its cap, so scrolling past the plan scrolls the
+                conversation above it. */}
+            <ul className="m-0 mt-2.5 flex max-h-64 list-none flex-col gap-1 overflow-y-auto p-0">
               {steps.map((step, i) => {
                 const isRunning = step.status === TaskStatus.RUNNING;
                 const isDone = step.status === TaskStatus.COMPLETED;

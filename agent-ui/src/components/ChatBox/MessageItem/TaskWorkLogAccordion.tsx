@@ -1337,8 +1337,10 @@ export function TaskWorkLogAccordion({
             className="overflow-hidden"
           >
             {/* Capped + scrollable: a long run (many reads/searches) would
-                otherwise grow unbounded and push the answer off-screen. */}
-            <div className="flex max-h-[28rem] min-w-0 flex-col gap-2.5 overflow-y-auto overscroll-contain pb-1 pr-1">
+                otherwise grow unbounded and push the answer off-screen. No
+                `overscroll-contain`: at the edge the wheel chains to the panel
+                (browser default) so scrolling past the log keeps going. */}
+            <div className="flex max-h-[28rem] min-w-0 flex-col gap-2.5 overflow-y-auto pb-1 pr-1">
               {effectiveGroups.map((entry) =>
                 entry.kind === 'agent-group' ? (
                   <AgentGroupRow

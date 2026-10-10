@@ -248,13 +248,17 @@ export function ExecutionSummary({
             {/* Capped + scrollable: a turn that searched and read a lot would
                 otherwise push the answer off-screen. Groups stay collapsed for
                 the whole run (`expandWhileRunning={false}`) so manually opening
-                this mid-run can't reintroduce the scroll trap. */}
+                this mid-run can't reintroduce the scroll trap. No
+                `overscroll-contain`: at the top/bottom edge the browser default
+                (`auto`) chains the wheel to the panel, so scrolling past the
+                summary continues into the conversation above instead of being
+                trapped in this box. */}
             <ActivityCategoryGroups
               activities={activities}
               running={running}
               defaultOpen={defaultOpen}
               expandWhileRunning={false}
-              className="mt-2.5 max-h-96 overflow-y-auto overscroll-contain"
+              className="mt-2.5 max-h-96 overflow-y-auto"
             />
           </motion.div>
         ) : null}

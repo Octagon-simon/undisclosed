@@ -143,9 +143,10 @@ export function ThinkingBlock({
                 unbounded — a long chain-of-thought otherwise pushes the answer
                 far off-screen. Short thoughts stay compact (max-height, not a
                 fixed height), so there's no empty gap when there's little to
-                say. `overscroll-contain` keeps the wheel from chaining to the
-                panel behind it. */}
-            <div className="mt-2.5 max-h-64 overflow-y-auto overscroll-contain whitespace-pre-wrap px-3 pt-2.5 text-label-xs leading-relaxed text-ds-text-neutral-subtle-default">
+                say. NO `overscroll-contain`: that trapped the wheel in here at
+                the top/bottom edge; the browser default (`auto`) chains the
+                wheel to the panel so scrolling past the thoughts keeps going. */}
+            <div className="mt-2.5 max-h-64 overflow-y-auto whitespace-pre-wrap px-3 pt-2.5 text-label-xs leading-relaxed text-ds-text-neutral-subtle-default">
               {text}
             </div>
           </motion.div>
