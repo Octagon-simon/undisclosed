@@ -778,6 +778,12 @@ export interface StartTaskOptions {
   preserveTaskId?: boolean;
   skipHistoryCreate?: boolean;
   historyId?: string | number | null;
+  /**
+   * Re-open the live consumer for an existing Project WITHOUT starting a new
+   * turn (no new chat store, no user message, no initial enqueue). Used to
+   * recover a session whose SSE stream died before a follow-up is enqueued.
+   */
+  resume?: boolean;
 }
 
 export interface ChatStore {
@@ -916,11 +922,50 @@ const autoConfirmTimers: Record<string, ReturnType<typeof setTimeout>> = {};
 const AUTO_CONFIRM_TIMEOUT_MS = 30000;
 
 // Track active SSE connections for proper cleanup. `live` distinguishes
-// real Brain runs from history/share playback streams.
+// real Brain runs from history/share playback streams. `projectId` lets us ask
+// "does this Project still have a live consumer?" (a session's long-lived
+// stream is opened once and reused across follow-up turns that each get a new
+// task id, so task-id lookups are not enough). `lastEventAt` feeds the liveness
+// watchdog that reaps a silently-dropped (half-open) stream.
 const activeSSEControllers: Record<
   string,
-  { controller: AbortController; live: boolean }
+  {
+    controller: AbortController;
+    live: boolean;
+    projectId?: string;
+    lastEventAt: number;
+  }
 > = {};
+
+// If a live stream delivers nothing (not even a heartbeat) for this long, treat
+// it as dead: drop the controller so the next follow-up re-attaches. Heartbeats
+// are ~20s, so this tolerates several missed ticks plus a slow first event
+// without ever false-positiving on a healthy-but-quiet session.
+const SSE_STALE_TIMEOUT_MS = 90_000;
+let sseLivenessTimer: ReturnType<typeof setInterval> | null = null;
+
+function ensureSseLivenessWatchdog(): void {
+  if (sseLivenessTimer) return;
+  sseLivenessTimer = setInterval(() => {
+    const now = Date.now();
+    for (const [taskId, entry] of Object.entries(activeSSEControllers)) {
+      if (!entry.live) continue;
+      const silentForMs = now - entry.lastEventAt;
+      if (silentForMs <= SSE_STALE_TIMEOUT_MS) continue;
+      console.warn(
+        `[sse] Live stream for task ${taskId} (project ${entry.projectId}) was silent for ${Math.round(silentForMs / 1000)}s; marking it dead so the next follow-up can re-attach`
+      );
+      try {
+        entry.controller.abort();
+      } catch {
+        // Ignore abort errors while reaping a dead stream.
+      }
+      delete activeSSEControllers[taskId];
+    }
+  }, 15_000);
+  // Never keep a Node/jsdom process alive just for the watchdog.
+  (sseLivenessTimer as unknown as { unref?: () => void })?.unref?.();
+}
 
 const FINAL_OUTPUT_FILE_PATH_REGEX =
   /(?<![A-Za-z0-9:\\/])(?:[A-Za-z]:)?[\\/][^\s`"'<>|*]+?\.[A-Za-z0-9]{1,12}(?=$|[\s`"'<>|*),;:\]}])/g;
@@ -1678,6 +1723,11 @@ const chatStore = (initial?: Partial<ChatStore>) =>
         throw new Error('No active Project selected.');
       }
       const startOptions = options || {};
+      // A resume re-attaches a live consumer to an existing Project without
+      // starting a new turn (no new chat store, no user message, no enqueue).
+      // Used when a follow-up is sent after the session stream died (brain
+      // restart, idle drop) so the improve POST has a live consumer to drain it.
+      const isResume = !!startOptions.resume && isLiveTask;
       const project =
         isLiveTask && project_id
           ? projectStore.getProjectById(project_id)
@@ -1687,9 +1737,10 @@ const chatStore = (initial?: Partial<ChatStore>) =>
       }
       const sessionModeForRequest =
         sessionMode || project?.mode || SessionMode.SINGLE_AGENT;
-      // Track genuine, user-facing task starts (skip replay/share playback).
+      // Track genuine, user-facing task starts (skip replay/share playback and
+      // resumes, which are not a new task submission).
       // Powers the "time to first task" lifecycle event.
-      if (isLiveTask) {
+      if (isLiveTask && !isResume) {
         const submitWorkers = getWorkerList();
         const submitHasMcp = submitWorkers.some(
           (w) => (w.workerInfo?.mcp_tools?.length ?? 0) > 0
@@ -1717,7 +1768,7 @@ const chatStore = (initial?: Partial<ChatStore>) =>
       /**
        * Replay creates its own chatStore for each task with replayProject
        */
-      if (project_id && type !== 'replay') {
+      if (project_id && type !== 'replay' && !isResume) {
         console.log('Creating a new Chat Instance for current project on end');
         const newChatResult = projectStore.appendInitChatStore(
           project_id,
@@ -1866,7 +1917,16 @@ const chatStore = (initial?: Partial<ChatStore>) =>
             ? projectStore.getHistoryId(project_id)
             : null;
       let snapshots: any = [];
-      let skipFirstConfirm = true;
+      // A normal first startTask creates the turn's chat store up front, so the
+      // FIRST `confirmed` on the stream must reuse it (skipFirstConfirm=true).
+      // A resume is different: it attaches to an ALREADY-started Project and
+      // enqueues no initial turn, so the first `confirmed` it sees belongs to
+      // the follow-up turn. Treat that confirm as a follow-up (false) so it opens
+      // a FRESH task/store for the new turn. Otherwise the follow-up runs inside
+      // the previous (finished) task and inherits its plan card + execution
+      // summary — the "carried over" content that only gets replaced when the
+      // agent emits its own.
+      let skipFirstConfirm = !isResume;
       let playbackFirstStepTimeMs: number | null = null;
       let playbackLastStepTimeMs: number | null = null;
 
@@ -2311,7 +2371,12 @@ const chatStore = (initial?: Partial<ChatStore>) =>
       activeSSEControllers[newTaskId] = {
         controller: abortController,
         live: isLiveTask,
+        projectId: isLiveTask ? (project_id ?? undefined) : undefined,
+        lastEventAt: Date.now(),
       };
+      if (isLiveTask) {
+        ensureSseLivenessWatchdog();
+      }
 
       // Getter functions that use the locked references instead of dynamic ones
       const getCurrentChatStore = () => {
@@ -2340,9 +2405,15 @@ const chatStore = (initial?: Partial<ChatStore>) =>
             run_id: newTaskId,
             space_root_path: spaceRootPath,
             workdir_mode: project?.workdirMode || undefined,
-            question:
-              messageContent ||
-              targetChatStore.getState().getLastUserMessage()?.content,
+            // A resume sends no question: it only re-opens the consumer for an
+            // already-started Project. The follow-up turn is enqueued by the
+            // improve POST that follows, so sending the last user message here
+            // would run the previous turn again.
+            question: isResume
+              ? ''
+              : messageContent ||
+                targetChatStore.getState().getLastUserMessage()?.content,
+            resume: isResume,
             model_platform: apiModel.model_platform,
             email,
             user_id: getAuthStore().user_id,
@@ -2388,6 +2459,17 @@ const chatStore = (initial?: Partial<ChatStore>) =>
           }
         : undefined;
 
+      // For a resume we must not enqueue the follow-up until the brain has
+      // actually created/attached the consumer (so the improve POST finds a
+      // live task lock). `onopen` fires once response headers arrive, which the
+      // brain has already sent after building the lock; resolve there.
+      let resolveResumeOpen: (() => void) | null = null;
+      const resumeOpenPromise = isResume
+        ? new Promise<void>((resolve) => {
+            resolveResumeOpen = resolve;
+          })
+        : null;
+
       const ssePromise = sseTransport({
         url: api,
         method: !type ? 'POST' : 'GET',
@@ -2399,6 +2481,11 @@ const chatStore = (initial?: Partial<ChatStore>) =>
             ? { Authorization: `Bearer ${token}` }
             : undefined,
         async onmessage(event: any) {
+          // Any traffic (data or heartbeat) proves the stream is alive; the
+          // watchdog reaps only streams that go fully silent.
+          const _sseEntry = activeSSEControllers[newTaskId];
+          if (_sseEntry) _sseEntry.lastEventAt = Date.now();
+
           let agentMessages: AgentMessage;
 
           try {
@@ -4858,6 +4945,10 @@ const chatStore = (initial?: Partial<ChatStore>) =>
           console.log('open', respond);
           const { setAttaches, activeTaskId } = get();
           setAttaches(activeTaskId as string, []);
+          if (resolveResumeOpen) {
+            resolveResumeOpen();
+            resolveResumeOpen = null;
+          }
           return;
         },
 
@@ -4895,6 +4986,35 @@ const chatStore = (initial?: Partial<ChatStore>) =>
             err?.message?.includes('ERR_NETWORK_CHANGED') ||
             err?.message?.includes('ERR_INTERNET_DISCONNECTED');
           if (isConnectionError) {
+            if (isLiveTask) {
+              // A live stream is the ONLY consumer of the turn queue, so a
+              // silent retry is dangerous: fetchEventSource re-POSTs /chat with
+              // the original body, which re-runs the first turn, and it keeps
+              // the session marked "live" so a follow-up never re-attaches.
+              // Mark the session dead (drop the controller, clear the stuck
+              // "thinking" flag) and stop the retry — the next follow-up opens a
+              // fresh resume stream that attaches WITHOUT re-running a turn.
+              console.warn(
+                '[fetchEventSource] Live stream connection error; marking session dead so the next follow-up can re-attach'
+              );
+              try {
+                if (activeSSEControllers[newTaskId]) {
+                  delete activeSSEControllers[newTaskId];
+                }
+              } catch (cleanupError) {
+                console.warn(
+                  'Error cleaning up AbortController on live stream drop:',
+                  cleanupError
+                );
+              }
+              const dropStore = getCurrentChatStore();
+              const dropTaskId = getCurrentTaskId();
+              const dropTask = dropStore.tasks[dropTaskId];
+              if (dropTask?.isPending) {
+                dropStore.setIsPending(dropTaskId, false);
+              }
+              throw err;
+            }
             console.warn(
               '[fetchEventSource] Connection error detected, will retry automatically...'
             );
@@ -4947,6 +5067,18 @@ const chatStore = (initial?: Partial<ChatStore>) =>
             if (currentTask && currentTask.status !== ChatTaskStatus.FINISHED) {
               currentStore.setStatus(currentTaskId, ChatTaskStatus.FINISHED);
             }
+          } else if (isLiveTask) {
+            // A live session stream only closes on error/timeout/abort — the
+            // brain keeps it open across turns. Stop lying that the task is
+            // still thinking, but do NOT mark it FINISHED: the task lock (and
+            // its conversation context) may still be alive on the brain, and the
+            // next follow-up will re-attach to it.
+            const currentStore = getCurrentChatStore();
+            const currentTaskId = getCurrentTaskId();
+            const currentTask = currentStore.tasks[currentTaskId];
+            if (currentTask?.isPending) {
+              currentStore.setIsPending(currentTaskId, false);
+            }
           }
           // Abort to resolve fetchEventSource promise (for replay/load - allows awaiting completion)
           try {
@@ -4970,6 +5102,17 @@ const chatStore = (initial?: Partial<ChatStore>) =>
           }
         },
       });
+      if (isResume && resumeOpenPromise) {
+        // Wait until the attach stream is established (headers received, so the
+        // brain has built/attached the task lock) before letting the caller
+        // enqueue the follow-up. Bounded so a hung open can never block the send
+        // forever; if it times out the improve POST still fires and its own
+        // error handling surfaces any real failure.
+        await Promise.race([
+          resumeOpenPromise,
+          new Promise<void>((resolve) => setTimeout(resolve, 8000)),
+        ]);
+      }
       if (type === 'replay') {
         try {
           await ssePromise;
@@ -4982,6 +5125,11 @@ const chatStore = (initial?: Partial<ChatStore>) =>
           console.error(`SSE stream failed for task ${newTaskId}:`, err);
           throw err; // Let loadProjectFromHistory handle it
         }
+      } else {
+        // Live streams are fire-and-forget: `onerror` already reacts (the next
+        // follow-up re-attaches), so swallow the rejection we deliberately throw
+        // when stopping a dead stream to avoid an unhandled promise rejection.
+        ssePromise.catch(() => {});
       }
     },
 
@@ -6229,6 +6377,23 @@ export const getToolStore = () => chatStore().getState();
 /** Returns true if any task has an active SSE connection. */
 export function hasActiveSSEConnection(taskIds: string[]): boolean {
   return taskIds.some((taskId) => !!activeSSEControllers[taskId]);
+}
+
+/**
+ * True when the given Project still has a *live* Brain stream registered.
+ * Keyed by Project, not task id: a session's long-lived stream is opened once
+ * and reused across follow-up turns that each get a fresh task id, so a task-id
+ * lookup would miss a stream that is very much alive. A follow-up must open a
+ * resume stream when this returns false, or it enqueues work into a queue no
+ * consumer is draining (the "agent stopped responding" bug).
+ */
+export function hasLiveSessionStream(
+  projectId: string | null | undefined
+): boolean {
+  if (!projectId) return false;
+  return Object.values(activeSSEControllers).some(
+    (connection) => connection.live && connection.projectId === projectId
+  );
 }
 
 /**

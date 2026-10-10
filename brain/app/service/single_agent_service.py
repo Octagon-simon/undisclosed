@@ -1139,6 +1139,7 @@ async def single_agent_solve(
     request: Request,
     task_lock: TaskLock,
     hands: IHands | None = None,
+    stream_id: str | None = None,
 ):
     pause_event = asyncio.Event()
     pause_event.set()
@@ -1587,6 +1588,29 @@ async def single_agent_solve(
 
     try:
         while True:
+            if (
+                stream_id is not None
+                and getattr(task_lock, "active_stream_id", None) != stream_id
+            ):
+                # A newer stream attached to this project (client re-attach after
+                # its stream died) and now owns the queue. End this consumer;
+                # the `finally` cancels any in-flight turn and finalizes memory.
+                logger.info(
+                    "Single Agent stream superseded by newer attach; ending this consumer",
+                    extra={
+                        "project_id": options.project_id,
+                        "stream_id": stream_id,
+                    },
+                )
+                pause_event.clear()
+                task_lock.status = Status.confirming
+                agent = None
+                try:
+                    task_lock.single_agent = None
+                except Exception:  # pragma: no cover - defensive
+                    pass
+                break
+
             if await request.is_disconnected():
                 logger.info(
                     "Single Agent client disconnected; pausing session",
@@ -1651,6 +1675,32 @@ async def single_agent_solve(
 
             if pending_queue_get in done:
                 item = pending_queue_get.result()
+
+                if (
+                    stream_id is not None
+                    and getattr(task_lock, "active_stream_id", None)
+                    != stream_id
+                ):
+                    # Superseded between ticks: this dequeued item belongs to the
+                    # new consumer. Hand it back and end this loop — the
+                    # `finally` cancels any in-flight turn and finalizes memory.
+                    logger.info(
+                        "Single Agent stream superseded after dequeue; requeueing item",
+                        extra={
+                            "project_id": options.project_id,
+                            "stream_id": stream_id,
+                        },
+                    )
+                    await task_lock.put_queue(item)
+                    pause_event.clear()
+                    task_lock.status = Status.confirming
+                    agent = None
+                    try:
+                        task_lock.single_agent = None
+                    except Exception:  # pragma: no cover - defensive
+                        pass
+                    break
+
                 pending_queue_get = asyncio.create_task(task_lock.get_queue())
 
                 if item.action == Action.improve:

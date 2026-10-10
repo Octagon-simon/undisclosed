@@ -520,6 +520,10 @@ class TaskLock:
         self.memory_service = None
         self._memory_finalized_runs = set()
         self.approval_manager = None
+        # Identifies the consumer currently attached to this project's queue.
+        # A re-attach (resume) assigns a new id; the older consumer's loop sees
+        # the mismatch and exits, so exactly one consumer drains the queue.
+        self.active_stream_id = None
 
         logger.info(
             "Task lock initialized",

@@ -44,6 +44,7 @@ import { proxyUpdateTriggerExecution } from '@/service/triggerApi';
 import { useAuthStore } from '@/store/authStore';
 import {
   buildProjectContinuationContext,
+  hasLiveSessionStream,
   resolveChatModelForProject,
 } from '@/store/chatStore';
 import { usePageTabStore } from '@/store/pageTabStore';
@@ -1117,6 +1118,39 @@ export default function ChatBox(): JSX.Element {
             // (e.g. model A -> model B) is honored on this follow-up turn.
             const improveModel =
               await resolveChatModelForProject(targetProjectId);
+
+            // Make sure a live consumer exists before enqueuing the turn. After
+            // a brain restart or a long idle drop the session's SSE stream is
+            // gone; without a consumer the improve POST lands in a queue nobody
+            // drains and the agent appears to "stop responding". Re-open a
+            // resume stream (attach WITHOUT re-running a turn) so the queued
+            // follow-up has somewhere to land.
+            if (!hasLiveSessionStream(targetProjectId)) {
+              try {
+                console.debug(
+                  '[handleSend] no live session stream; re-attaching before follow-up',
+                  { targetProjectId, _taskId }
+                );
+                await chatStore.startTask(
+                  _taskId,
+                  undefined,
+                  undefined,
+                  undefined,
+                  undefined,
+                  undefined,
+                  executionId,
+                  targetProjectId,
+                  effectiveSessionMode,
+                  { preserveTaskId: true, resume: true }
+                );
+              } catch (reAttachErr) {
+                console.error(
+                  '[handleSend] failed to re-attach session stream:',
+                  reAttachErr
+                );
+              }
+            }
+
             // The follow-up POST was fire-and-forget: if it rejected (4xx/5xx,
             // network, backend not consuming), the failure was SILENT and the
             // queued pill got stuck forever with no send ever happening — the
