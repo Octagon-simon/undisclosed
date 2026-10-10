@@ -24,7 +24,8 @@ import { processDroppedFiles, processPastedFiles } from '@/lib/fileUtils';
 import { cn } from '@/lib/utils';
 import type { TriggerInput } from '@/types';
 import {
-  ArrowRight,
+  ArrowUp,
+  Bot,
   FileText,
   Hammer,
   Image,
@@ -92,6 +93,15 @@ export interface InputboxProps {
   /** Skill picker panel state; the toggle button only renders when the callback is provided. */
   skillPanelOpen?: boolean;
   onToggleSkillPanel?: () => void;
+  /**
+   * Number of tools available for the session. When provided, a "● Tools (N)"
+   * pill renders above the textarea (spec Section 7). Opt-in: no live
+   * tool-count source is wired yet, so the pill stays hidden until a caller
+   * passes one.
+   */
+  toolCount?: number;
+  /** Click target for the Tools pill (opens the tool list). */
+  onShowTools?: () => void;
   /** Callback when trigger is being created (for placeholder) */
   onTriggerCreating?: (triggerData: TriggerInput) => void;
   /** Callback when trigger is created successfully */
@@ -158,6 +168,8 @@ export const Inputbox = ({
   onToggleConnectorPanel,
   skillPanelOpen = false,
   onToggleSkillPanel,
+  toolCount,
+  onShowTools,
   onTriggerCreating: _onTriggerCreating,
   onTriggerCreated: _onTriggerCreated,
 }: InputboxProps) => {
@@ -479,6 +491,31 @@ export const Inputbox = ({
         </div>
       )}
 
+      {/* Layer 2.5: Context status line — "● Tools (N)" pill (spec Section 7).
+          Opt-in: only renders when the caller supplies a tool count. */}
+      {toolCount !== undefined && (
+        <div className="mb-2 flex w-full items-center">
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => onShowTools?.()}
+            aria-label={t('chat.input-show-tools', {
+              defaultValue: 'Show available tools',
+            })}
+            className={cn(
+              'inline-flex items-center gap-1 rounded border border-ds-border-neutral-subtle-default bg-ds-bg-neutral-default-default px-2 py-0.5 text-label-xs text-ds-text-neutral-subtle-default',
+              'transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50'
+            )}
+          >
+            <span
+              aria-hidden
+              className="h-1.5 w-1.5 rounded-full bg-ds-bg-status-completed-default-default"
+            />
+            {`Tools (${toolCount})`}
+          </button>
+        </div>
+      )}
+
       {/* Layer 3: Text input area */}
       <div className="relative flex w-full flex-1 items-start justify-center gap-2.5 pb-3">
         <RichChatInput
@@ -615,29 +652,31 @@ export const Inputbox = ({
           )}
           {(!isRunning || value.trim().length > 0) && (
             <Button
+              type="button"
               size="xs"
               buttonContent="icon-only"
               buttonRadius="full"
-              variant="ghost"
+              variant="primary"
               onClick={handleSend}
               disabled={disabled || value.trim().length === 0}
               aria-label={t('chat.input-send-message', {
                 defaultValue: 'Send message',
               })}
             >
-              {/* Ghost icon (like attach/MCP) so it's theme-following and visible
-                  in light + dark: muted when empty → brand when ready. */}
-              <ArrowRight
-                className={cn(
-                  'transition-transform duration-200',
-                  value.trim().length > 0
-                    ? 'rotate-[-90deg] text-ds-icon-brand-default-default'
-                    : 'text-ds-icon-neutral-muted-default'
-                )}
-              />
+              {/* Primary "Send ↑" (spec Section 7): a high-contrast filled
+                  submit button, theme-following via the tokenized Button. */}
+              <ArrowUp />
             </Button>
           )}
         </div>
+      </div>
+
+      {/* Disclaimer — mock parity (Section 7 tail). Static, non-interactive. */}
+      <div className="mt-1.5 flex w-full items-center justify-center gap-1 text-label-xs text-ds-text-neutral-subtle-default opacity-50">
+        <Bot className="h-3 w-3" aria-hidden />
+        {t('chat.ai-disclaimer', {
+          defaultValue: 'AI can make mistakes. Always double check the response',
+        })}
       </div>
     </div>
   );

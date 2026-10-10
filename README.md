@@ -1,5 +1,7 @@
 # Undisclosed
 
+<img width="1728" height="1117" alt="Screenshot 2026-10-09 at 14 56 48" src="https://github.com/user-attachments/assets/f81c8418-601f-48f4-9613-459c2f5979e9" />
+
 **An on-device AI coding editor.** At its core it is a customized [Eclipse Theia](https://theia-ide.org/)
 editor with an AI coding agent built in as a **native panel that lives inside the
 editor** - the agent is not docked next to a separate window the way it works in
@@ -14,6 +16,11 @@ The project began as two decoupled halves: the **agent capability** is from
 [Eigent](https://eigent.ai), while the **editor shell + on-device packaging** here
 are our own. Both are fused here into a single editor-first product - the "Antigravity"
 model.
+
+> **Branch:** this is the `upgrade/theia-1.76` branch. The editor stack here is
+> **Theia 1.76 on Node 24** (Electron 42), up from Theia 1.60 on Node 20 on `main`.
+> Upgrade notes: [`docs/plans/theia-upgrade-plan.md`](docs/plans/theia-upgrade-plan.md);
+> override register: [`docs/features/theia-overrides.md`](docs/features/theia-overrides.md).
 
 ---
 
@@ -70,18 +77,18 @@ auto-launched alongside Electron.
 
 | Tool | Version | Why |
 | --- | --- | --- |
-| **Node** | **18-20** (use `nvm use 20`) | Theia + its native modules don't build on Node 22/24 |
+| **Node** | **24** (use `nvm use 24`) | Theia 1.76 requires Node >= 24; native modules are built for it |
 | **Python** | **3.11** | The brain; also node-gyp needs `distutils` (removed in 3.12) when packaging native modules |
 | **uv** | latest | Provisions the brain's venv from `brain/pyproject.toml` |
 
-An `.nvmrc` pins Node 20. Copy `.env.sample` → `.env` for any model keys / tuning. Every
+An `.nvmrc` pins Node 24. Copy `.env.sample` → `.env` for any model keys / tuning. Every
 variable is optional - the app runs with sane defaults (see [Environment variables](#environment-variables)).
 
 ---
 
 ## Quick start (development)
 
-From a fresh clone you need three things: **Node 20**, **Python 3.11**, and **uv**
+From a fresh clone you need three things: **Node 24**, **Python 3.11**, and **uv**
 (see [Prerequisites](#prerequisites)). You also need a **workspace folder** open for the
 agent to act on.
 
@@ -102,24 +109,25 @@ cp .env.sample .env
 **2. Install, build and start the editor** (Theia, `:3000`):
 
 ```bash
-nvm use 20                    # Node 20 (.nvmrc); Theia's native modules need it
+nvm use 24                    # Node 24 (.nvmrc); Theia 1.76 requires it
 npm install                   # root deps (Theia + the file: packages/*)
 npm run build                 # compile packages/* then bundle the editor (dev mode)
 npm start                     # -> http://127.0.0.1:3000
 ```
 
-`npm run build` first compiles the three `packages/*` Theia extensions with `tsc`
-(`build:packages`) and then bundles the editor. Both matter: the extensions' `lib/`
-output is gitignored, so a fresh clone has nothing for Theia to load until you build
-them. Open `http://127.0.0.1:3000`, open a workspace folder, add a model in the agent
-panel's **Models** UI, then talk to the agent.
+`npm run build` first compiles the four `packages/*` Theia extensions with `tsc`
+(`build:packages`: `undisclosed-agent`, `undisclosed-git`, `undisclosed-import`,
+`undisclosed-languages`) and then bundles the editor with Theia 1.76's **esbuild**
+builder. Both matter: the extensions' `lib/` output is gitignored, so a fresh clone has
+nothing for Theia to load until you build them. Open `http://127.0.0.1:3000`, open a
+workspace folder, add a model in the agent panel's **Models** UI, then talk to the agent.
 
 > The agent panel's UI bundle is **committed** to the repo
 > (`packages/undisclosed-agent/assets/agent-embed/`), so a normal dev build needs
 > nothing from `agent-ui/`. Rebuild it only when you are editing the agent UI (below).
 
 Prefer one command? `./scripts/dev.sh start` brings up the brain and the editor
-together, and `./scripts/dev.sh rebuild` does a full refresh (it pins Node 20 for you).
+together, and `./scripts/dev.sh rebuild` does a full refresh (it pins Node 24 for you).
 
 ### Working on the agent UI
 
@@ -218,8 +226,12 @@ brain/               FastAPI agent backend ("the brain"); uv + pyproject.toml;
 packages/
   undisclosed-agent/       Theia extension: hosts the agent dock panel, the proxy,
                            layout & git extras; brain launcher (desktop)
-  undisclosed-languages/   Monaco/Monarch language support (see its add-language.cjs)
+  undisclosed-git/         SCM fixes: staged changes open editable (save works),
+                           plus inline diff / commit-widget styling
+  undisclosed-languages/   Monaco/Monarch language support + native media preview
   undisclosed-import/      VS Code settings/extensions import
+  agent-net/               Framework-agnostic transport (fetch + SSE) shared by the
+                           agent widget and the Electron app
 apps/desktop/        Electron Theia app (packaging target; electron-builder.yml)
 scripts/             brain.sh, build-brain.sh (PyInstaller), release.sh, dev.sh
 docs/                PACKAGING.md, design & dev notes (assistant_message_persistence.md)
@@ -247,7 +259,14 @@ Notable groups:
   Most provider/model setup is configurable inside the app's Models UI; these vars are
   read directly where a toolkit needs a key without a UI-configured provider.
 - **Design/dev integrations** (each enables its corresponding agent toolkit **only when
-  set**): `FIGMA_ACCESS_TOKEN`, `GITHUB_ACCESS_TOKEN`.
+  set**): `FIGMA_ACCESS_TOKEN`, `GITHUB_ACCESS_TOKEN`, `MONGO_URL`. The GitHub toolkit
+  (needs the `PyGithub` package declared in `brain/pyproject.toml`) covers issue
+  create/update/close/reopen, issue and PR comments, PR create/merge/close, branch
+  create/list, repository listing, and cross-repo issue search. The MongoDB toolkit is
+  a **read-only** query surface (find/count/distinct/aggregate plus a write-guarded
+  escape hatch) run through the `mongosh` CLI; it redacts the connection string from
+  every result and error, defaults to the `dev` database (`MONGO_DB` to override), and
+  never enables without a connection string.
 - **Web search** (any one enables web search): Google PSE (key+engine id), Tavily,
   Brave, Exa, Linkup, Bocha.
 - **Productivity/comms**: Notion, Slack, Google Workspace (Gmail/Calendar/Drive OAuth +
@@ -265,7 +284,7 @@ Notable groups:
 
 | Symptom | Likely cause / fix |
 | --- | --- |
-| Editor won't build ("Python 3.12 / distutils") | Use Node 20 + Python 3.11; `nvm use 20`, and point node-gyp at the venv python before packaging (`export npm_config_python=...`). |
+| Editor won't build ("Python 3.12 / distutils") | Use Node 24 + Python 3.11; `nvm use 24`, and point node-gyp at the venv python before packaging (`export npm_config_python=...`). |
 | Agent panel shows a proxy/api error when adding a model | The `/api` proxy must target the **brain** (`:5001`), not a legacy `:3001` cloud proxy. In dev run via `scripts/dev.sh` (sets the target) or in `.env` set `UNDISCLOSED_PROXY_TARGET=http://127.0.0.1:5001`. |
 | Brain won't start | Ctrl+C a prior `uv run ...` may leave `uv_installing.lock`/`uv_installed.lock` in `brain/` - delete them, then `./scripts/brain.sh setup`. |
 | Packaged app is unsigned on macOS | Right-click → Open, or `xattr -cr /Applications/Undisclosed.app`. See `docs/PACKAGING.md` for signing/notarization. |

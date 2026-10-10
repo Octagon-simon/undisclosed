@@ -344,12 +344,21 @@ class MemoryToolkit(AbstractToolkit):
         return "\n\n".join(blocks)
 
     def get_tools(self) -> list[FunctionTool]:
+        # kwargs_tolerant drops stray kwargs (name/signature preserved via
+        # @wraps), so a model that also emits the message-integration kwargs
+        # (``message_title`` / ``message_description`` / ``message_attachment``)
+        # doesn't fail the whole call with
+        # ``TypeError: remember_fact() got an unexpected keyword argument``.
+        # Imported lazily to avoid a module-load cycle (app.agent <-> the
+        # listen helpers that import AbstractToolkit).
+        from app.utils.listen.toolkit_listen import kwargs_tolerant
+
         return [
-            FunctionTool(self.remember_fact),
-            FunctionTool(self.recall_facts),
-            FunctionTool(self.recall_conversation),
-            FunctionTool(self.recall_turns),
-            FunctionTool(self.recall_history),
+            FunctionTool(kwargs_tolerant(self.remember_fact)),
+            FunctionTool(kwargs_tolerant(self.recall_facts)),
+            FunctionTool(kwargs_tolerant(self.recall_conversation)),
+            FunctionTool(kwargs_tolerant(self.recall_turns)),
+            FunctionTool(kwargs_tolerant(self.recall_history)),
         ]
 
     @classmethod

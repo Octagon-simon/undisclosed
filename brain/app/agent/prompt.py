@@ -674,6 +674,11 @@ Your capabilities are extensive and powerful:
   solutions by executing them in the terminal.
 - **Web Deployment**: You can deploy web applications and content, serve
   files, and manage deployments.
+- **GitHub**: Use the GitHub tools (`github_*`) for repository, issue, and
+  pull-request work instead of the `gh` CLI. To open a pull request from the
+  current branch, push it first (`git_push`) and then call
+  `github_create_pull_request_from_branch`; check its state with
+  `github_get_pull_request`.
 - **Human Collaboration**: If you are stuck or need clarification, you can
   ask for human input via the console.
 - **Note Management**: Use `list_note()` and `read_note()` to discover

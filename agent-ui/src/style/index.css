@@ -749,6 +749,53 @@ code {
   }
 }
 
+/* PanelSection "working" ring.
+ *
+ * A soft MULTI-COLOUR comet travels CLOCKWISE around the section while the
+ * agent is still working: top-left -> top-right -> bottom-right -> bottom-left,
+ * looping until the turn ends. The head leads, the tail fades back into the
+ * ring, and the band runs through the shared palette (blue -> green -> the rest
+ * of `--colors-*`), so it reads as a calm "round the block" light that changes
+ * hue as it goes, not a flat single-colour stroke.
+ *
+ * The conic gradient's `from` angle is driven by a registered custom property
+ * (`--panel-border-angle`) so only the gradient angle animates, with no giant
+ * rotating element, and the comet stays pinned to the box's perimeter. The
+ * layer this class paints on is clipped to the 1.5px padded shell `PanelSection`
+ * adds while `active`, so the comet shows as a thin ring stroke.
+ *
+ * `+ 315deg` puts the head at the box's TOP-LEFT when the animation starts.
+ * Colours are palette tokens (`--colors-*`), not literal hex, so the ring
+ * re-themes with the app. */
+@property --panel-border-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+
+.panel-border-comet {
+  background: conic-gradient(
+    from calc(var(--panel-border-angle) + 315deg),
+    transparent 0deg,
+    transparent 140deg,
+    color-mix(in srgb, var(--colors-blue-300) 45%, transparent) 205deg,
+    var(--colors-blue-300) 248deg,
+    var(--colors-emerald-300) 288deg,
+    var(--colors-fuchsia-300) 320deg,
+    var(--colors-orange-300) 343deg,
+    var(--colors-yellow-300) 358deg,
+    transparent 360deg
+  );
+  opacity: 0.9;
+  animation: panel-border-comet 7.5s linear infinite;
+}
+
+@keyframes panel-border-comet {
+  to {
+    --panel-border-angle: 360deg;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-spin,
   .animate-pulse,
@@ -787,5 +834,10 @@ code {
     opacity: 1;
     color: var(--ds-text-neutral-default-default);
     background: none;
+  }
+
+  /* Hold the comet still (head at top-left) instead of sweeping the ring. */
+  .panel-border-comet {
+    animation: none;
   }
 }

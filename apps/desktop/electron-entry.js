@@ -507,10 +507,39 @@ try {
     logLine('sleep/wake recovery armed');
   };
 
-  if (app.isReady()) {
+  // --- App Nap / idle-suspension opt-out -------------------------------------
+  // macOS App Nap silently freezes a backgrounded or occluded app: its timers
+  // stop running, so socket.io's heartbeat and Theia's 5s connection ping blow
+  // their deadlines and the editor flips to "Offline - Cannot connect to
+  // backend." even though the backend and the brain are both perfectly healthy.
+  // A `prevent-app-suspension` power-save blocker maps to an NSProcessInfo
+  // activity (NSActivityUserInitiated), which IS the OS-level App Nap opt-out:
+  // it keeps the process scheduled while still letting the DISPLAY sleep.
+  // It canNOT stop a real user-initiated/system sleep or a power-off; the
+  // resume recovery above covers the wake side of those.
+  // Opt out with UNDISCLOSED_DISABLE_POWER_SAVE_BLOCKER=1.
+  const registerAppNapOptOut = () => {
+    if (process.env.UNDISCLOSED_DISABLE_POWER_SAVE_BLOCKER === '1') {
+      return;
+    }
+    try {
+      const id = electron.powerSaveBlocker.start('prevent-app-suspension');
+      logLine(
+        `power-save blocker armed (id=${id}, prevent-app-suspension) - App Nap disabled`
+      );
+    } catch (e) {
+      logLine(`power-save blocker failed to arm: ${e && e.message}`);
+    }
+  };
+
+  const onReady = () => {
     registerPowerRecovery();
+    registerAppNapOptOut();
+  };
+  if (app.isReady()) {
+    onReady();
   } else {
-    app.once('ready', registerPowerRecovery);
+    app.once('ready', onReady);
   }
 } catch (_e) {
   /* recovery wiring is best-effort; never prevent the app from starting */

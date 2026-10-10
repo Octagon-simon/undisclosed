@@ -1,4 +1,5 @@
 // ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+// Portions Copyright 2026 Simon Ugorji. All Rights Reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -13,6 +14,7 @@
 // ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
 
 import { inferSessionModeFromTask } from '@/lib/sessionMode';
+import { getTaskElapsedMs } from '@/lib/taskTime';
 import { VanillaChatStore } from '@/store/chatStore';
 import { usePageTabStore } from '@/store/pageTabStore';
 import { AgentStep, ChatTaskStatus, SessionMode } from '@/types/constants';
@@ -29,12 +31,20 @@ import { AgentMessageCard } from './MessageItem/AgentMessageCard';
 import { ApprovalOutcomeCard } from './MessageItem/ApprovalOutcomeCard';
 import { NoticeCard } from './MessageItem/NoticeCard';
 import { PreparingToExecuteTasks } from './MessageItem/PreparingToExecuteTasks';
-import { TaskWorkLogAccordion } from './MessageItem/TaskWorkLogAccordion';
+// NOTE: `TaskWorkLogAccordion` is intentionally retained but no longer mounted
+// here. The Execution Summary (below) replaces it; delete the component in a
+// later pass once we're sure nothing else needs the work-log view.
 import { UserMessageCard } from './MessageItem/UserMessageCard';
 import { ThinkingBlock } from './MessageItem/ThinkingBlock';
 import { FilesChanged } from './MessageItem/FilesChanged';
 import { useHost } from '@/host';
-import { extractChangedFiles } from '@/lib/activityClassifier';
+import {
+  collectTaskActivities,
+  extractChangedFiles,
+  type ActivityItem,
+} from '@/lib/activityClassifier';
+import { ExecutionSummary } from './MessageItem/ExecutionSummary';
+import { PlanCard } from './MessageItem/PlanCard';
 import { PlanTaskBox } from './TaskBox/PlanTaskBox';
 import { isPlanSplittingPhase } from './TaskBox/PlanTaskBox/utils';
 import { TaskCard } from './TaskBox/TaskCard';
@@ -448,6 +458,80 @@ export const UserQueryGroup: React.FC<UserQueryGroupProps> = ({
     !hasConfirmedSubTasks && (isLastUserQuery || queryGroup.taskMessage)
   );
 
+  // Execution Summary data. Prefer the LIVE derivation from the running task's
+  // tool log (`taskAssigning`, which grows on every tool run); when that is
+  // empty (a reloaded turn has no live log) fall back to the copy persisted on
+  // the turn's END message, so the summary re-renders every time the
+  // conversation is reopened.
+  //
+  // While the agent is blocked on an inline `ask` (activeAsk set), `isHumanReply`
+  // flips true for THIS turn too. That nulls `task` above, so reading the live
+  // log off `task` would make the Execution Summary blink out while the task is
+  // still alive (paused, not finished). The task is NOT gone, so read the live
+  // log straight off `activeTask` whenever this group owns the task's latest
+  // user message — that keeps the summary (and its per-category counts) visible
+  // across the question instead of vanishing mid-run.
+  const ownsLatestUserTurn = Boolean(
+    activeTask &&
+      queryGroup.userMessage &&
+      queryGroup.userMessage.id === lastUserMessageId
+  );
+  const summaryTask = ownsLatestUserTurn ? activeTask : task;
+  // A turn is "live" only while the agent is still on it (RUNNING, or PAUSE
+  // while blocked on an inline question). Any other status means the turn is
+  // over, so settle every activity row: a tool whose DEACTIVATE was dropped
+  // would otherwise shimmer "still working" forever with an empty Response.
+  const taskIsLive =
+    summaryTask?.status === ChatTaskStatus.RUNNING ||
+    summaryTask?.status === ChatTaskStatus.PAUSE;
+  const liveActivities = collectTaskActivities(summaryTask?.taskAssigning, {
+    settle: !taskIsLive,
+  });
+  const persistedActivities: ActivityItem[] = (() => {
+    const msgs = queryGroup.otherMessages ?? [];
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const a = (msgs[i] as { activities?: ActivityItem[] })?.activities;
+      if (Array.isArray(a) && a.length) return a;
+    }
+    return [];
+  })();
+  const summaryActivities = liveActivities.length
+    ? liveActivities
+    : persistedActivities;
+  // Only a live turn is "running" — a reloaded summary is a finished snapshot,
+  // so its groups start collapsed.
+  const summaryRunning = liveActivities.length > 0 && taskIsLive;
+
+  // Inline agent-progress PLAN card. The decomposed subtasks (`taskInfo`) — the
+  // same list the old sticky `PinnedPlanIndicator` surfaced — now render in the
+  // turn body, between the Thought Process and the Execution Summary, so they
+  // scroll with the turn instead of floating over it. While a plan exists the
+  // card owns the live comet ring; before any plan arrives the Execution Summary
+  // wears it instead, so exactly one section glows at a time. The card self-hides
+  // when `taskInfo` is empty (mounting it is always safe).
+  const planSteps = summaryTask?.taskInfo ?? [];
+  const hasPlan = planSteps.length > 0;
+
+  // Elapsed work time for a finished turn, for the "Worked for Xs" pill next to
+  // the Thought Process (the same figure the old work log showed). Prefer the
+  // persisted turn span (user send -> END message), which survives a reload
+  // because both carry their `createdAt`; fall back to the live task timer while
+  // the END message has no persisted timestamp yet.
+  const turnWorkedForMs = (endMessage: any): number => {
+    const startMs = Date.parse(queryGroup.userMessage?.createdAt ?? '');
+    const endMs = Date.parse(endMessage?.createdAt ?? '');
+    if (Number.isFinite(startMs) && Number.isFinite(endMs) && endMs >= startMs) {
+      return endMs - startMs;
+    }
+    return getTaskElapsedMs(summaryTask);
+  };
+
+  // Live twin of `turnWorkedForMs`: the turn's start (the user send). The running
+  // Execution Summary clocks "Working for Xs" from here, so while the agent works
+  // the user sees the count climb instead of a static header; on finish the
+  // Thought Process shows the matching "Worked for Xs".
+  const turnStartedAtMs = Date.parse(queryGroup.userMessage?.createdAt ?? '');
+
   return (
     <motion.div
       ref={groupRef}
@@ -473,6 +557,7 @@ export const UserQueryGroup: React.FC<UserQueryGroupProps> = ({
             id={queryGroup.userMessage.id}
             content={queryGroup.userMessage.content}
             attaches={queryGroup.userMessage.attaches}
+            timestamp={queryGroup.userMessage.createdAt}
           />
         </motion.div>
       )}
@@ -554,15 +639,49 @@ export const UserQueryGroup: React.FC<UserQueryGroupProps> = ({
         </motion.div>
       ) : null}
 
-      {taskCardVisible && activeTaskId && (
+      {activeTaskId &&
+        (taskCardVisible || summaryActivities.length > 0 || hasPlan) && (
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.25, delay: 0.05 }}
-          className="px-6"
+          className="px-sm mb-sm"
         >
           {showPreparingExecute ? <PreparingToExecuteTasks /> : null}
-          <TaskWorkLogAccordion chatStore={chatStore} taskId={activeTaskId} />
+          {/* Inline agent progress / plan. Sits in the execution stream between
+              the Thought Process and the Execution Summary (live-agent-feedback
+              spec §2.1) and scrolls with the turn. It replaces the old sticky
+              `PinnedPlanIndicator`. The card owns the comet ring while a plan
+              exists; `hasPlan` is what hands the ring to the Execution Summary
+              when there is no todo list yet. */}
+          <PlanCard
+            steps={planSteps}
+            running={taskIsLive}
+            active={taskIsLive && hasPlan}
+            className="mb-2"
+          />
+          {/* Execution Summary lives in the turn body (the slot the
+              TaskWorkLogAccordion used to occupy), above the answer. Live turns
+              fill it from `taskAssigning` as each tool run lands; reloaded turns
+              render the snapshot persisted on the turn's END message, so the box
+              is present every time the conversation is reopened. */}
+          {summaryActivities.length ? (
+            // No `mx-sm` here: this wrapper already applies `px-sm`, and the
+            // Thought Process box gets its gutter from its own `mx-sm`. Adding a
+            // second horizontal inset here pushed the summary 8px further in
+            // than the user block and Thought Process; the three must share the
+            // same edge.
+            <ExecutionSummary
+              activities={summaryActivities}
+              running={summaryRunning}
+              // The ring lives on the Plan card above whenever a plan exists;
+              // only a turn with no plan (todo list) shows it here.
+              active={summaryRunning && !hasPlan}
+              startedAt={
+                Number.isFinite(turnStartedAtMs) ? turnStartedAtMs : undefined
+              }
+            />
+          ) : null}
         </motion.div>
       )}
 
@@ -595,13 +714,20 @@ export const UserQueryGroup: React.FC<UserQueryGroupProps> = ({
                 className="flex flex-col gap-2"
               >
                 {message.reasoning ? (
-                  <ThinkingBlock reasoning={message.reasoning} />
+                  <ThinkingBlock
+                    reasoning={message.reasoning}
+                    durationMs={turnWorkedForMs(message)}
+                  />
                 ) : null}
+                {/* Execution Summary was moved up into the live turn body (the
+                    TaskWorkLogAccordion slot) so it appears during the turn and
+                    updates in place, rather than only at the end. */}
                 <AgentMessageCard
                   typewriter={shouldUseLiveAgentTypewriter(task, message.id)}
                   id={message.id}
                   content={message.content}
                   onTyping={() => {}}
+                  indicator
                   // A user-stopped turn (summary "Task stopped") isn't a real
                   // answer — there's nothing to thumbs-up/down or copy.
                   hideFeedbackAndCopyBtn={message.content === 'Task stopped'}
@@ -639,6 +765,10 @@ export const UserQueryGroup: React.FC<UserQueryGroupProps> = ({
                     ) : undefined
                   }
                 />
+                {/* TODO(remove-soon): the end-of-turn "N files changed" card is
+                    slated for removal (agent-panel-integration-plan.md §8b).
+                    Keep rendering it until that pass; then drop this block, the
+                    FilesChanged import, and extractChangedFiles here. */}
                 {(() => {
                   const changed = extractChangedFiles(task?.taskAssigning);
                   return changed.length ? (

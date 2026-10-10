@@ -17,8 +17,8 @@
 Distinct from `GithubToolkit` (the GitHub REST API): this drives the local
 `git` CLI in the task's working directory, so agents can inspect and record
 their own code changes. Read operations (status/diff/log/show/blame/branch
-list) are safe; the mutating operations (add/commit/create branch/stash) are
-gated by the governance layer when Ask mode is enabled -- see
+list) are safe; the mutating operations (add/commit/create branch/checkout/
+stash/push) are gated by the governance layer when Ask mode is enabled -- see
 `factory/toolkit_assembler.py`, which wraps `WRITE_TOOL_NAMES` below.
 """
 
@@ -43,6 +43,7 @@ WRITE_TOOL_NAMES = {
     "git_create_branch",
     "git_checkout",
     "git_stash",
+    "git_push",
 }
 
 #: Cap command output so a huge diff/log can't blow the model context.
@@ -280,21 +281,56 @@ class GitToolkit(BaseToolkit, AbstractToolkit):
             args += ["-m", message.strip()]
         return self._run_git(args)
 
+    def git_push(
+        self,
+        remote: str = "origin",
+        branch: str = "",
+        set_upstream: bool = False,
+    ) -> str:
+        """Push the current (or named) branch to a remote.
+
+        Args:
+            remote (str): Remote to push to (default 'origin').
+            branch (str): Branch to push; empty means the current branch.
+            set_upstream (bool): When True, add ``-u`` so the local branch
+                tracks the remote (default False).
+
+        Returns:
+            str: Result of the push.
+        """
+        remote = (remote or "origin").strip()
+        if not remote:
+            return "[git error]: a remote name is required for git_push."
+        args = ["push"]
+        if set_upstream:
+            args.append("-u")
+        args.append(remote)
+        if branch and branch.strip():
+            args.append(branch.strip())
+        return self._run_git(args)
+
     # ------------------------------------------------------------------ #
     # Registration
     # ------------------------------------------------------------------ #
 
     def get_tools(self) -> list[FunctionTool]:
+        # kwargs_tolerant drops stray kwargs (name/signature preserved via
+        # @wraps), so these tools survive any harness's calling convention.
+        # Imported lazily to avoid a module-load cycle (app.agent <-> the
+        # listen helpers that import AbstractToolkit).
+        from app.utils.listen.toolkit_listen import kwargs_tolerant
+
         return [
-            FunctionTool(self.git_status),
-            FunctionTool(self.git_diff),
-            FunctionTool(self.git_log),
-            FunctionTool(self.git_show),
-            FunctionTool(self.git_blame),
-            FunctionTool(self.git_branch_list),
-            FunctionTool(self.git_add),
-            FunctionTool(self.git_commit),
-            FunctionTool(self.git_create_branch),
-            FunctionTool(self.git_checkout),
-            FunctionTool(self.git_stash),
+            FunctionTool(kwargs_tolerant(self.git_status)),
+            FunctionTool(kwargs_tolerant(self.git_diff)),
+            FunctionTool(kwargs_tolerant(self.git_log)),
+            FunctionTool(kwargs_tolerant(self.git_show)),
+            FunctionTool(kwargs_tolerant(self.git_blame)),
+            FunctionTool(kwargs_tolerant(self.git_branch_list)),
+            FunctionTool(kwargs_tolerant(self.git_add)),
+            FunctionTool(kwargs_tolerant(self.git_commit)),
+            FunctionTool(kwargs_tolerant(self.git_create_branch)),
+            FunctionTool(kwargs_tolerant(self.git_checkout)),
+            FunctionTool(kwargs_tolerant(self.git_stash)),
+            FunctionTool(kwargs_tolerant(self.git_push)),
         ]

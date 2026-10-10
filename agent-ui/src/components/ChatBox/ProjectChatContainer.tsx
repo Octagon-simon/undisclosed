@@ -14,7 +14,12 @@
 // ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
 
 import useChatStoreAdapter from '@/hooks/useChatStoreAdapter';
-import { LiveReasoning } from './LiveReasoning';
+// NOTE: `LiveReasoning` (the old plain "Thinking…" box) is intentionally
+// retained on disk but no longer mounted. The live, streaming reasoning now
+// renders through the designed `ThinkingBlock` (Thought Process card), so the
+// live and folded views read identically. Delete `LiveReasoning` in a later
+// pass once we're sure nothing else needs it.
+import { ThinkingBlock } from './MessageItem/ThinkingBlock';
 import { usePageTabStore } from '@/store/pageTabStore';
 import { useProjectRuntimeStore } from '@/store/projectRuntimeStore';
 import { AnimatePresence } from 'framer-motion';
@@ -26,7 +31,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { PinnedPlanIndicator } from './MessageItem/PinnedPlanIndicator';
+
 import { ProjectSection } from './ProjectSection';
 
 /**
@@ -475,20 +480,10 @@ export const ProjectChatContainer: React.FC<ProjectChatContainerProps> = ({
         className="mx-auto w-full max-w-[600px] pt-0"
         style={{ paddingBottom: scrollBottomInsetPx }}
       >
-        {/* ONE pinned plan/todo indicator, bound to the CURRENT (most recent)
-            conversation's task — the last task section. Rendering it per-section
-            pinned an OLDER task's plan over a newer conversation (the plan
-            "leak"); a single indicator for the latest task fixes that. */}
-        {(() => {
-          const current = taskSections[taskSections.length - 1];
-          return current ? (
-            <PinnedPlanIndicator
-              chatStore={current.chatStore}
-              taskId={current.taskId}
-            />
-          ) : null;
-        })()}
-
+        {/* The plan/todo indicator is no longer pinned here. It now renders
+            INLINE in each turn (the `PlanCard` in `UserQueryGroup`), between the
+            Thought Process and the Execution Summary, so it scrolls with the turn
+            it describes instead of floating over the newest conversation. */}
         <AnimatePresence mode="popLayout">
           {taskSections.map(({ chatId, chatStore, taskId }) => {
             return (
@@ -505,7 +500,21 @@ export const ProjectChatContainer: React.FC<ProjectChatContainerProps> = ({
             );
           })}
         </AnimatePresence>
-        <LiveReasoning />
+        {/* Live, streaming reasoning — the designed Thought Process card, fed
+            the active task's `liveReasoning`. Starts EXPANDED so the user can
+            watch the agent think while it works (this block only exists during
+            an active turn); the user can still collapse it, and it unmounts when
+            the turn ends (the store clears `liveReasoning`), at which point the
+            turn's own folded `ThinkingBlock` takes over. Replaces the old
+            `LiveReasoning` "Thinking…" box. */}
+        {(() => {
+          const liveReasoning = activeTaskId
+            ? chatStore?.tasks[activeTaskId]?.liveReasoning
+            : '';
+          return liveReasoning ? (
+            <ThinkingBlock reasoning={liveReasoning} defaultOpen running />
+          ) : null;
+        })()}
         {activeProjectId ? (
           <QueuedFollowups projectId={activeProjectId} />
         ) : null}

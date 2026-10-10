@@ -64,6 +64,7 @@
   "splitting-tasks": "タスク分割",
   "working-on-tasks-for": "タスクを実行中 · <elapsed>{{time}}</elapsed>",
   "worked-for": "作業時間 <elapsed>{{time}}</elapsed>",
+  "working-for": "作業中 <elapsed>{{time}}</elapsed>",
   "start-task": "今すぐ実行",
   "auto-start-in": "{{seconds}}秒後に自動開始",
   "message-cannot-be-empty": "メッセージは空にできません",

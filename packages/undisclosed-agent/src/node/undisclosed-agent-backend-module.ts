@@ -3,6 +3,7 @@
 
 import { ContainerModule } from '@theia/core/shared/inversify';
 import { BackendApplicationContribution } from '@theia/core/lib/node';
+import { EarlyExpressMiddleware } from '@theia/core/lib/node/backend-application';
 import express from '@theia/core/shared/express';
 import { spawn } from 'child_process';
 import * as fs from 'fs';
@@ -10,6 +11,19 @@ import * as http from 'http';
 import * as os from 'os';
 import * as path from 'path';
 import { BrainLauncher } from './brain-launcher';
+
+/**
+ * JSON body ceiling for the agent's own endpoints (`/api`, `/undisclosed-agent`).
+ *
+ * This is not just belt-and-braces: `@theia/filesystem`'s FileDownloadEndpoint
+ * installs an UNSCOPED `app.use(json())` (body-parser's default limit is 100kb)
+ * during the backend's configure phase, which runs AFTER early middleware. So an
+ * agent request body over 100kb (a large chat message, a big tool result) was
+ * rejected with `413 Payload Too Large` before the route-level parser below ever
+ * ran. The early middleware registered in `initialize()` parses these paths
+ * first with this limit; body-parser then skips its own pass (`req._body` set).
+ */
+const JSON_BODY_LIMIT = '50mb';
 
 /**
  * Resolve `scripts/brain.sh` from the repo (dev + standalone-brain setups).
@@ -141,18 +155,38 @@ function resolveAssetsDir(): string {
  * an upstream body (GETs are unaffected).
  */
 export default new ContainerModule((bind) => {
-  // NOTE: We deliberately do NOT prune the VS Code git built-ins
-  // (vscode.git / vscode.git-base) here. They stay deployed and active so that
-  // extensions consuming `vscode.git`'s API (e.g. GitLens) keep working; their
-  // duplicate Source Control UI is suppressed on the frontend instead. See
-  // ../browser/vscode-git-ui-suppressor.ts.
+  // NOTE: The VS Code git built-ins (vscode.git / vscode.git-base) are a
+  // first-class part of the app now: Theia 1.76 removed `@theia/git`, so
+  // `vscode.git` IS the Source Control provider. They are pinned in
+  // `theiaPlugins` and must NOT be pruned. (The old frontend menu suppressor,
+  // B4, was retired — it would blank Source Control.)
 
   // Spawn the frozen Python brain in a packaged desktop app (no-op in dev).
   bind(BrainLauncher).toSelf().inSingletonScope();
   bind(BackendApplicationContribution).toService(BrainLauncher);
 
   bind(BackendApplicationContribution)
-    .toDynamicValue(() => ({
+    .toDynamicValue((ctx) => ({
+      // EARLY middleware: parse the agent endpoints' JSON bodies with a large
+      // limit BEFORE @theia/filesystem's FileDownloadEndpoint.configure() adds an
+      // unscoped `express.json()` (100kb default) that would otherwise reject
+      // them with 413. Handlers pushed here are applied at the very start of
+      // `BackendApplication.configure()`, ahead of every contribution's
+      // `configure()`. body-parser no-ops on later passes once `req._body` is
+      // set, so FileDownloadEndpoint's unscoped parser is neutralised for these
+      // paths. Non-target paths fall through untouched.
+      initialize(): void {
+        const early = ctx.container.get(EarlyExpressMiddleware);
+        const largeJson = express.json({ limit: JSON_BODY_LIMIT });
+        early.handlers.push((req, res, next) => {
+          const url = req.url ?? '';
+          if (url.startsWith('/api') || url.startsWith('/undisclosed-agent')) {
+            largeJson(req, res, next);
+          } else {
+            next();
+          }
+        });
+      },
       configure(app: express.Application): void {
         const dir = resolveAssetsDir();
         // eslint-disable-next-line no-console
@@ -219,7 +253,7 @@ export default new ContainerModule((bind) => {
 
         app.use(
           '/api',
-          express.json({ limit: '50mb' }),
+          express.json({ limit: JSON_BODY_LIMIT }),
           (req: express.Request, res: express.Response) => {
             // express strips the '/api' mount prefix from req.url; restore it.
             (req as unknown as http.IncomingMessage).url = `/api${req.url}`;
@@ -228,6 +262,71 @@ export default new ContainerModule((bind) => {
               res as unknown as http.ServerResponse,
               { target: PROXY_TARGET, agent: BRAIN_PROXY_AGENT }
             );
+          }
+        );
+
+        // Run a whitelisted `git` subcommand in a working dir and return its
+        // output. Used by the frontend git-extras (Undo Last Commit,
+        // unstage/discard all, AI commit message) now that Theia 1.76 removed
+        // the `@theia/git` service and Source Control is served by the built-in
+        // `vscode.git` extension. The subcommand whitelist keeps this endpoint
+        // from becoming a generic process runner.
+        const GIT_SUBCOMMANDS = new Set([
+          'diff',
+          'reset',
+          'checkout',
+          'status',
+          'rev-parse',
+          'log',
+        ]);
+        app.post(
+          '/undisclosed-agent/git/exec',
+          express.json({ limit: '5mb' }),
+          (req: express.Request, res: express.Response) => {
+            const body = (req.body ?? {}) as { cwd?: unknown; args?: unknown };
+            const rawArgs = Array.isArray(body.args) ? body.args : undefined;
+            const args = rawArgs?.filter(
+              (a): a is string => typeof a === 'string'
+            );
+            const cwd = typeof body.cwd === 'string' ? body.cwd : undefined;
+            if (
+              !cwd ||
+              !args ||
+              args.length === 0 ||
+              args.length !== rawArgs?.length
+            ) {
+              res
+                .status(400)
+                .json({ error: 'expected { cwd: string, args: string[] }' });
+              return;
+            }
+            if (!GIT_SUBCOMMANDS.has(args[0])) {
+              res
+                .status(400)
+                .json({ error: `git subcommand not allowed: ${args[0]}` });
+              return;
+            }
+            let child: ReturnType<typeof spawn>;
+            try {
+              child = spawn('git', args, { cwd });
+            } catch (err) {
+              res.status(500).json({ error: (err as Error).message });
+              return;
+            }
+            let stdout = '';
+            let stderr = '';
+            child.stdout?.on('data', (d) => (stdout += d.toString()));
+            child.stderr?.on('data', (d) => (stderr += d.toString()));
+            child.on('error', (err) => {
+              if (!res.headersSent) {
+                res.status(500).json({ error: err.message });
+              }
+            });
+            child.on('close', (code) => {
+              if (!res.headersSent) {
+                res.json({ stdout, stderr, exitCode: code });
+              }
+            });
           }
         );
 

@@ -1,7 +1,9 @@
 # Theia Overrides Register
 
-Status: **register drafted 2026-10-06. Guards (startup assertion, audit script) are
-planned but not implemented yet; they belong on the upgrade branch, not `main`.**
+Status: **updated 2026-10-06 for the Theia 1.76 upgrade.** `@theia/git` was removed
+upstream, so **B4 and B12 are retired** and **B7 was reworked** onto the built-in
+`vscode.git` extension (see the rows, and "Theia 1.76 migration" below). The guards
+(startup assertion, audit script) are still planned, not implemented.
 Owner: Simon Ugorji
 Related: `docs/plans/theia-upgrade-plan.md` (the 1.60.0 -> 1.76.0 plan),
 `docs/features/webview-blue-background.md` (the defect behind B1).
@@ -16,6 +18,26 @@ what behavior we change, and how to prove it still works after a bump.
 
 Read this first when you upgrade Theia. If a row's upstream symbol moved, that row
 is the bug you are about to hit.
+
+## Theia 1.76 migration (2026-10-06)
+
+- **`@theia/git` was removed** (last publish 1.60.2; npm-deprecated: "use the built-in
+  VS Code Git extension"). Source Control is now the bundled `vscode.git` extension.
+  - **B4 retired:** the `MenusContributionPointHandler` suppressor would now blank
+    Source Control (no `@theia/git` left to dedupe against).
+  - **B7 reworked:** git runs through a new backend `POST /undisclosed-agent/git/exec`;
+    the commit box is read from `ScmService` (`selectedRepository.input`).
+  - **B12 retired:** the `GitScmProvider.getUriToOpen` patch targeted `@theia/git`; the
+    `undisclosed-git` package is now an empty stub. Re-verify the staged-file save.
+- **`@theia/scm-extra` was removed** (final 1.74.1); we only depended on it.
+- **webpack -> esbuild** (Theia 1.75): B13 moved from `webpack.config.js` to
+  `esbuild.mjs` as an `onEnd` plugin.
+- **React 19**: `@types/react`/`@types/react-dom` ^19 are now an *optional* peer of
+  `@theia/core` and must be supplied by the app; `.tsx` uses a default React import.
+- **Path moves**: B5 `navigator-preferences` -> `@theia/navigator/lib/common/...`;
+  `PreferenceScope` / `PreferenceService` -> `@theia/core/lib/common/preferences/*`.
+
+See `docs/plans/theia-upgrade-plan.md` section 11 for the full list.
 
 ## How to use it
 
@@ -33,17 +55,19 @@ is the bug you are about to hit.
 | B1 | `WebviewEnvironment` (singleton) | `src/browser/undisclosed-webview-environment.ts` | `@theia/plugin-ext/lib/main/browser/webview/webview-environment` | Rebuilds the `theia-resource/...` template by string concatenation so the `//` before `{{authority}}` survives `URI.resolve()`. Without it every webview resource 404s (pets, media preview). | Deep import path; `resourceRoot(host)` signature; whether the rebind still wins after module ordering. |
 | B2 | `SidePanelHandler` | `src/browser/undisclosed-side-panel-handler.ts` | `@theia/core/lib/browser/shell/side-panel-handler` | `refresh()` override keeps the RIGHT tab strip hidden. | Reads protected internals `tabBar.parent`, `topMenu`, `bottomMenu`, `additionalViewsMenu`, `container`, `dockPanel`; the `side` field. Any rename/retype breaks the override at compile time. |
 | B3 | `TerminalWidget` (transient) | `src/browser/persistent-terminal-widget.ts` | `@theia/terminal/lib/browser/terminal-widget-impl` (`TerminalWidgetImpl`) + `xterm-addon-serialize` | Serializes the terminal buffer on close and replays it after reload. | **Highest risk.** Terminal internals and the `xterm` -> `@xterm/*` package split both move in this window. `SerializeAddon` may no longer resolve. |
-| B4 | `MenusContributionPointHandler` (singleton) | `src/browser/vscode-git-ui-suppressor.ts` | `@theia/plugin-ext/lib/main/browser/menus/menus-contribution-handler` | Keeps the `vscode.git` API but withholds its Source Control menu items so it stops duplicating `@theia/git`. | Deep import; handler method signatures and menu registration flow; load-order dependency (ours must load after plugin-ext). |
-| B5 | `FileNavigatorContribution` (injected, not rebound) | `src/browser/undisclosed-explorer-auto-reveal-contribution.ts` | `@theia/navigator/lib/browser/navigator-contribution`, `navigator-preferences`, Lumino `TabBar.tabActivateRequested` | Re-reveals the Explorer file when the already-active tab is clicked again. | Injected service may be renamed/split; navigator internals; Lumino version (shared `@lumino/widgets`); private preference access is brittle. |
+| B4 | ~~`MenusContributionPointHandler`~~ **RETIRED in 1.76** | ~~`src/browser/vscode-git-ui-suppressor.ts`~~ (deleted) | ~~`@theia/plugin-ext/.../menus-contribution-handler`~~ | Obsolete: `@theia/git` was removed in 1.76, so the built-in `vscode.git` extension *is* the Source Control provider. The suppressor would now blank Source Control, so the rebind was removed. | None — retired. Re-add only if a duplicate SCM provider ever reappears. |
+| B5 | `FileNavigatorContribution` (injected, not rebound) | `src/browser/undisclosed-explorer-auto-reveal-contribution.ts` | `@theia/navigator/lib/browser/navigator-contribution`, `@theia/navigator/lib/common/navigator-preferences` (moved out of `lib/browser` in 1.76), Lumino `TabBar.tabActivateRequested` | Re-reveals the Explorer file when the already-active tab is clicked again. | Injected service may be renamed/split; navigator internals; Lumino version (shared `@lumino/widgets`); private preference access is brittle. |
 | B6 | Native media preview opener | `undisclosed-languages/src/browser/media-preview/media-preview-open-handler.ts` + `media-preview-widget.ts` | `@theia/core/lib/browser/widget-open-handler` (`WidgetOpenHandler`), `OpenHandler`, `EditorManager` priority | Opens image/audio/video in our own widget with priority above the `vscode.media-preview` builtin (~400). | `WidgetOpenHandler` / `WidgetOpenerOptions` API drift; opener priority semantics; overlap with `EditorManager`'s default opener. |
-| B7 | Git extras | `src/browser/git-extras-contribution.ts` | `@theia/git` `Git`, `GitRepositoryProvider`; `@theia/scm` `ScmService`, `ScmWidget`; `TabBarToolbarContribution` | Adds Undo Last Commit, stage/discard-all, and the AI commit-message button. | `ScmService` / `ScmWidget` signatures; menu/toolbar contribution APIs. |
+| B7 | Git extras | `src/browser/git-extras-contribution.ts` | `@theia/scm` `ScmService` (`selectedRepository.provider.rootUri` + `.input`), `ScmWidget`; `TabBarToolbarContribution`; local backend `POST /undisclosed-agent/git/exec` (**@theia/git removed in 1.76**) | Adds Undo Last Commit, stage/discard-all, and the AI commit-message button. | `ScmService` / `ScmWidget` signatures; menu/toolbar contribution APIs. |
 | B8 | Agent panel + welcome + layout | `src/browser/undisclosed-agent-widget.tsx`, `undisclosed-welcome-*.ts(x)`, `undisclosed-agent-layout-contribution.ts` | `@theia/core` shell, `bindViewContribution`, `FrontendApplicationContribution`, Lumino shell layout | The agent panel, branded welcome, bottom-panel expand button, first-boot layout. | `FrontendApplicationContribution` lifecycle; `ApplicationShell` layout APIs. |
-| B9 | Monaco language + editor pin | `undisclosed-languages/src/browser/undisclosed-languages-contribution.ts` | `@theia/monaco`, `@theia/monaco-editor-core` (pinned 1.96.302) | Monarch tokenizers against Theia's Monaco; ships the media preview. | `monaco-editor-core` pin must be re-aligned to 1.76's Monaco or we risk type/runtime errors and a double Monaco. |
+| B9 | Monaco language + editor pin | `undisclosed-languages/src/browser/undisclosed-languages-contribution.ts` | `@theia/monaco`, `@theia/monaco-editor-core` (re-pinned to **1.108.201** for 1.76) | Monarch tokenizers against Theia's Monaco; ships the media preview. | `monaco-editor-core` pin must be re-aligned to 1.76's Monaco or we risk type/runtime errors and a double Monaco. |
 | B10 | VS Code builtins + import-from-VS Code | `apps/desktop` `theiaPlugins`, `undisclosed-import` | `@theia/vsx-registry`, plugin host | Bundled language features pinned to 1.95.3; Prettier pinned to 11.0.3 (last CJS release). | Theia 1.76's plugin API target may require a newer builtin set; the Prettier CJS constraint may change. |
 | B11 | Backend brain lifecycle | `src/browser/undisclosed-agent-backend-module.ts` (`BrainLauncher`), `src/electron-main/brain-teardown.ts` | `@theia/core` backend `BackendApplicationContribution`, `@theia/core` electron-main | Spawns/tears down the Python brain; caps restarts at 10. | Backend contribution API; Electron main API changes (Electron 30 -> 42). |
 
-| B12 | `GitScmProvider.getUriToOpen` (method swap on the factory output) | `packages/undisclosed-git/src/browser/writable-git-scm-provider.ts` | `@theia/git/lib/browser/git-scm-provider`, `@theia/git/lib/browser/git-frontend-module` (`createGitScmProviderFactory`), `git-resource` | Staged changes open the writable working-tree file on the right of the diff instead of a read-only `gitrev:` blob, so `Cmd+S` actually saves. | Deep import; `createGitScmProviderFactory` must still exist and still return a wrappable provider; `getUriToOpen` / `GitFileChange` signatures; load order (ours after `@theia/git`). |
+| B12 | ~~`GitScmProvider.getUriToOpen` patch~~ **RETIRED in 1.76** | ~~`packages/undisclosed-git/src/browser/writable-git-scm-provider.ts`~~ (deleted; package is now an empty stub) | ~~`@theia/git/...`~~ | Obsolete: it patched `@theia/git`, which 1.76 removed. Source Control is now `vscode.git`, which opens the working-tree file directly. Re-verify the staged-save test (section 7) on 1.76; re-populate the stub only if it regresses. | n/a — retired; pending the B12 runtime check. |
 | B13 | Webview default stylesheet (`body { padding: 0 20px }`) | `webpack.config.js` + `apps/desktop/webpack.config.js` (`applyWebviewFullWidth`) | `@theia/plugin-ext/src/main/browser/webview/pre/main.js` (`defaultCssRules`), copied to `lib/webview/pre` by `gen-webpack.config.js` | Theia injects `padding: 0 20px` into every webview; a webview that sizes to `width:100%` (Capibara Pet `#stage`) renders 40px narrower than its panel. We rewrite the declaration during the build's copy step so the content is full width. **Global: changes every webview, not just pets.** | Not a DI rebind, so it fails *silently*: it depends on the copy `from` path ending `webview/pre` and on the literal `padding: 0 20px;`. If either moves, the transform no-ops and the build still succeeds. |
+| B14 | macOS window title bar | `src/browser/undisclosed-title-bar-contribution.ts` (+ `apps/desktop/package.json`: `theia.frontend.config.electron.windowOptions.titleBarStyle = "hiddenInset"`) | `@theia/core` `ElectronMainApplication.getDefaultOptions()` (merges `config.electron.windowOptions` into the `BrowserWindow` options) + `WindowTitleService` | macOS 26 "Tahoe" left-aligns the OS window title and Theia only ever uses the NATIVE macOS title bar (its centered `CustomTitleWidget` path is Windows/Linux only, and the Electron main hard-returns `native` on macOS). We create the window `hiddenInset` (keeps the native traffic lights, hides the native title text) and paint our own centered drag-region strip, offsetting the shell down by its height. | Config-only: depends on Theia still spreading `config.electron.windowOptions` into the window options, and on stored window state never carrying a `titleBarStyle` that overrides it. Gated to Electron+OSX, so it silently no-ops in the browser / on Windows/Linux. The strip height assumes Electron's default `hiddenInset` traffic-light position (native ~28px); re-check the lights if the height changes. |
+| B15 | Diff rendering for empty originals (`renderSideBySide` + `compactMode`) | `packages/undisclosed-git/src/browser/empty-diff-inline-contribution.ts` (+ `packages/undisclosed-git/style/undisclosed-git.css`) | `@theia/monaco/lib/browser/monaco-editor-provider` (`MonacoEditorProvider.createMonacoDiffEditorOptions(original, modified)`); option semantics from `@theia/monaco-editor-core` (`diffEditorWidget.js` `originalWidth` / `inlineViewHideOriginalLineNumbers`, `diffEditorOptions.js` `compactMode`) | Clicking an UNTRACKED file in Source Control opens a diff whose original side is an empty blob (no committed version). Monaco defaults to `renderSideBySide: true`, so that empty left pane is drawn as a blank half of the editor and the content is pushed right, the "huge spacing on the left" seen when opening a new file. We wrap `createMonacoDiffEditorOptions` and, when the original model's `getValueLength()` is 0, force `renderSideBySide: false` AND `compactMode: true`. Inline alone still reserves a left column for the empty original's line numbers (`originalWidth = max(5, original.layoutInfoDecorationsLeft)`); `compactMode` sets `inlineViewHideOriginalLineNumbers`, collapsing that column to 0. Modified/deleted-file diffs keep side-by-side. The residual 35px hunk `gutter` that stays on the inline diff is transparent by default, so on a black editor background it reads as dead space before the content; `style/undisclosed-git.css` gives it a visible background (the theme's inserted-line colour), matching how Antigravity renders the same strip. | Prototype-patch on a protected method: if upstream renames or moves `createMonacoDiffEditorOptions`, the wrapper no-ops (falls back to side-by-side) with no error. Depends on `MonacoEditorModel.textEditorModel.getValueLength()` and on the frontend bundler not mangling method names (esbuild property mangling is opt-in, so it does not). Installed at module-load time so an untracked diff restored on reload is also covered. |
 
 ### Mechanism risk shared by B1, B4 and B12
 
@@ -95,6 +119,43 @@ Run these after any bump. B1, B3, B4, B6 must also be repeated on a packaged
   20px inset). Confirm other webviews (media preview, markdown) still render. This
   one is a *build* transform, so it must be checked on a freshly built bundle
   (`npm run build` / `theia build`), not just a running server.
+- **B14 macOS title bar (packaged only):** with a file open, the window title
+  (`<file> - <workspace>`) is CENTERED in a strip at the top, the native traffic
+  lights are visible and vertically aligned with the strip, and the activity bar /
+  editor start BELOW it (nothing sits under the lights). Dragging the strip moves
+  the window. Only meaningful in the packaged Electron app — the browser build has
+  no OS chrome, so this is a no-op there.
+- **B15 empty-original diff:** in Source Control, click an UNTRACKED file; the diff
+  opens unified (one column), with NO empty original column. In the DOM, the root is
+  `.monaco-diff-editor` (no `side-by-side` class), `.editor.original` has width 0, and
+  `.editor.modified` starts at the diff's hunk `gutter` (35px). A modified file still
+  opens side-by-side. Reload with the untracked diff open and confirm it stays unified.
+  Note: Monaco's own hunk `gutter` (35px, holds the hover "Revert Block" toolbar, shown
+  because the modified side is writable) is standard inline-diff chrome and is not
+  removed by this override. It is TINTED by `style/undisclosed-git.css` (imported from
+  the frontend module) so the 35px reads as chrome rather than blank space: in DevTools
+  the computed `background-color` of `.monaco-diff-editor:not(.side-by-side) .gutter`
+  should resolve to the theme's inserted-line colour, e.g. `rgba(155, 185, 85, 0.2)`
+  on the HALFLIFE/dark theme (composited over the black editor that is `#202514`, the
+  same olive band Antigravity paints), not `rgba(0, 0, 0, 0)`.
+
+  **Variable-name trap (cost a whole debug cycle):** the workbench theme vars are
+  `--theia-<colorId with dots -> dashes>`, NOT `--vscode-<...>`. Theia's
+  `ColorRegistry.toCssVariableName(id, prefix = 'theia')` builds the `--theia-` name;
+  the `--vscode-` spelling is emitted ONLY inside webviews
+  (`@theia/plugin-ext/lib/main/browser/webview/webview-theme-data-provider`), so on the
+  workbench `var(--vscode-diffEditor-insertedLineBackground)` is undefined and silently
+  falls through to whatever fallback you wrote. Reference the `--theia-` name.
+  Also: `diffEditorGutter.insertedLineBackground` has no theme default (Monaco
+  registers it as `null`), so `--theia-diffEditorGutter-insertedLineBackground` is
+  normally unset and the rule lands on `--theia-diffEditor-insertedLineBackground`.
+
+  **Stale-bundle trap:** the browser dev target caches `bundle.css` hard. After a
+  rebuild with an open tab, a plain server restart does NOT pull the new CSS; the
+  running page keeps the old stylesheet (its rules simply lack the new selector).
+  Hard-reload (ignore cache) the tab before judging the fix. Quick check in DevTools:
+  `document.styleSheets` contains a `bundle.css` whose rules include
+  `.monaco-diff-editor:not(.side-by-side) .gutter`.
 
 ## Guards (planned, implement on the upgrade branch)
 
@@ -109,17 +170,6 @@ These are small additions that make a future silent failure impossible. They are
 
 2. **Deep-import isolation.** Wrap each `@theia/plugin-ext/lib/...` deep import
    (B1, B4) in one small module per override, so a path change is a one-line fix
-   instead of a search.
-
-3. **`scripts/theia-override-audit.sh`.** Greps the installed `node_modules/@theia`
-   for each symbol/path in the register and exits non-zero if any are missing. Also
-   checks whether the webview defect line still exists upstream, so we know whether
-   B1 can ever be retired. Run it as the first step of any bump.
-
-4. **`tsc` gate in CI.** `build:packages` already runs tsc; make sure CI runs it
-   against the pinned Theia so signature drift is caught on the upgrade branch, not
-   at runtime.
-s a one-line fix
    instead of a search.
 
 3. **`scripts/theia-override-audit.sh`.** Greps the installed `node_modules/@theia`

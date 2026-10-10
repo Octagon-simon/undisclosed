@@ -34,10 +34,21 @@ import tailwindcssNesting from 'tailwindcss/nesting';
 import { defineConfig } from 'vite';
 
 const AGENT_ROOT = '.undisclosed-agent-root';
+// Zero-specificity form of the root, used as the DESCENDANT prefix for
+// bare-element / `*` resets. Tailwind emits NO `@layer` wrappers here (preflight
+// is off and Tailwind flattens its own layers), so the cascade here is decided
+// by specificity + source order: element resets are (0,0,1) and utilities are
+// (0,1,0), so utilities are meant to win. Prefixing with the plain class raised
+// every reset to (0,1,1) and beat the utilities — e.g. the vestigial
+// `button { padding: 0 .1em }` reset clobbered `px-3 py-2` on the activity
+// rows/headers. `:where()` contributes ZERO specificity, so the reset keeps
+// applying (still scoped to the panel) but no longer outranks utility classes.
+const AGENT_ROOT_SCOPED = `:where(${AGENT_ROOT})`;
 
 function scopeSelector(sel: string): string {
   const s = sel.trim();
-  if (!s || s.startsWith(AGENT_ROOT)) return sel;
+  if (!s || s.startsWith(AGENT_ROOT) || s.startsWith(AGENT_ROOT_SCOPED))
+    return sel;
   const c = s[0];
   // Keep class / id / attribute selectors global (utilities + theme vars +
   // component styles — needed by portaled UI outside the panel root).
@@ -45,12 +56,12 @@ function scopeSelector(sel: string): string {
   if (c === ':') {
     // Pseudo-ELEMENTS (::before/::after/::selection) can bleed — scope them.
     // Pseudo-classes / :root / :where stay global.
-    return s.startsWith('::') ? `${AGENT_ROOT} ${s}` : s;
+    return s.startsWith('::') ? `${AGENT_ROOT_SCOPED} ${s}` : s;
   }
-  if (s === 'html' || s === 'body') return AGENT_ROOT;
-  if (s === '*') return `${AGENT_ROOT}, ${AGENT_ROOT} *`;
+  if (s === 'html' || s === 'body') return AGENT_ROOT_SCOPED;
+  if (s === '*') return `${AGENT_ROOT_SCOPED}, ${AGENT_ROOT_SCOPED} *`;
   // Bare element selectors (h1, p, button, …) → scope under the panel root.
-  return `${AGENT_ROOT} ${s}`;
+  return `${AGENT_ROOT_SCOPED} ${s}`;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -22,6 +22,7 @@ from camel.toolkits import MCPToolkit
 from app.agent.toolkit.abstract_toolkit import AbstractToolkit
 from app.agent.toolkit.audio_analysis_toolkit import AudioAnalysisToolkit
 from app.agent.toolkit.excel_toolkit import ExcelToolkit
+from app.agent.toolkit.figma_toolkit import FigmaToolkit
 from app.agent.toolkit.file_write_toolkit import FileToolkit
 from app.agent.toolkit.github_toolkit import GithubToolkit
 from app.agent.toolkit.google_calendar_toolkit import GoogleCalendarToolkit
@@ -30,6 +31,7 @@ from app.agent.toolkit.google_gmail_mcp_toolkit import GoogleGmailMCPToolkit
 from app.agent.toolkit.lark_toolkit import LarkToolkit
 from app.agent.toolkit.linkedin_toolkit import LinkedInToolkit
 from app.agent.toolkit.mcp_search_toolkit import McpSearchToolkit
+from app.agent.toolkit.mongodb_toolkit import MongoDBToolkit
 from app.agent.toolkit.notion_mcp_toolkit import NotionMCPToolkit
 from app.agent.toolkit.openai_image_toolkit import OpenAIImageToolkit
 from app.agent.toolkit.pptx_toolkit import PPTXToolkit
@@ -72,6 +74,7 @@ async def get_toolkits(
         "audio_analysis_toolkit": AudioAnalysisToolkit,
         "openai_image_toolkit": OpenAIImageToolkit,
         "excel_toolkit": ExcelToolkit,
+        "figma_toolkit": FigmaToolkit,
         "file_write_toolkit": FileToolkit,
         "github_toolkit": GithubToolkit,
         "google_calendar_toolkit": GoogleCalendarToolkit,
@@ -80,6 +83,7 @@ async def get_toolkits(
         "linkedin_toolkit": LinkedInToolkit,
         "lark_toolkit": LarkToolkit,
         "mcp_search_toolkit": McpSearchToolkit,
+        "mongodb_toolkit": MongoDBToolkit,
         "notion_mcp_toolkit": NotionMCPToolkit,
         "pptx_toolkit": PPTXToolkit,
         "rag_toolkit": RAGToolkit,

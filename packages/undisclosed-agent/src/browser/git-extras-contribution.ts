@@ -1,11 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Simon Ugorji
 //
-// Extra git commands that Theia's built-in Git extension doesn't ship but
-// developers expect (Antigravity-style): "Undo Last Commit", unstage-all,
-// discard-all. Theia already provides stage/unstage/commit/amend, the merge
-// editor, dirty-diff, stash, pull/push/sync and history — this just fills the
-// gaps. Runs real git via the Git service against the selected repository.
+// Extra git commands that Theia's built-in Git UI doesn't ship but developers
+// expect (Antigravity-style): "Undo Last Commit", unstage-all, discard-all, plus
+// a ✨ button that drafts a commit message from the staged diff via the Brain.
+//
+// PORT NOTE (Theia 1.76): upstream deleted the `@theia/git` package (last
+// release 1.60.2; "use the built-in VS Code Git extension instead"). Source
+// Control is now served by the bundled `vscode.git` extension. We therefore no
+// longer inject `Git` / `GitRepositoryProvider` from `@theia/git`; instead we
+// read the repository root + commit box from Theia's provider-agnostic
+// `ScmService`, and shell out to `git` through a small same-origin backend
+// endpoint (`POST /undisclosed-agent/git/exec`, see the backend module).
 
 import { inject, injectable } from '@theia/core/shared/inversify';
 import {
@@ -18,19 +24,44 @@ import {
   MenuModelRegistry,
   MenuPath,
   MessageService,
+  Disposable,
 } from '@theia/core/lib/common';
 import { Widget } from '@theia/core/lib/browser';
+import { Endpoint } from '@theia/core/lib/browser/endpoint';
+import { FileUri } from '@theia/core/lib/common/file-uri';
 import {
   TabBarToolbarContribution,
   TabBarToolbarRegistry,
 } from '@theia/core/lib/browser/shell/tab-bar-toolbar';
-import { Git } from '@theia/git/lib/common';
-import { GitRepositoryProvider } from '@theia/git/lib/browser/git-repository-provider';
+import { QuickInputService } from '@theia/core/lib/browser/quick-input/quick-input-service';
+import { WorkspaceService } from '@theia/workspace/lib/browser';
 import { ScmService } from '@theia/scm/lib/browser/scm-service';
 import { ScmWidget } from '@theia/scm/lib/browser/scm-widget';
+import { ScmTreeWidget } from '@theia/scm/lib/browser/scm-tree-widget';
+import { SCM_TITLE_MENU } from '@theia/scm/lib/browser/scm-repositories-widget';
+import {
+  GENERATE_MESSAGE_ITEM_ID,
+  renderCommitMessageButton,
+} from './git-commit-message-button';
 
 /** The Brain (agent backend) — the AI commit-message endpoint lives here. */
 const BRAIN_BASE_URL = 'http://localhost:5001';
+
+/** Same-origin backend endpoint that runs `git` and returns its output.
+ *
+ * Resolved through Theia's `Endpoint`, NOT a bare root-relative URL. In the dev
+ * browser build the frontend origin IS the backend, so a path like
+ * `/undisclosed-agent/git/exec` worked by accident; in the packaged Electron app
+ * the renderer loads from a `file://` page, so the same path resolved to
+ * `file:///undisclosed-agent/git/exec` and `fetch` failed ("Failed to fetch").
+ * `Endpoint` resolves the real backend host:port in every mode. See the same
+ * one-liner in `undisclosed-agent-widget.tsx` `serverUrl()` and in
+ * `undisclosed-import/src/browser/backend-url.ts`. */
+const GIT_EXEC_URL = new Endpoint({
+  path: '/undisclosed-agent/git/exec',
+})
+  .getRestUrl()
+  .toString();
 
 /** A "Git" submenu in the main menu bar (discoverable; also in the palette). */
 const GIT_MENU: MenuPath = [...MAIN_MENU_BAR, '8_git_extras'];
@@ -51,26 +82,57 @@ const DISCARD_ALL: Command = {
   id: 'undisclosed.git.discardAll',
   label: 'Git: Discard All Changes',
 };
+/** Create a commit with no file changes (a "placeholder" commit), like VS Code's
+ *  `git.commitEmpty`. Kept explicit here because the empty commit-message box no
+ *  longer falls through to an empty commit. */
+const COMMIT_EMPTY: Command = {
+  id: 'undisclosed.git.commitEmpty',
+  label: 'Git: Commit Empty…',
+  // Rendered beside the label wherever the command appears (the Changes group
+  // context menu, the SCM title "…" menu, the main Git submenu). Theia takes a
+  // menu entry's icon from the command's `iconClass`, so without this the item
+  // shows as a bare label next to the sparkle icon of Generate Commit Message.
+  iconClass: 'codicon codicon-git-commit',
+};
 const GENERATE_MESSAGE: Command = {
   id: 'undisclosed.git.generateCommitMessage',
   label: 'Git: Generate Commit Message (AI)',
   iconClass: 'codicon codicon-sparkle',
 };
 
+interface GitExecResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+}
+
+/** Run `git <args>` in `cwd` via the backend exec endpoint. */
+async function gitExec(cwd: string, args: string[]): Promise<GitExecResult> {
+  const res = await fetch(GIT_EXEC_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cwd, args }),
+  });
+  if (!res.ok) {
+    throw new Error(`git exec request failed (HTTP ${res.status})`);
+  }
+  return (await res.json()) as GitExecResult;
+}
+
 @injectable()
 export class GitExtrasContribution
   implements CommandContribution, MenuContribution, TabBarToolbarContribution
 {
-  @inject(Git) protected readonly git!: Git;
-  @inject(GitRepositoryProvider)
-  protected readonly repositories!: GitRepositoryProvider;
   @inject(MessageService) protected readonly messages!: MessageService;
   @inject(ScmService) protected readonly scm!: ScmService;
+  @inject(WorkspaceService) protected readonly workspace!: WorkspaceService;
+  @inject(QuickInputService) protected readonly quickInput!: QuickInputService;
 
   /** True while the AI commit-message request is in flight — drives the toolbar
    *  button's spinner (and disables it so it can't be double-fired). */
   protected generating = false;
-  /** Fire to re-render the SCM toolbar so the button's icon/enabled swap. */
+  /** Fire when `generating` changes. The React toolbar button subscribes to this
+   *  and re-renders itself; it is NOT used to re-render the SCM toolbar. */
   protected readonly onDidChangeToolbar = new Emitter<void>();
 
   protected setGenerating(value: boolean): void {
@@ -78,32 +140,66 @@ export class GitExtrasContribution
     this.onDidChangeToolbar.fire();
   }
 
+  /** Public read/subscribe hooks for the React toolbar button. It renders as its
+   *  own React node and re-renders itself from this event, so it never asks the
+   *  container TabBarToolbar to re-render (see git-commit-message-button.tsx). */
+  isGenerating(): boolean {
+    return this.generating;
+  }
+
+  onDidChangeGenerating(listener: () => void): Disposable {
+    return this.onDidChangeToolbar.event(() => listener());
+  }
+
+  /** Run the commit-message generation (shared by the command and the button). */
+  async trigger(): Promise<void> {
+    if (this.generating) {
+      return;
+    }
+    this.setGenerating(true);
+    try {
+      await this.generateCommitMessage();
+    } finally {
+      this.setGenerating(false);
+    }
+  }
+
+  /**
+   * The git repository root: prefer the selected Source Control repository (now
+   * the built-in `vscode.git` provider), else fall back to the first workspace
+   * root so the commands still work before SCM has settled.
+   */
+  protected repositoryRoot(): string | undefined {
+    const scmRoot = this.scm.selectedRepository?.provider.rootUri;
+    if (scmRoot) {
+      return FileUri.fsPath(scmRoot);
+    }
+    const roots = this.workspace.tryGetRoots();
+    if (roots.length > 0) {
+      return FileUri.fsPath(roots[0].resource);
+    }
+    return undefined;
+  }
+
   /** Generate a Conventional-Commits message from the staged diff via the Brain
    *  (which uses the model the user is chatting with), and drop it into the
    *  Source Control commit box. */
   protected async generateCommitMessage(): Promise<void> {
-    const repository = this.repositories.selectedRepository;
-    if (!repository) {
+    const root = this.repositoryRoot();
+    if (!root) {
       this.messages.warn('No git repository is selected.');
       return;
     }
     let diff = '';
     try {
-      const staged = await this.git.exec(repository, [
-        'diff',
-        '--cached',
-        '--no-color',
-      ]);
+      const staged = await gitExec(root, ['diff', '--cached', '--no-color']);
       let patch = staged.stdout || '';
-      let staged_scope = true;
+      let stagedScope = true;
       if (!patch.trim()) {
         // Nothing staged — fall back to the working-tree diff.
-        const unstaged = await this.git.exec(repository, [
-          'diff',
-          '--no-color',
-        ]);
+        const unstaged = await gitExec(root, ['diff', '--no-color']);
         patch = unstaged.stdout || '';
-        staged_scope = false;
+        stagedScope = false;
       }
       if (patch.trim()) {
         // Prepend the FULL list of changed files (--stat) ahead of the patch.
@@ -111,9 +207,9 @@ export class GitExtrasContribution
         // the stat is small and sits at the head, so the model always sees
         // EVERY changed file even when the patch body is trimmed — otherwise
         // late files were dropped and the message "missed" changes.
-        const stat = await this.git.exec(
-          repository,
-          staged_scope
+        const stat = await gitExec(
+          root,
+          stagedScope
             ? ['diff', '--cached', '--stat']
             : ['diff', '--stat']
         );
@@ -158,14 +254,43 @@ export class GitExtrasContribution
     }
   }
 
+  /**
+   * Create a commit with no file changes. Prefers the message already in the
+   * Source Control box; otherwise prompts for one so the empty commit still has
+   * a meaningful subject.
+   */
+  protected async commitEmpty(): Promise<void> {
+    const root = this.repositoryRoot();
+    if (!root) {
+      this.messages.warn('No git repository is selected.');
+      return;
+    }
+    let message = (this.scm.selectedRepository?.input.value ?? '').trim();
+    if (!message) {
+      message = (
+        (await this.quickInput.input({
+          prompt: 'Message for the empty commit',
+          placeHolder: 'chore: empty commit',
+        })) ?? ''
+      ).trim();
+    }
+    if (!message) {
+      return;
+    }
+    await this.run(
+      ['commit', '--allow-empty', '-m', message],
+      'Created an empty commit.'
+    );
+  }
+
   protected async run(args: string[], okMessage: string): Promise<void> {
-    const repository = this.repositories.selectedRepository;
-    if (!repository) {
+    const root = this.repositoryRoot();
+    if (!root) {
       this.messages.warn('No git repository is selected.');
       return;
     }
     try {
-      const result = await this.git.exec(repository, args);
+      const result = await gitExec(root, args);
       if (result.exitCode && result.exitCode !== 0) {
         this.messages.error(
           `git ${args.join(' ')} failed: ${result.stderr || result.exitCode}`
@@ -226,17 +351,10 @@ export class GitExtrasContribution
     });
     commands.registerCommand(GENERATE_MESSAGE, {
       isEnabled: () => !this.generating,
-      execute: async () => {
-        if (this.generating) {
-          return;
-        }
-        this.setGenerating(true);
-        try {
-          await this.generateCommitMessage();
-        } finally {
-          this.setGenerating(false);
-        }
-      },
+      execute: () => this.trigger(),
+    });
+    commands.registerCommand(COMMIT_EMPTY, {
+      execute: () => this.commitEmpty(),
     });
   }
 
@@ -244,6 +362,7 @@ export class GitExtrasContribution
     menus.registerSubmenu(GIT_MENU, 'Git');
     for (const command of [
       GENERATE_MESSAGE,
+      COMMIT_EMPTY,
       UNDO_SOFT,
       UNDO_HARD,
       UNSTAGE_ALL,
@@ -254,22 +373,36 @@ export class GitExtrasContribution
         label: (command.label ?? command.id).replace(/^Git: /, ''),
       });
     }
+
+    // "Commit Empty…" in the Source Control UI: the "Changes" group context
+    // menu (right-click the group) and the view's "…" title menu, beside the
+    // built-in Commit/Refresh actions.
+    menus.registerMenuAction(ScmTreeWidget.RESOURCE_GROUP_CONTEXT_MENU, {
+      commandId: COMMIT_EMPTY.id,
+      label: 'Commit Empty…',
+      order: 'z',
+    });
+    menus.registerMenuAction(SCM_TITLE_MENU, {
+      commandId: COMMIT_EMPTY.id,
+      label: 'Commit Empty…',
+      order: 'z',
+    });
   }
 
   registerToolbarItems(registry: TabBarToolbarRegistry): void {
-    // A ✨ button in the Source Control view's title toolbar.
+    // A sparkle button in the Source Control view's title toolbar.
+    //
+    // Registered as a self-contained React item (render, not icon +
+    // onDidChange). The stock icon/onDidChange approach makes the registry
+    // re-render the WHOLE TabBarToolbar; Theia 1.76 then crashes rendering the
+    // vscode.git menu items (renderMenuItem reads `widget.node` while the
+    // toolbar's current widget is undefined), leaving the spinner stuck. A
+    // React item re-renders only itself.
     registry.registerItem({
       id: GENERATE_MESSAGE.id,
       command: GENERATE_MESSAGE.id,
-      tooltip: 'Generate a commit message from the staged changes (AI)',
-      // Swap to a spinning icon while the request is in flight so the user
-      // knows it's working (the fetch can take a couple seconds).
-      icon: () =>
-        this.generating
-          ? 'codicon codicon-loading codicon-modifier-spin'
-          : 'codicon codicon-sparkle',
-      onDidChange: this.onDidChangeToolbar.event,
       isVisible: (widget?: Widget) => widget instanceof ScmWidget,
+      render: () => renderCommitMessageButton(this),
     });
   }
 }

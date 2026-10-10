@@ -26,6 +26,12 @@ from camel.types import OpenAIBackendRole
 from fastapi import Request
 
 from app.agent.factory.single_agent import single_agent
+from app.agent.tool_rag import (
+    reconcile_agent_tools,
+    reconcile_agent_tools_routed,
+)
+from app.component.debug import debug_dump, debug_enabled
+from app.component.environment import env
 from app.hands.interface import IHands
 from app.hooks.emitters import (
     emit_session_paused,
@@ -41,14 +47,6 @@ from app.memory import (
     read_rolling_summary_for_task_lock,
 )
 from app.model.chat import Chat, sse_json
-from app.agent.tool_rag import (
-    reconcile_agent_tools,
-    reconcile_agent_tools_routed,
-)
-from app.component.environment import env
-from app.component.debug import debug_dump, debug_enabled
-from app.utils.file_utils import resolve_attach_refs, resolve_upload_ref
-from app.utils.model_capabilities import model_supports_vision
 from app.model.enums import Status
 from app.service.approval_manager import ApprovalManager
 from app.service.task import (
@@ -66,7 +64,12 @@ from app.utils.agent_memory import (
     build_memory_context,
     record_agent_memory_snapshot,
 )
-from app.utils.file_utils import get_working_directory
+from app.utils.file_utils import (
+    get_working_directory,
+    resolve_attach_refs,
+    resolve_upload_ref,
+)
+from app.utils.model_capabilities import model_supports_vision
 
 logger = logging.getLogger("single_agent_service")
 
@@ -501,6 +504,48 @@ def _looks_like_announce_and_stop(content: str, question: str) -> bool:
     return True
 
 
+#: Max times we will auto-nudge a turn that ended on an intent-only preamble
+#: before giving up and letting the user see whatever came back.
+_MAX_ANNOUNCE_NUDGES = 2
+
+
+def _should_auto_continue(
+    content: str,
+    question: str,
+    *,
+    tool_called: bool,
+    answer_from_fallback: bool,
+) -> bool:
+    """Decide whether a finished turn should be nudged to keep going.
+
+    Two failure shapes are covered:
+
+    * ``tool_called=False`` — the model replied with ONLY an intent preamble
+      ("I'll start by looking at the files…") and ended with zero tool calls.
+      This is the original announce-and-stop case.
+
+    * ``tool_called=True`` AND ``answer_from_fallback`` — the model DID run
+      tools but its trailing segment (the text after the last tool call) was
+      empty, so ``_response_content`` resurrected the last non-empty segment,
+      which was a pre-tool-call PREAMBLE. The user sees "Let me start by
+      checking…" and the turn ends, even though work was done. Without this
+      branch the recovery was silently skipped because a tool had run.
+
+    Deliberately conservative: the content must still look like an intent
+    preamble (short + future-intent phrasing) and the request must not be
+    chit-chat, so a real answer that merely happens to start with "I'll" is
+    never nudged.
+    """
+    if not _looks_like_announce_and_stop(content, question):
+        return False
+    # No tool run at all → classic announce-and-stop.
+    if not tool_called:
+        return True
+    # Tools ran but the reported answer is a resurrected pre-tool preamble →
+    # the model ended without a closing message. Nudge it to report.
+    return answer_from_fallback
+
+
 _ACK_INSTRUCTION = (
     "You are the assistant about to start working on the user's request. Reply "
     "with ONE short, warm, natural sentence (max ~16 words) that acknowledges "
@@ -708,7 +753,13 @@ async def _response_content(
     stream_reasoning: bool = False,
     on_first_tool_call: Any = None,
 ) -> tuple[str, int, str, bool]:
-    """Returns (content, tokens, reasoning, reasoning_was_streamed).
+    """Returns (content, tokens, reasoning, reasoning_was_streamed,
+    answer_from_fallback).
+
+    ``answer_from_fallback`` is True when the trailing (post-last-tool-call)
+    segment carried no text, so the reported answer is a resurrected EARLIER
+    segment — usually a pre-tool-call preamble, not a real closing message.
+    Callers use it to detect a turn that ended without actually answering.
 
     When ``stream_reasoning`` is on and the model emits reasoning, each reasoning
     delta is pushed live onto the task queue as an `Action.reasoning` event so
@@ -867,6 +918,11 @@ async def _response_content(
         else:
             answer = final_content
             answer_reasoning = final_reasoning
+        # Signal to the caller whether `answer` came from the fallback (trailing
+        # segment empty). A fallback answer is usually a pre-tool-call preamble
+        # rather than a real closing message, which the turn loop uses to decide
+        # whether to nudge the model to finish.
+        answer_from_fallback = not content.strip()
         if stream_reasoning:
             logger.info(
                 "[thinking] stream done: reasoning_chars=%d streamed=%s "
@@ -893,7 +949,13 @@ async def _response_content(
                 task_lock.soft_error = _soft_error
             except Exception:  # pragma: no cover - defensive
                 pass
-        return answer, extract_tokens(last_chunk), answer_reasoning, streamed
+        return (
+            answer,
+            extract_tokens(last_chunk),
+            answer_reasoning,
+            streamed,
+            answer_from_fallback,
+        )
 
     msg = getattr(response, "msg", None)
     usage_tokens = extract_tokens(response)
@@ -907,7 +969,7 @@ async def _response_content(
                 pass
     reasoning = reasoning_of(msg)
     if msg is not None and getattr(msg, "content", None):
-        return msg.content, usage_tokens, reasoning, False
+        return msg.content, usage_tokens, reasoning, False, False
 
     msgs = getattr(response, "msgs", None)
     if msgs:
@@ -917,9 +979,10 @@ async def _response_content(
             usage_tokens,
             reasoning or reasoning_of(last),
             False,
+            False,
         )
 
-    return "", usage_tokens, reasoning, False
+    return "", usage_tokens, reasoning, False, False
 
 
 def _action_to_sse(item: ActionData) -> str | None:
@@ -1076,6 +1139,7 @@ async def single_agent_solve(
     request: Request,
     task_lock: TaskLock,
     hands: IHands | None = None,
+    stream_id: str | None = None,
 ):
     pause_event = asyncio.Event()
     pause_event.set()
@@ -1357,40 +1421,66 @@ async def single_agent_solve(
                 await _fire_ack()
 
         response = await turn_agent.astep(step_input)
-        content, total_tokens, reasoning, reasoning_streamed = (
-            await _response_content(
-                response,
-                task_lock=task_lock,
-                task_id=task_id,
-                stream_reasoning=_thinking_enabled(options),
-                on_first_tool_call=_on_first_tool_call,
-            )
+        (
+            content,
+            total_tokens,
+            reasoning,
+            reasoning_streamed,
+            answer_from_fallback,
+        ) = await _response_content(
+            response,
+            task_lock=task_lock,
+            task_id=task_id,
+            stream_reasoning=_thinking_enabled(options),
+            on_first_tool_call=_on_first_tool_call,
         )
 
-        # ANNOUNCE-AND-STOP recovery: the low-temp model sometimes replies with
-        # ONLY an intent preamble ("I'll start by looking at the files…") and
-        # ends the turn with ZERO tool calls, forcing the user to re-prompt for
-        # it to resume. If that happens on a request that clearly asked for WORK,
-        # nudge it ONCE to actually act. Guarded so it can never loop, never
-        # fires on greetings/short chats, and never fires on an errored turn.
-        if (not _tool_called) and _looks_like_announce_and_stop(content, question):
+        # ANNOUNCE-AND-STOP recovery: the low-temp model sometimes ends a turn on
+        # ONLY an intent preamble ("I'll start by looking at the files…") —
+        # either with ZERO tool calls, or AFTER doing work when its trailing
+        # segment is empty and _response_content resurrects the preamble as the
+        # turn's "answer". Either way the user is stuck seeing "Let me…" and has
+        # to re-prompt. Nudge it (bounded) to actually act / report. Guarded so
+        # it can never loop forever, never fires on greetings/short chats, and
+        # never fires on an errored turn.
+        for _attempt in range(_MAX_ANNOUNCE_NUDGES):
+            if not _should_auto_continue(
+                content,
+                question,
+                tool_called=_tool_called,
+                answer_from_fallback=answer_from_fallback,
+            ):
+                break
             logger.info(
-                "announce-and-stop detected (0 tool calls, intent-only reply); "
-                "auto-continuing once",
+                "announce-and-stop detected (tool_calls=%s, fallback=%s, "
+                "attempt %d/%d); auto-continuing",
+                _tool_called,
+                answer_from_fallback,
+                _attempt + 1,
+                _MAX_ANNOUNCE_NUDGES,
                 extra={"task_id": task_id},
             )
             try:
-                nudge = (
-                    "Continue now. Actually perform the action you just "
-                    "described, using your tools — do NOT restate the plan. Do "
-                    "the work, then report what you changed or found."
-                )
+                if _attempt == 0:
+                    nudge = (
+                        "Continue now. Actually perform the action you just "
+                        "described, using your tools — do NOT restate the plan. "
+                        "Do the work, then report what you changed or found."
+                    )
+                else:
+                    nudge = (
+                        "You ended your turn without a final answer. Report now, "
+                        "in a short concrete summary, what you did and found. If "
+                        "the task is complete, say so plainly; otherwise finish "
+                        "the remaining steps first."
+                    )
                 response2 = await turn_agent.astep(nudge)
                 (
                     content2,
                     tokens2,
                     reasoning2,
                     reasoning_streamed2,
+                    answer_from_fallback2,
                 ) = await _response_content(
                     response2,
                     task_lock=task_lock,
@@ -1403,10 +1493,12 @@ async def single_agent_solve(
                     total_tokens += tokens2
                     reasoning = reasoning2 or reasoning
                     reasoning_streamed = reasoning_streamed2
+                    answer_from_fallback = answer_from_fallback2
             except Exception:
                 logger.warning(
                     "announce-and-stop auto-continue failed", exc_info=True
                 )
+                break
         # Turn is done: stop the long-task fallback timer if it's still pending
         # (short / no-tool turns never reach it → no ack). A tool-using turn has
         # already fired the ack via on_first_tool_call above.
@@ -1496,6 +1588,29 @@ async def single_agent_solve(
 
     try:
         while True:
+            if (
+                stream_id is not None
+                and getattr(task_lock, "active_stream_id", None) != stream_id
+            ):
+                # A newer stream attached to this project (client re-attach after
+                # its stream died) and now owns the queue. End this consumer;
+                # the `finally` cancels any in-flight turn and finalizes memory.
+                logger.info(
+                    "Single Agent stream superseded by newer attach; ending this consumer",
+                    extra={
+                        "project_id": options.project_id,
+                        "stream_id": stream_id,
+                    },
+                )
+                pause_event.clear()
+                task_lock.status = Status.confirming
+                agent = None
+                try:
+                    task_lock.single_agent = None
+                except Exception:  # pragma: no cover - defensive
+                    pass
+                break
+
             if await request.is_disconnected():
                 logger.info(
                     "Single Agent client disconnected; pausing session",
@@ -1560,6 +1675,32 @@ async def single_agent_solve(
 
             if pending_queue_get in done:
                 item = pending_queue_get.result()
+
+                if (
+                    stream_id is not None
+                    and getattr(task_lock, "active_stream_id", None)
+                    != stream_id
+                ):
+                    # Superseded between ticks: this dequeued item belongs to the
+                    # new consumer. Hand it back and end this loop — the
+                    # `finally` cancels any in-flight turn and finalizes memory.
+                    logger.info(
+                        "Single Agent stream superseded after dequeue; requeueing item",
+                        extra={
+                            "project_id": options.project_id,
+                            "stream_id": stream_id,
+                        },
+                    )
+                    await task_lock.put_queue(item)
+                    pause_event.clear()
+                    task_lock.status = Status.confirming
+                    agent = None
+                    try:
+                        task_lock.single_agent = None
+                    except Exception:  # pragma: no cover - defensive
+                        pass
+                    break
+
                 pending_queue_get = asyncio.create_task(task_lock.get_queue())
 
                 if item.action == Action.improve:

@@ -1,11 +1,11 @@
 {
   "private": true,
   "name": "undisclosed",
-  "version": "0.0.9",
+  "version": "0.1.0-beta.2",
   "description": "Undisclosed's editor-first shell, built as a custom Eclipse Theia product. The code editor is the primary surface; Undisclosed's agent + features are added as native Theia contributions (Antigravity model).",
   "license": "Apache-2.0",
   "engines": {
-    "node": ">=18 <=20"
+    "node": ">=24"
   },
   "theia": {
     "target": "browser",
@@ -69,31 +69,32 @@
     "vscode.emmet": "https://open-vsx.org/api/vscode/emmet/1.95.3/file/vscode.emmet-1.95.3.vsix",
     "vscode.markdown-language-features": "https://open-vsx.org/api/vscode/markdown-language-features/1.95.3/file/vscode.markdown-language-features-1.95.3.vsix",
     "vscode.markdown-math": "https://open-vsx.org/api/vscode/markdown-math/1.95.3/file/vscode.markdown-math-1.95.3.vsix",
+    "vscode.git-base": "https://open-vsx.org/api/vscode/git-base/1.95.3/file/vscode.git-base-1.95.3.vsix",
+    "vscode.git": "https://open-vsx.org/api/vscode/git/1.95.3/file/vscode.git-1.95.3.vsix",
     "esbenp.prettier-vscode": "https://open-vsx.org/api/esbenp/prettier-vscode/11.0.3/file/esbenp.prettier-vscode-11.0.3.vsix",
     "dbaeumer.vscode-eslint": "https://open-vsx.org/api/dbaeumer/vscode-eslint/3.0.34/file/dbaeumer.vscode-eslint-3.0.34.vsix"
   },
   "dependencies": {
-    "@theia/core": "1.60.0",
-    "@theia/debug": "1.60.0",
-    "@theia/editor": "1.60.0",
-    "@theia/file-search": "1.60.0",
-    "@theia/filesystem": "1.60.0",
-    "@theia/git": "1.60.0",
-    "@theia/markers": "1.60.0",
-    "@theia/scm": "1.60.0",
-    "@theia/scm-extra": "1.60.0",
-    "@theia/messages": "1.60.0",
-    "@theia/monaco": "1.60.0",
-    "@theia/navigator": "1.60.0",
-    "@theia/output": "1.60.0",
-    "@theia/plugin-ext": "1.60.0",
-    "@theia/plugin-ext-vscode": "1.60.0",
-    "@theia/preferences": "1.60.0",
-    "@theia/process": "1.60.0",
-    "@theia/search-in-workspace": "1.60.0",
-    "@theia/terminal": "1.60.0",
-    "@theia/vsx-registry": "1.60.0",
-    "@theia/workspace": "1.60.0",
+    "@theia/core": "1.76.0",
+    "@theia/debug": "1.76.0",
+    "@theia/editor": "1.76.0",
+    "@theia/file-search": "1.76.0",
+    "@theia/filesystem": "1.76.0",
+    "@theia/markers": "1.76.0",
+    "@theia/scm": "1.76.0",
+    "@theia/messages": "1.76.0",
+    "@theia/monaco": "1.76.0",
+    "@theia/monaco-editor-core": "1.108.201",
+    "@theia/navigator": "1.76.0",
+    "@theia/output": "1.76.0",
+    "@theia/plugin-ext": "1.76.0",
+    "@theia/plugin-ext-vscode": "1.76.0",
+    "@theia/preferences": "1.76.0",
+    "@theia/process": "1.76.0",
+    "@theia/search-in-workspace": "1.76.0",
+    "@theia/terminal": "1.76.0",
+    "@theia/vsx-registry": "1.76.0",
+    "@theia/workspace": "1.76.0",
     "undisclosed-agent": "file:packages/undisclosed-agent",
     "undisclosed-git": "file:packages/undisclosed-git",
     "undisclosed-import": "file:packages/undisclosed-import",
@@ -101,11 +102,11 @@
     "lodash": "^4.18.1"
   },
   "devDependencies": {
-    "@theia/cli": "1.60.0",
-    "terser-webpack-plugin": "^5.6.1"
-  },
-  "overrides": {
-    "@vscode/ripgrep": "1.15.9"
+    "@theia/cli": "1.76.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "terser-webpack-plugin": "^5.6.1",
+    "yargs": "^17.7.3"
   },
   "scripts": {
     "clean": "theia clean",
@@ -126,6 +127,7 @@
     "dist:win": "npm run dist:brain && npm run dist:prepare && npm --prefix apps/desktop run dist:win",
     "dist:linux": "npm run dist:brain && npm run dist:prepare && npm --prefix apps/desktop run dist:linux",
     "release": "bash scripts/release.sh",
+    "release:beta": "bash scripts/release.sh beta",
     "verify:fresh": "bash scripts/verify-fresh.sh"
   }
 }
