@@ -540,17 +540,26 @@ function ActivityGroup({
  * tool-run, so the summary and the live trace read identically.
  *
  * While `running`, every group starts open so progress is visible without a
- * click; once the run settles they collapse (unless the user toggled one).
+ * click; once the run settles they collapse (unless the user toggled one). Pass
+ * `expandWhileRunning={false}` to keep them collapsed for the whole run — the
+ * Execution Summary does this, so opening its live body can't spill into the
+ * capped scroll area and trap the wheel.
  */
 export const ActivityCategoryGroups = memo(function ActivityCategoryGroups({
   activities,
   running = false,
   defaultOpen = false,
+  expandWhileRunning = true,
   className,
 }: {
   activities: ActivityItem[];
   running?: boolean;
   defaultOpen?: boolean;
+  /**
+   * When `running`, auto-expand every group. Set false to leave them collapsed
+   * for the whole run (the Execution Summary's live body must stay short).
+   */
+  expandWhileRunning?: boolean;
   className?: string;
 }) {
   const groups = useMemo(
@@ -561,7 +570,7 @@ export const ActivityCategoryGroups = memo(function ActivityCategoryGroups({
 
   if (!groups.length) return null;
 
-  const defaultExpanded = defaultOpen || running;
+  const defaultExpanded = defaultOpen || (running && expandWhileRunning);
   const isOpen = (category: MeaningCategory) =>
     overrides[category] ?? defaultExpanded;
   const toggle = (category: MeaningCategory) =>

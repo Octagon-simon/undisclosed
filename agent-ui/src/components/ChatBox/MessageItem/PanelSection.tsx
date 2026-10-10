@@ -71,7 +71,13 @@ export function PanelSection({
 
   const right =
     meta !== undefined && meta !== null ? (
-      <div className="flex flex-wrap items-center gap-1.5 text-label-xs text-ds-text-neutral-subtle-default">
+      // `ml-auto` + `shrink-0`: the meta group rides at the RIGHT end of the row
+      // and is never squeezed by the title. Without `shrink-0` the row's flexbox
+      // shrinks this box mid-line, which makes its own `flex-wrap` orphan the
+      // trailing chevron onto a second line (the "chevron below the stats" bug).
+      // The title row wraps as a whole instead, and `ml-auto` keeps the meta
+      // right-aligned even on the wrapped line.
+      <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-1.5 text-label-xs text-ds-text-neutral-subtle-default">
         {meta}
       </div>
     ) : null;
@@ -119,7 +125,7 @@ export function PanelSection({
             onClick={onToggle}
             aria-expanded={expanded}
             className={cn(
-              'flex w-full items-center justify-between gap-2 text-left outline-none',
+              'flex w-full flex-wrap items-center gap-x-2 gap-y-1 text-left outline-none',
               titleClassName
             )}
           >
@@ -129,7 +135,7 @@ export function PanelSection({
         ) : (
           <div
             className={cn(
-              'flex flex-wrap items-center justify-between gap-2',
+              'flex flex-wrap items-center gap-x-2 gap-y-1',
               titleClassName
             )}
           >
@@ -180,7 +186,7 @@ export function Pill({
     <span
       className={cn(
         'inline-flex items-center gap-1 rounded-md border border-ds-border-neutral-subtle-default',
-        'bg-ds-bg-neutral-default-default px-2 py-0.5 font-mono text-label-xs text-ds-text-neutral-subtle-default',
+        'bg-ds-bg-neutral-default-default px-2 py-0.5 font-mono text-xs text-ds-text-neutral-subtle-default',
         className
       )}
     >

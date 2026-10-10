@@ -44,6 +44,7 @@ import {
   type ActivityItem,
 } from '@/lib/activityClassifier';
 import { ExecutionSummary } from './MessageItem/ExecutionSummary';
+import { PlanCard } from './MessageItem/PlanCard';
 import { PlanTaskBox } from './TaskBox/PlanTaskBox';
 import { isPlanSplittingPhase } from './TaskBox/PlanTaskBox/utils';
 import { TaskCard } from './TaskBox/TaskCard';
@@ -501,6 +502,16 @@ export const UserQueryGroup: React.FC<UserQueryGroupProps> = ({
   // so its groups start collapsed.
   const summaryRunning = liveActivities.length > 0 && taskIsLive;
 
+  // Inline agent-progress PLAN card. The decomposed subtasks (`taskInfo`) — the
+  // same list the old sticky `PinnedPlanIndicator` surfaced — now render in the
+  // turn body, between the Thought Process and the Execution Summary, so they
+  // scroll with the turn instead of floating over it. While a plan exists the
+  // card owns the live comet ring; before any plan arrives the Execution Summary
+  // wears it instead, so exactly one section glows at a time. The card self-hides
+  // when `taskInfo` is empty (mounting it is always safe).
+  const planSteps = summaryTask?.taskInfo ?? [];
+  const hasPlan = planSteps.length > 0;
+
   // Elapsed work time for a finished turn, for the "Worked for Xs" pill next to
   // the Thought Process (the same figure the old work log showed). Prefer the
   // persisted turn span (user send -> END message), which survives a reload
@@ -628,7 +639,8 @@ export const UserQueryGroup: React.FC<UserQueryGroupProps> = ({
         </motion.div>
       ) : null}
 
-      {activeTaskId && (taskCardVisible || summaryActivities.length > 0) && (
+      {activeTaskId &&
+        (taskCardVisible || summaryActivities.length > 0 || hasPlan) && (
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
@@ -636,6 +648,18 @@ export const UserQueryGroup: React.FC<UserQueryGroupProps> = ({
           className="px-sm mb-sm"
         >
           {showPreparingExecute ? <PreparingToExecuteTasks /> : null}
+          {/* Inline agent progress / plan. Sits in the execution stream between
+              the Thought Process and the Execution Summary (live-agent-feedback
+              spec §2.1) and scrolls with the turn. It replaces the old sticky
+              `PinnedPlanIndicator`. The card owns the comet ring while a plan
+              exists; `hasPlan` is what hands the ring to the Execution Summary
+              when there is no todo list yet. */}
+          <PlanCard
+            steps={planSteps}
+            running={taskIsLive}
+            active={taskIsLive && hasPlan}
+            className="mb-2"
+          />
           {/* Execution Summary lives in the turn body (the slot the
               TaskWorkLogAccordion used to occupy), above the answer. Live turns
               fill it from `taskAssigning` as each tool run lands; reloaded turns
@@ -650,6 +674,9 @@ export const UserQueryGroup: React.FC<UserQueryGroupProps> = ({
             <ExecutionSummary
               activities={summaryActivities}
               running={summaryRunning}
+              // The ring lives on the Plan card above whenever a plan exists;
+              // only a turn with no plan (todo list) shows it here.
+              active={summaryRunning && !hasPlan}
               startedAt={
                 Number.isFinite(turnStartedAtMs) ? turnStartedAtMs : undefined
               }

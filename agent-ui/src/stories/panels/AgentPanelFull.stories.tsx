@@ -14,9 +14,14 @@ import BottomBox from '@/components/ChatBox/BottomBox';
 import { AgentMessageCard } from '@/components/ChatBox/MessageItem/AgentMessageCard';
 import { ExecutionSummary } from '@/components/ChatBox/MessageItem/ExecutionSummary';
 import { FilesChanged } from '@/components/ChatBox/MessageItem/FilesChanged';
+import {
+  PlanCard,
+  type PlanStep,
+} from '@/components/ChatBox/MessageItem/PlanCard';
 import { ThinkingBlock } from '@/components/ChatBox/MessageItem/ThinkingBlock';
 import { UserMessageCard } from '@/components/ChatBox/MessageItem/UserMessageCard';
 import type { ActivityItem, ChangedFile } from '@/lib/activityClassifier';
+import { TaskStatus } from '@/types/constants';
 
 /**
  * Phase 8 assembly (plan section "Phase 8: Assembly, theming, QA, cleanup"): the
@@ -70,6 +75,8 @@ export interface PanelFullProps {
   stepCount?: number;
   activities: ActivityItem[];
   running?: boolean;
+  /** Inline agent progress / plan card (Section 4b). Omit to hide the card. */
+  planSteps?: PlanStep[];
   files: ChangedFile[];
   riskSummary?: ReactNode;
 
@@ -92,6 +99,7 @@ function PanelFull({
   stepCount,
   activities,
   running,
+  planSteps,
   files,
   riskSummary,
   composerValue,
@@ -125,10 +133,20 @@ function PanelFull({
             defaultOpen
           />
 
-          {/* Section 5 */}
+          {/* Section 4b - inline agent progress / plan. Sits in the execution
+              stream between Thought Process and Execution Summary, per the
+              live-agent-feedback spec. It owns the glow while a plan exists. */}
+          {planSteps ? (
+            <PlanCard steps={planSteps} running={running} active={running} />
+          ) : null}
+
+          {/* Section 5. The comet ring lives on exactly ONE section: here only
+              while there is no plan (todo list) yet, otherwise on the Plan card
+              above. */}
           <ExecutionSummary
             activities={activities}
             running={running}
+            active={running && !(planSteps && planSteps.length)}
             // Live "Working for Xs" pill only makes sense while running.
             startedAt={running ? Date.now() - 53_000 : undefined}
           />
@@ -283,6 +301,50 @@ const REASONING = `Reading .env.sample to find where sibling config keys live an
 Appending UNDISCLOSED_DISABLE_POWER_SAVE_BLOCKER with an inline comment explaining the power-save behaviour it toggles.
 Checking the sample set stays alphabetised so the diff stays a single appended line.`;
 
+/** The decomposition the plan card shows (Section 4b). */
+const PLAN_STEPS: PlanStep[] = [
+  {
+    id: 'p1',
+    content: 'Find every .env template in the workspace',
+    status: TaskStatus.COMPLETED,
+    durationMs: 400,
+  },
+  {
+    id: 'p2',
+    content: 'Read configuration dependencies across 21 files',
+    status: TaskStatus.COMPLETED,
+    durationMs: 1200,
+  },
+  {
+    id: 'p3',
+    content: 'Append UNDISCLOSED_DISABLE_POWER_SAVE_BLOCKER to .env.sample',
+    status: TaskStatus.COMPLETED,
+    durationMs: 900,
+  },
+  {
+    id: 'p4',
+    content: 'Rebuild the agent-embed bundle',
+    status: TaskStatus.COMPLETED,
+    durationMs: 2100,
+  },
+];
+
+/** Mid-flight decomposition for the running panel ("Agent working · Step 4 of 5"). */
+const RUNNING_PLAN: PlanStep[] = [
+  PLAN_STEPS[0],
+  PLAN_STEPS[1],
+  PLAN_STEPS[2],
+  {
+    id: 'p4',
+    content: 'Rebuild the agent-embed bundle',
+    status: TaskStatus.RUNNING,
+  },
+  {
+    id: 'p5',
+    content: 'Re-run the agent-ui type-check',
+  },
+];
+
 /** The full panel: live turn, work summaries, changed files, composer. */
 export const Conversation: Story = {
   args: {
@@ -323,17 +385,34 @@ export const NarrowRail: Story = {
   ],
 };
 
-/** A still-running turn: Execution Summary groups start open, composer shows Stop. */
+/**
+ * A still-running turn: Execution Summary starts collapsed (thought process stays
+ * expanded), and the composer shows Stop.
+ */
 export const Running: Story = {
   ...Conversation,
   args: {
     ...Conversation.args,
     reply: 'Working through the change - writing the file now...',
     running: true,
+    planSteps: RUNNING_PLAN,
     files: [],
     riskSummary: undefined,
     composerValue: '',
     busy: true,
+  },
+};
+
+/**
+ * A running turn BEFORE any plan exists: no todo list yet, so the Execution
+ * Summary is the section that carries the comet ring instead of the plan card.
+ */
+export const RunningNoPlan: Story = {
+  ...Running,
+  args: {
+    ...Running.args,
+    reply: 'Looking into the workspace before I split the work up...',
+    planSteps: undefined,
   },
 };
 

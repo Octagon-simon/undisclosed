@@ -31,7 +31,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { PinnedPlanIndicator } from './MessageItem/PinnedPlanIndicator';
+
 import { ProjectSection } from './ProjectSection';
 
 /**
@@ -480,20 +480,10 @@ export const ProjectChatContainer: React.FC<ProjectChatContainerProps> = ({
         className="mx-auto w-full max-w-[600px] pt-0"
         style={{ paddingBottom: scrollBottomInsetPx }}
       >
-        {/* ONE pinned plan/todo indicator, bound to the CURRENT (most recent)
-            conversation's task — the last task section. Rendering it per-section
-            pinned an OLDER task's plan over a newer conversation (the plan
-            "leak"); a single indicator for the latest task fixes that. */}
-        {(() => {
-          const current = taskSections[taskSections.length - 1];
-          return current ? (
-            <PinnedPlanIndicator
-              chatStore={current.chatStore}
-              taskId={current.taskId}
-            />
-          ) : null;
-        })()}
-
+        {/* The plan/todo indicator is no longer pinned here. It now renders
+            INLINE in each turn (the `PlanCard` in `UserQueryGroup`), between the
+            Thought Process and the Execution Summary, so it scrolls with the turn
+            it describes instead of floating over the newest conversation. */}
         <AnimatePresence mode="popLayout">
           {taskSections.map(({ chatId, chatStore, taskId }) => {
             return (

@@ -112,6 +112,16 @@ const MOCK_ACTIVITIES: ActivityItem[] = [
     input: 'command="npm run build:agent-ui"',
     output: 'asset agent-embed.umd.js 3.0 MiB [emitted]',
   },
+    {
+    id: 'b1',
+    category: 'browser',
+    verb: 'Visited',
+    object: 'localhost/iframe.html',
+    badge: 'ok',
+    running: false,
+    input: 'ej01.click()',
+    output: 'DOM operation successful',
+  },
 ];
 
 /** The turn's stats at rest: groups collapsed. */
@@ -124,7 +134,10 @@ export const Expanded: Story = {
   args: { activities: MOCK_ACTIVITIES, defaultOpen: true },
 };
 
-/** A still-running turn: groups start open and the title clocks "Working for Xs". */
+/**
+ * A still-running turn: the box starts COLLAPSED so its activity groups can't
+ * fill the panel (and trap the wheel), while the title clocks "Working for Xs".
+ */
 export const Running: Story = {
   args: {
     activities: MOCK_ACTIVITIES,
