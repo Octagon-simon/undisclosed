@@ -26,7 +26,7 @@ model.
 
 ## Demo
 
-https://github.com/user-attachments/assets/7d3fb903-6dd2-4817-952a-a0b8d62b2219
+<video src="https://github.com/user-attachments/assets/7d3fb903-6dd2-4817-952a-a0b8d62b2219" width="100%" controls poster="docs/media/undisclosed-demo-poster.jpg"></video>
 
 <!-- <video src="docs/media/undisclosed-demo.mp4" width="100%" controls poster="docs/media/undisclosed-demo-poster.jpg"></video> -->
 
