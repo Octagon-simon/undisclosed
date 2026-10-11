@@ -32,6 +32,11 @@ files:
   - plugins/**
   - "!**/*.ts"
   - "!**/*.map"
+  # Marketing / deploy landing page (repo-root `site/`) is NOT part of the app.
+  # The allowlist above already omits it; these negations keep it out even if a
+  # future `**/*` pattern is added here.
+  - "!site/**"
+  - "!../../site/**"
 
 # electron-builder prunes any directory ending in `node_modules` from the app
 # files (see app-builder-lib/out/util/AppFileWalker.js:createAppFilter) unless
@@ -52,6 +57,13 @@ extraResources:
     to: "brain"
     filter:
       - "undisclosed-brain*"
+  # Bundled example agent skills (uipro, premium-frontend-ui, skill-creator) ->
+  # <resources>/example-skills. The brain's skill_service discovers this dir in
+  # the packaged app and syncs each skill into the per-user store on startup, so
+  # we ship the exact skills users get. Without this the bundled skills never
+  # reach the installer and only the dev repo resolves them.
+  - from: "../../resources/example-skills"
+    to: "example-skills"
 
 # asar disabled: Theia's plugin host + our agent backend serve files with
 # express.static (which can't read from inside an asar archive), and several

@@ -65,4 +65,9 @@ enable toggle and delete, and adds a skill via zip upload. (A device symlink
 - Toolkit: `brain/app/agent/toolkit/skill_toolkit.py`
 - Backend: `brain/app/controller/skill_controller.py`, `brain/app/service/skill_service.py`, `skill_config_service.py`
 - UI: `agent-ui/src/components/CodeAgentWorkspace/AgentSkills.tsx`, `ChatBox/BottomBox/PickerPanel.tsx`
-- Examples: `resources/example-skills/skill-creator/`
+- Examples: `resources/example-skills/` (bundled: `uipro`, `premium-frontend-ui`,
+  `skill-creator`)
+- Packaging: the examples ship via electron-builder `extraResources` to
+  `<resources>/example-skills`. The frozen brain can't resolve that path from
+  `__file__` (PyInstaller extracts to a temp dir), so `brain-launcher.ts` points
+  it there explicitly with `UNDISCLOSED_EXAMPLE_SKILLS_DIR`.

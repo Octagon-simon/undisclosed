@@ -74,3 +74,15 @@ brain/*.spec
 
 # Offline cache for the Simple Icons fetch script (regenerable, not shipped).
 .cache/file-icons/
+
+# Marketing landing page (site/): a self-contained, deployable page. Re-include
+# it despite the blanket `*.png` / `*.md` rules above so its files are not
+# silently dropped from the repo. It is NOT part of the app build (see
+# apps/desktop/electron-builder.yml).
+!site/
+!site/**
+
+# Bundled example agent skills (resources/example-skills/): ship with the app and
+# are synced into each user's skill store. Re-include their `SKILL.md` files
+# despite the blanket `*.md` rule above so they are not silently dropped.
+!resources/example-skills/**/*.md
