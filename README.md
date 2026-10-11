@@ -24,6 +24,15 @@ model.
 
 ---
 
+## Demo
+
+<video src="docs/media/undisclosed-demo.mp4" width="100%" controls poster="docs/media/undisclosed-demo-poster.jpg"></video>
+
+[Watch the 20-second demo](docs/media/undisclosed-demo.mp4) (1920x1080, mp4) if your
+viewer doesn't play it inline.
+
+---
+
 ## Highlights
 
 - **Agent-native editor shell** built on Eclipse Theia (not a fork of VS Code), 100%
