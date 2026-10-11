@@ -33,6 +33,7 @@ import React, {
 } from 'react';
 
 import { ProjectSection } from './ProjectSection';
+import { collectDuplicateUserTurnIds } from '@/lib/dedupeUserTurns';
 
 /**
  * Inline, in-thread acknowledgement for a follow-up the user sent while the
@@ -129,24 +130,40 @@ export const ProjectChatContainer: React.FC<ProjectChatContainerProps> = ({
   // transition, see PR-X4 in space-frontend-refactor-consolidated-review.md),
   // render it exactly once. The earliest chatStore (sorted by createdAt in
   // getAllChatStores) wins, matching insertion order.
-  const taskSections: Array<{
+  const candidateSections: Array<{
     chatId: string;
     chatStore: (typeof chatStores)[number]['chatStore'];
     taskId: string;
+    messages: any[];
   }> = [];
   const seenTaskIds = new Set<string>();
   for (const { chatId, chatStore } of chatStores) {
     const chatState = chatStore.getState();
     for (const [taskId, task] of Object.entries(chatState.tasks)) {
       if (seenTaskIds.has(taskId)) continue;
-      const hasUserMessage = (task.messages || []).some(
+      const messages = (task.messages || []) as any[];
+      const hasUserMessage = messages.some(
         (msg: any) => msg.role === 'user' && msg.content
       );
       if (!hasUserMessage) continue;
       seenTaskIds.add(taskId);
-      taskSections.push({ chatId, chatStore, taskId });
+      candidateSections.push({ chatId, chatStore, taskId, messages });
     }
   }
+  // Collapse a user turn that a placement race left in two tasks. The duplicate
+  // signature (same user text with no agent turn between them) can never be a
+  // legitimate repeat, so hiding the LATER copy is always safe. A task whose
+  // user turns are ALL duplicates (a spurious task from a re-emitted
+  // `confirmed`) is dropped entirely so it can't render a stray bubble.
+  const duplicateUserMessageIds = collectDuplicateUserTurnIds(candidateSections);
+  const taskSections = candidateSections.filter(({ messages }) =>
+    messages.some(
+      (msg: any) =>
+        msg.role === 'user' &&
+        msg.content &&
+        (!msg.id || !duplicateUserMessageIds.has(msg.id))
+    )
+  );
   useEffect(() => {
     let timeoutId: NodeJS.Timeout | null = null;
     const scheduleRefresh = () => {
@@ -492,6 +509,7 @@ export const ProjectChatContainer: React.FC<ProjectChatContainerProps> = ({
                 chatId={chatId}
                 chatStore={chatStore}
                 taskId={taskId}
+                hiddenUserMessageIds={duplicateUserMessageIds}
                 activeQueryId={activeQueryId}
                 onQueryActive={setActiveQueryId}
                 onSkip={onSkip}

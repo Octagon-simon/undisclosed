@@ -332,4 +332,40 @@ describe('projectStore runtime shape', () => {
       useProjectStore.getState().historyLoadingProjectIds[remoteProjectId]
     ).toBe(true);
   });
+
+  it('reuses an existing task instead of duplicating it when appendInitChatStore is re-entered with the same task id', () => {
+    const projectId = useProjectStore
+      .getState()
+      .createProject('Idempotent Project', undefined, 'project_idempotent');
+
+    const first = useProjectStore
+      .getState()
+      .appendInitChatStore(projectId, 'task_dup');
+    expect(first).toBeTruthy();
+    first!.chatStore
+      .getState()
+      .addMessages('task_dup', { id: 'u1', role: 'user', content: 'hi' });
+
+    // A replayed/duplicated `confirmed` re-entering with the same task id must
+    // NOT mint a blank duplicate (create() overwrites, which would wipe the
+    // already-streamed turn).
+    const second = useProjectStore
+      .getState()
+      .appendInitChatStore(projectId, 'task_dup');
+
+    expect(second).toBeTruthy();
+    expect(second!.taskId).toBe('task_dup');
+    expect(second!.chatStore).toBe(first!.chatStore);
+    // Exactly one task_dup (no blank duplicate), and the message survived —
+    // `create()` would have wiped it by overwriting the task.
+    expect(
+      Object.keys(second!.chatStore.getState().tasks).filter(
+        (id) => id === 'task_dup'
+      )
+    ).toHaveLength(1);
+    expect(second!.chatStore.getState().tasks.task_dup.messages).toHaveLength(1);
+    expect(second!.chatStore.getState().tasks.task_dup.messages[0].id).toBe(
+      'u1'
+    );
+  });
 });

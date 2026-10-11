@@ -59,6 +59,7 @@ import {
   type ActivityItem,
 } from '@/lib/activityClassifier';
 import { getOpenFolderRoot } from '@/lib/openFolder';
+import { normalizeUserTurnContent } from '@/lib/dedupeUserTurns';
 import { deriveAttachFileName } from '@/lib/attachmentUrl';
 import { proxyUpdateTriggerExecution } from '@/service/triggerApi';
 import { ExecutionStatus } from '@/types';
@@ -443,6 +444,13 @@ interface Task {
   // Trigger execution ID for tracking trigger task completion
   executionId?: string;
   nextExecutionId?: string;
+  /**
+   * Stable id for THIS follow-up's user turn, minted in ChatBox.handleSend and
+   * reused wherever the turn is (re)placed. It lets `confirmed`/`wait_confirm`
+   * recognise an already-placed turn and skip a second copy instead of
+   * rendering the same user bubble twice.
+   */
+  nextUserId?: string;
   /** Unix ms timestamp when this task was created — used for TurnTabs ordering. */
   createdAt: number;
 }
@@ -902,6 +910,7 @@ export interface ChatStore {
   setAcknowledgement: (taskId: string, text: string) => void;
   clearAcknowledgement: (taskId: string) => void;
   setNextTaskId: (taskId: string | null) => void;
+  setNextUserId: (taskId: string, nextUserId: string | undefined) => void;
   setStreamingDecomposeText: (taskId: string, text: string) => void;
   clearStreamingDecomposeText: (taskId: string) => void;
   setExecutionId: (taskId: string, executionId: string | undefined) => void;
@@ -2629,6 +2638,42 @@ const chatStore = (initial?: Partial<ChatStore>) =>
                * as it has been skipped earlier in startTask.
                */
               const nextTaskId = previousChatStore.nextTaskId || undefined;
+
+              // Idempotency guard: a duplicate confirm for a turn that is
+              // ALREADY placed in the current task must not spin up another
+              // task. A genuine new follow-up has nextTaskId armed by
+              // ChatBox.handleSend before it POSTs; a re-emitted confirm (a
+              // re-attached stream replaying the confirm, or a double delivery)
+              // does not, while the current task already carries the same user
+              // turn. Without this the same turn was placed in a second task.
+              if (!previousChatStore.nextTaskId) {
+                const guardMessages =
+                  previousChatStore.tasks[currentTaskId]?.messages || [];
+                const guardLast = guardMessages.at(-1);
+                const guardKey = normalizeUserTurnContent(
+                  resolveConfirmedUserMessageContent({
+                    lastMessageContent:
+                      guardLast?.role === 'user'
+                        ? guardLast.content
+                        : undefined,
+                    messageContent,
+                    question,
+                    isFollowUpConfirm: true,
+                  })
+                );
+                const alreadyPlacedHere =
+                  !!guardKey &&
+                  guardMessages.some(
+                    (m) =>
+                      m.role === 'user' &&
+                      normalizeUserTurnContent(m.content) === guardKey
+                  );
+                if (alreadyPlacedHere) {
+                  skipFirstConfirm = false;
+                  return;
+                }
+              }
+
               const newChatResult = projectStore.appendInitChatStore(
                 project_id || projectStore.activeProjectId!,
                 nextTaskId
@@ -2678,12 +2723,11 @@ const chatStore = (initial?: Partial<ChatStore>) =>
                 const isFollowUpConfirm = true;
                 const lastMessage =
                   previousChatStore.tasks[currentTaskId]?.messages.at(-1);
-                if (lastMessage?.role === 'user' && lastMessage?.id) {
-                  previousChatStore.removeMessage(
-                    currentTaskId,
-                    lastMessage.id
-                  );
-                }
+                // The source copy of this turn is removed further below, once
+                // `carriedUserId`/`userMessageContent` are resolved, so a
+                // notice / acknowledgement / the previous turn's `end` landing
+                // after the optimistic add can't orphan the bubble here AND in
+                // the new task — the duplicated turn.
 
                 // Attaches for the new turn's user message. Prefer what the user
                 // actually attached THIS turn (lastMessage). On a follow-up with
@@ -2734,18 +2778,42 @@ const chatStore = (initial?: Partial<ChatStore>) =>
                   question,
                   isFollowUpConfirm,
                 });
-                // Reuse the ORIGINAL user message id when this confirm is just
-                // moving the live message from the previous chat store into the
-                // new one (it was removed above). Minting a fresh id here made
-                // the same question persist as TWO turns (the removed original
-                // + this copy), which showed up as a duplicated/"stacked" user
-                // bubble on reload. Keeping the id stable means the turn upserts
-                // to a single record. Only mint a new id when there is no
-                // original user message to carry over (e.g. pure replay).
+                // Reuse a STABLE user-turn id when this confirm is just moving
+                // the live message from the previous chat store into the new
+                // one. Prefer `nextUserId`, minted by ChatBox.handleSend and
+                // recorded on the source task, so the identity survives even
+                // when the optimistic bubble is no longer the last message.
+                // Fall back to the last message's id, then to a fresh id only
+                // when there is no source user turn to carry over (pure
+                // replay). A fresh id made the same question persist as TWO
+                // turns (the stranded original + this copy) — the duplicated
+                // "stacked" user bubble.
                 const carriedUserId =
-                  lastMessage?.role === 'user' && lastMessage?.id
+                  previousChatStore.tasks[currentTaskId]?.nextUserId ||
+                  (lastMessage?.role === 'user' && lastMessage?.id
                     ? lastMessage.id
-                    : generateUniqueId();
+                    : generateUniqueId());
+                // Remove the SOURCE copy of this turn. Searching by the stable
+                // id (rather than only checking `.at(-1)`) is the core fix: a
+                // notice / acknowledgement / the previous turn's `end` landing
+                // after the optimistic add used to leave the user bubble here
+                // AND in the new task — the duplicated turn.
+                const sourceUserMessages =
+                  previousChatStore.tasks[currentTaskId]?.messages || [];
+                const sourceById = sourceUserMessages.find(
+                  (m) => m.role === 'user' && m.id === carriedUserId
+                );
+                const sourceLast = sourceUserMessages.at(-1);
+                if (sourceById) {
+                  previousChatStore.removeMessage(currentTaskId, sourceById.id);
+                } else if (
+                  sourceLast?.role === 'user' &&
+                  sourceLast.id &&
+                  normalizeUserTurnContent(sourceLast.content) ===
+                    normalizeUserTurnContent(userMessageContent)
+                ) {
+                  previousChatStore.removeMessage(currentTaskId, sourceLast.id);
+                }
                 // Fresh turn: clear any stale live reasoning from a prior
                 // stalled/stopped turn so this thinking block starts clean.
                 newChatStore.getState().clearLiveReasoning(newTaskId);
@@ -3213,18 +3281,35 @@ const chatStore = (initial?: Partial<ChatStore>) =>
               question &&
               !(currentChatStore.tasks[currentTaskId].messages.length === 1)
             ) {
-              //Replace the optimistic update if existent.
-              const lastMessage =
-                currentChatStore.tasks[currentTaskId]?.messages.at(-1);
-              if (
-                lastMessage?.role === 'user' &&
-                lastMessage.id &&
-                lastMessage.content === question
+              // Replace the optimistic update if it exists. Prefer the stable
+              // turn id (recorded as `nextUserId` by ChatBox.handleSend) over
+              // an exact-string match: the optimistic bubble and the SSE
+              // `question` can differ by whitespace/formatting, and the old
+              // `content === question` guard then left BOTH bubbles in place
+              // (the duplicated turn). Fall back to the last message only when
+              // it is the user turn with matching (normalised) text.
+              const waitMessages =
+                currentChatStore.tasks[currentTaskId]?.messages || [];
+              const stableTurnId =
+                currentChatStore.tasks[currentTaskId]?.nextUserId;
+              const existingById = stableTurnId
+                ? waitMessages.find(
+                    (m) => m.role === 'user' && m.id === stableTurnId
+                  )
+                : undefined;
+              const waitLast = waitMessages.at(-1);
+              if (existingById) {
+                currentChatStore.removeMessage(currentTaskId, existingById.id);
+              } else if (
+                waitLast?.role === 'user' &&
+                waitLast.id &&
+                normalizeUserTurnContent(waitLast.content) ===
+                  normalizeUserTurnContent(question)
               ) {
-                currentChatStore.removeMessage(currentTaskId, lastMessage.id);
+                currentChatStore.removeMessage(currentTaskId, waitLast.id);
               }
               addMessages(currentTaskId, {
-                id: generateUniqueId(),
+                id: stableTurnId || generateUniqueId(),
                 role: 'user',
                 content: question as string,
                 step: AgentStep.WAIT_CONFIRM,
@@ -6258,6 +6343,21 @@ const chatStore = (initial?: Partial<ChatStore>) =>
         ...state,
         nextTaskId: taskId,
       }));
+    },
+    setNextUserId: (taskId, nextUserId) => {
+      set((state) => {
+        if (!state.tasks[taskId]) return state;
+        return {
+          ...state,
+          tasks: {
+            ...state.tasks,
+            [taskId]: {
+              ...state.tasks[taskId],
+              nextUserId,
+            },
+          },
+        };
+      });
     },
     setStreamingDecomposeText: (taskId, text) => {
       set((state) => {

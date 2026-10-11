@@ -2,8 +2,10 @@
 // Copyright (c) 2026 Simon Ugorji
 
 import { useProjectStore } from '@/store/projectStore';
+import { collectDuplicateUserTurnIds } from '@/lib/dedupeUserTurns';
 
 interface ExportMessage {
+  id?: string;
   role?: string;
   content?: unknown;
   createdAt?: string | number;
@@ -46,12 +48,27 @@ export function exportActiveConversationToMarkdown(): boolean {
   if (!projectId) return false;
 
   const stores = ps.getAllChatStores(projectId) ?? [];
-  const collected: ExportMessage[] = [];
+  // Collect one section per task, in render order, so we can collapse a user
+  // turn that a placement race left in two tasks (it would otherwise print as a
+  // duplicate "## You" block in the export).
+  const sections: Array<{ taskId: string; messages: ExportMessage[] }> = [];
   for (const entry of stores) {
     const tasks = entry.chatStore.getState().tasks ?? {};
     for (const taskId of Object.keys(tasks)) {
-      const msgs = (tasks[taskId]?.messages ?? []) as ExportMessage[];
-      for (const m of msgs) collected.push(m);
+      sections.push({
+        taskId,
+        messages: (tasks[taskId]?.messages ?? []) as ExportMessage[],
+      });
+    }
+  }
+  const duplicateUserMessageIds = collectDuplicateUserTurnIds(sections);
+  const collected: ExportMessage[] = [];
+  for (const section of sections) {
+    for (const m of section.messages) {
+      if (m.role === 'user' && m.id && duplicateUserMessageIds.has(m.id)) {
+        continue;
+      }
+      collected.push(m);
     }
   }
   if (collected.length === 0) return false;

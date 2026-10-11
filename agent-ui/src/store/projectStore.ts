@@ -965,6 +965,25 @@ const projectStore = create<ProjectStore>()((set, get) => ({
       return null;
     }
 
+    // Idempotent by task id: if this exact task was already materialized (e.g. a
+    // replayed/duplicated `confirmed` reusing the same nextTaskId), reuse the
+    // existing task instead of minting a blank duplicate. `create()` OVERWRITES
+    // an existing task, which would have wiped the turn's already-streamed
+    // messages — the "answer disappeared" failure mode.
+    if (customTaskId) {
+      const existing = get()
+        .getAllChatStores(projectId)
+        .find((entry) =>
+          Object.prototype.hasOwnProperty.call(
+            entry.chatStore.getState().tasks,
+            customTaskId
+          )
+        );
+      if (existing) {
+        return { taskId: customTaskId, chatStore: existing.chatStore };
+      }
+    }
+
     // Create new chat store & append in the current project
     const newChatId = createChatStore(projectId, chatName);
 

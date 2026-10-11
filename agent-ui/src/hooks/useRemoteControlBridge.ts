@@ -494,6 +494,9 @@ function seedRemoteFollowUpPrompt(command: RemoteCommand): void {
   }
 
   chatState.setNextTaskId(nextTaskId);
+  // Reuse the (deterministic) remote message id as the turn's stable id so a
+  // duplicate `confirmed`/`wait_confirm` can recognise and skip a re-placed copy.
+  chatState.setNextUserId(activeTaskId, messageId);
   chatState.setIsPending(activeTaskId, true);
   chatState.addMessages(activeTaskId, {
     id: messageId,

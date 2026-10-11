@@ -1112,6 +1112,12 @@ export default function ChatBox(): JSX.Element {
             const nextTaskId = generateUniqueId();
             chatStore.setNextTaskId(nextTaskId);
             chatStore.setNextExecutionId(_taskId as string, executionId);
+            // Stable id for THIS follow-up's user turn. Recorded on the source
+            // task and reused when the turn is (re)placed, so a duplicated
+            // `confirmed`/`wait_confirm` can recognise and skip a second copy
+            // instead of rendering the same user bubble twice.
+            const turnUserId = generateUniqueId();
+            chatStore.setNextUserId(_taskId as string, turnUserId);
 
             // Use improve endpoint (POST /chat/{id}) - {id} is project_id.
             // Resolve the currently selected model so a mid-conversation switch
@@ -1215,7 +1221,7 @@ export default function ChatBox(): JSX.Element {
               chatStore.clearLiveReasoning(_taskId);
               chatStore.clearAcknowledgement(_taskId);
               chatStore.addMessages(_taskId, {
-                id: generateUniqueId(),
+                id: turnUserId,
                 role: 'user',
                 content: displayContent,
                 attaches: attachesForThisTurn,
