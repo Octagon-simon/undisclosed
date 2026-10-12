@@ -269,4 +269,5 @@ async def get_feedback_map():
     The panel uses this to restore each answer's thumb after a reload and to
     derive the aggregate tally (up/down/recent) shown in the Stats panel.
     """
+    return _read_feedback()
    
