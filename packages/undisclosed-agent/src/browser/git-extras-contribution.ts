@@ -39,6 +39,15 @@ import { ScmService } from '@theia/scm/lib/browser/scm-service';
 import { ScmWidget } from '@theia/scm/lib/browser/scm-widget';
 import { ScmTreeWidget } from '@theia/scm/lib/browser/scm-tree-widget';
 import { SCM_TITLE_MENU } from '@theia/scm/lib/browser/scm-repositories-widget';
+import { FileService } from '@theia/filesystem/lib/browser/file-service';
+import { FileStatNode } from '@theia/filesystem/lib/browser/file-tree';
+import {
+  FileNavigatorContribution,
+  NAVIGATOR_CONTEXT_MENU,
+  NavigatorContextMenu,
+} from '@theia/navigator/lib/browser/navigator-contribution';
+import { FileNavigatorWidget } from '@theia/navigator/lib/browser/navigator-widget';
+import URI from '@theia/core/lib/common/uri';
 import {
   GENERATE_MESSAGE_ITEM_ID,
   renderCommitMessageButton,
@@ -65,6 +74,17 @@ const GIT_EXEC_URL = new Endpoint({
 
 /** A "Git" submenu in the main menu bar (discoverable; also in the palette). */
 const GIT_MENU: MenuPath = [...MAIN_MENU_BAR, '8_git_extras'];
+
+/** The Explorer's "navigation" group in the right-click context menu.
+ *
+ * `NavigatorContextMenu.NAVIGATION` ALREADY begins with `NAVIGATOR_CONTEXT_MENU`
+ * — it is `['navigator-context-menu', 'navigation']` (see the Theia source:
+ * `NAVIGATION = [...NAVIGATOR_CONTEXT_MENU, 'navigation']`). Spreading both here
+ * produced `['navigator-context-menu', 'navigator-context-menu', 'navigation']`,
+ * a path no widget renders, so the item never showed in the Explorer's context
+ * menu even though the command itself worked from the palette. Use the
+ * namespace member directly. */
+const NAVIGATOR_NAVIGATION_MENU: MenuPath = NavigatorContextMenu.NAVIGATION;
 
 const UNDO_SOFT: Command = {
   id: 'undisclosed.git.undoLastCommit',
@@ -99,6 +119,11 @@ const GENERATE_MESSAGE: Command = {
   label: 'Git: Generate Commit Message (AI)',
   iconClass: 'codicon codicon-sparkle',
 };
+/** Append the Explorer's selection to the repository's root `.gitignore`. */
+const ADD_TO_GITIGNORE: Command = {
+  id: 'undisclosed.git.addToGitignore',
+  label: 'Add to .gitignore',
+};
 
 interface GitExecResult {
   stdout: string;
@@ -127,6 +152,9 @@ export class GitExtrasContribution
   @inject(ScmService) protected readonly scm!: ScmService;
   @inject(WorkspaceService) protected readonly workspace!: WorkspaceService;
   @inject(QuickInputService) protected readonly quickInput!: QuickInputService;
+  @inject(FileService) protected readonly files!: FileService;
+  @inject(FileNavigatorContribution)
+  protected readonly navigator!: FileNavigatorContribution;
 
   /** True while the AI commit-message request is in flight — drives the toolbar
    *  button's spinner (and disables it so it can't be double-fired). */
@@ -179,6 +207,99 @@ export class GitExtrasContribution
       return FileUri.fsPath(roots[0].resource);
     }
     return undefined;
+  }
+
+  /**
+   * The files AND folders currently selected in the Explorer.
+   *
+   * We deliberately do NOT use the navigator contribution's own
+   * `getSelectedFileNodes()`: it filters the selection through `FileNode.is`,
+   * whose runtime check is `FileStatNode.is(node) && !node.fileStat.isDirectory`
+   * — i.e. FILES ONLY. Right-clicking a folder yields a `DirNode`, so that
+   * helper returns `[]` and the command bailed out with "Select a file or folder
+   * in the Explorer first." even though a folder WAS selected. Instead we read
+   * the `FileNavigatorWidget`'s tree selection directly (the same set the user
+   * right-clicked — `TreeWidget.handleContextMenuEvent` selects the node before
+   * the menu opens) and filter with `FileStatNode.is`, which matches both files
+   * and folders. `tryGetWidget()` is public on the view-contribution base, so no
+   * `protected` access hack is needed.
+   */
+  protected selectedFileNodes(): FileStatNode[] {
+    const widget = (
+      this.navigator as unknown as {
+        tryGetWidget(): FileNavigatorWidget | undefined;
+      }
+    ).tryGetWidget();
+    return widget?.model.selectedNodes.filter(FileStatNode.is) ?? [];
+  }
+
+  /** `uri`'s path relative to `root`, slash-normalized, or undefined when `uri`
+   *  is not inside `root` (so we never write a pattern that escapes the repo). */
+  protected relativeToRoot(root: string, uri: URI): string | undefined {
+    const toPosix = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '');
+    const target = toPosix(FileUri.fsPath(uri));
+    const base = toPosix(root);
+    if (target === base || !target.startsWith(`${base}/`)) {
+      return undefined;
+    }
+    return target.slice(base.length + 1);
+  }
+
+  /**
+   * Append the Explorer's current selection to the repository's root
+   * `.gitignore` (creating it if absent). Folders get a trailing slash so the
+   * whole directory is ignored, matching what `git status` would suggest.
+   */
+  protected async addToGitignore(): Promise<void> {
+    const root = this.repositoryRoot();
+    if (!root) {
+      this.messages.warn('No git repository is selected.');
+      return;
+    }
+    const nodes = this.selectedFileNodes();
+    if (nodes.length === 0) {
+      this.messages.warn('Select a file or folder in the Explorer first.');
+      return;
+    }
+    const patterns: string[] = [];
+    for (const node of nodes) {
+      const rel = this.relativeToRoot(root, node.uri);
+      if (!rel) {
+        continue;
+      }
+      patterns.push(node.fileStat?.isDirectory ? `${rel}/` : rel);
+    }
+    if (patterns.length === 0) {
+      this.messages.warn('The selection is outside the git repository.');
+      return;
+    }
+    const gitignoreUri = FileUri.create(root).resolve('.gitignore');
+    let existing = '';
+    if (await this.files.exists(gitignoreUri)) {
+      existing = (await this.files.read(gitignoreUri)).value ?? '';
+    }
+    // Treat an entry and its folder form as the same thing ("dist" == "dist/").
+    const known = new Set(
+      existing
+        .split(/\r?\n/)
+        .map((line) => line.trim().replace(/\/+$/, ''))
+        .filter(Boolean)
+    );
+    const toAdd = patterns.filter(
+      (pattern) => !known.has(pattern.replace(/\/+$/, ''))
+    );
+    if (toAdd.length === 0) {
+      this.messages.info('Already in .gitignore.');
+      return;
+    }
+    const prefix =
+      existing.length === 0
+        ? ''
+        : existing.endsWith('\n')
+          ? existing
+          : `${existing}\n`;
+    await this.files.write(gitignoreUri, `${prefix}${toAdd.join('\n')}\n`);
+    this.messages.info(`Added to .gitignore: ${toAdd.join(', ')}`);
   }
 
   /** Generate a Conventional-Commits message from the staged diff via the Brain
@@ -356,6 +477,9 @@ export class GitExtrasContribution
     commands.registerCommand(COMMIT_EMPTY, {
       execute: () => this.commitEmpty(),
     });
+    commands.registerCommand(ADD_TO_GITIGNORE, {
+      execute: () => this.addToGitignore(),
+    });
   }
 
   registerMenus(menus: MenuModelRegistry): void {
@@ -385,6 +509,13 @@ export class GitExtrasContribution
     menus.registerMenuAction(SCM_TITLE_MENU, {
       commandId: COMMIT_EMPTY.id,
       label: 'Commit Empty…',
+      order: 'z',
+    });
+
+    // "Add to .gitignore": right-click a file or folder in the Explorer. The
+    // command reads the Explorer selection itself (see `addToGitignore`).
+    menus.registerMenuAction(NAVIGATOR_NAVIGATION_MENU, {
+      commandId: ADD_TO_GITIGNORE.id,
       order: 'z',
     });
   }

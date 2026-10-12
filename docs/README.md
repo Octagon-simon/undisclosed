@@ -9,6 +9,14 @@ are touching.
 
 ---
 
+## Using the app
+
+| Doc | What it covers |
+| --- | --- |
+| [installing.md](installing.md) | Installing and launching Undisclosed on macOS, Windows, and Linux (via GitHub Releases or the homepage download button), including the first-open steps for the current unsigned builds. |
+
+---
+
 ## Systems (the core problems we solved)
 
 These are the load-bearing systems. They answer "how does the agent understand a

@@ -259,6 +259,8 @@ interface DialogFooterProps extends React.HTMLAttributes<HTMLDivElement> {
     | 'warning';
   confirmButtonDisabled?: boolean;
   cancelButtonDisabled?: boolean;
+  /** Extra classes for the confirm button (e.g. a glow when the form is ready). */
+  confirmButtonClassName?: string;
 }
 
 const DialogFooter = React.forwardRef<HTMLDivElement, DialogFooterProps>(
@@ -275,6 +277,7 @@ const DialogFooter = React.forwardRef<HTMLDivElement, DialogFooterProps>(
       cancelButtonVariant = 'outline',
       confirmButtonDisabled = false,
       cancelButtonDisabled = false,
+      confirmButtonClassName,
       children,
       ...props
     },
@@ -363,6 +366,7 @@ const DialogFooter = React.forwardRef<HTMLDivElement, DialogFooterProps>(
             size="sm"
             onClick={onConfirm}
             disabled={confirmButtonDisabled}
+            className={confirmButtonClassName}
           >
             {confirmButtonText}
           </Button>
