@@ -14,6 +14,7 @@ are touching.
 | Doc | What it covers |
 | --- | --- |
 | [installing.md](installing.md) | Installing and launching Undisclosed on macOS, Windows, and Linux (via GitHub Releases or the homepage download button), including the first-open steps for the current unsigned builds. |
+| [automate-your-workflow-with-triggers.md](automate-your-workflow-with-triggers.md) | A user-facing article: build a two-trigger workflow that works your tasks on a schedule, posts to Slack, and replies to Slack mentions in the same conversation. |
 
 ---
 

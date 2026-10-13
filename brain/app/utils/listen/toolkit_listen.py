@@ -18,7 +18,7 @@ import logging
 from collections.abc import Callable
 from datetime import datetime
 from functools import wraps
-from inspect import iscoroutinefunction, signature
+from inspect import Parameter, iscoroutinefunction, signature
 from typing import Any, TypeVar
 
 from app.agent.toolkit.abstract_toolkit import AbstractToolkit
@@ -186,6 +186,40 @@ def _filter_kwargs_for_callable(
         return kwargs
     allowed = set(sig.parameters.keys())
     return {k: v for k, v in kwargs.items() if k in allowed}
+
+
+def _schema_safe_signature(func: Callable[..., Any]):
+    """Return a copy of ``func``'s signature minus params the tool schema
+    generator cannot represent.
+
+    The generated JSON schema is built with pydantic's ``create_model`` over
+    the advertised signature. Two kinds of parameters break it:
+      * names starting with ``_`` (pydantic rejects them outright), and
+      * ``*args`` / ``**kwargs`` catch-alls (no JSON-schema equivalent).
+
+    Overrides use those deliberately as internal escape hatches (e.g.
+    ``TerminalToolkit.shell_exec(..., **_ignored)``), so we drop them from the
+    ADVERTISED signature while leaving the real method untouched. Runtime
+    kwarg tolerance is unaffected: ``_filter_kwargs_for_callable`` inspects the
+    real method, not this advertised signature.
+
+    Returns ``None`` when nothing needs to be dropped (caller keeps ``@wraps``).
+    """
+    try:
+        sig = signature(func)
+    except (TypeError, ValueError):
+        return None
+
+    kept = [
+        p
+        for p in sig.parameters.values()
+        if not p.name.startswith("_")
+        and p.kind
+        not in (Parameter.VAR_POSITIONAL, Parameter.VAR_KEYWORD)
+    ]
+    if len(kept) == len(sig.parameters):
+        return None
+    return sig.replace(parameters=kept)
 
 
 def kwargs_tolerant(func: Callable[..., Any]) -> Callable[..., Any]:
@@ -564,10 +598,25 @@ def auto_listen_toolkit(
                     # Already has @listen_toolkit, skip
                     continue
 
-                # Not decorated, wrap the overridden method
-                decorated_override = listen_toolkit(base_method)(
+                # Not decorated, wrap the overridden method.
+                #
+                # Wrap with the OVERRIDDEN method, not ``base_method``: the
+                # ``@wraps`` target decides the signature/docstring that the
+                # generated tool schema advertises. Wrapping with the base
+                # method silently drops any parameters the override adds
+                # (e.g. SlackToolkit.send_slack_message adds ``thread_ts``),
+                # so a strict-schema model can never pass them. The override
+                # is what actually runs, so its signature is the correct one
+                # to expose.
+                decorated_override = listen_toolkit(overridden_method)(
                     overridden_method
                 )
+                # ...but strip params the schema generator rejects
+                # (leading-underscore names, *args/**kwargs), which overrides
+                # use as internal escape hatches.
+                safe_sig = _schema_safe_signature(overridden_method)
+                if safe_sig is not None:
+                    decorated_override.__signature__ = safe_sig
                 setattr(cls, method_name, decorated_override)
                 continue
 
