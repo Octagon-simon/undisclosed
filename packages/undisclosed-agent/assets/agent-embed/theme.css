@@ -28,6 +28,18 @@
   --ds-bg-neutral-muted-default: var(--theia-editorWidget-background, var(--theia-editor-background));
   --ds-bg-neutral-muted-hover: var(--theia-list-hoverBackground, var(--theia-editorWidget-background));
   --ds-bg-neutral-strong-default: var(--theia-editorWidget-background, var(--theia-editor-background));
+  /* Neutral disabled / state surfaces. These were UNMAPPED, so they fell through
+     to the bundle's own base values — which the panel derives from the OS
+     `prefers-color-scheme`, NOT the editor theme. With a dark editor theme and a
+     light OS preference they therefore rendered LIGHT inside the dark panel: the
+     create-trigger modal's Trigger-Type tab track showed as a #e2dfde block on a
+     #0d0d0d dialog (and the same chip fill leaked in the composer + inputs). Map
+     them onto Theia's neutral surfaces so every panel surface follows the theme. */
+  --ds-bg-neutral-muted-disabled: var(--theia-editorWidget-background, var(--theia-editor-background));
+  --ds-bg-neutral-subtle-disabled: var(--theia-sideBar-background, var(--theia-editor-background));
+  --ds-bg-neutral-subtle-active: var(--theia-list-activeSelectionBackground, var(--theia-sideBar-background));
+  --ds-bg-neutral-subtle-selected: var(--theia-list-activeSelectionBackground, var(--theia-sideBar-background));
+  --ds-bg-neutral-strong-hover: var(--theia-list-hoverBackground, var(--theia-editorWidget-background));
 
   /* Brand accent. These were UNMAPPED, so brand-colored elements (welcome logo,
      primary buttons, "on" toggles) resolved to nothing -> black / invisible in

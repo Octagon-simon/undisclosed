@@ -40,6 +40,10 @@ const GOV_ASK: Command = { id: 'undisclosed-agent.governance-ask' };
 const GOV_AUTO: Command = { id: 'undisclosed-agent.governance-auto' };
 const USAGE: Command = { id: 'undisclosed-agent.usage', label: 'Usage overview' };
 const MEMORY: Command = { id: 'undisclosed-agent.memory', label: 'Memory' };
+const TRIGGERS: Command = {
+  id: 'undisclosed-agent.triggers',
+  label: 'Automations',
+};
 const MODELS: Command = { id: 'undisclosed-agent.models', label: 'Models' };
 const SETTINGS: Command = { id: 'undisclosed-agent.settings', label: 'Settings' };
 const BROWSER: Command = { id: 'undisclosed-agent.browser', label: 'Agent browser' };
@@ -153,6 +157,10 @@ export class UndisclosedAgentContribution
       isVisible: (w) => !!asAgent(w),
       execute: (w) => asAgent(w)?.showMemory(),
     });
+    commands.registerCommand(TRIGGERS, {
+      isVisible: (w) => !!asAgent(w),
+      execute: (w) => asAgent(w)?.showTriggers(),
+    });
     commands.registerCommand(MODELS, {
       isVisible: (w) => !!asAgent(w),
       execute: (w) => asAgent(w)?.showModels(),
@@ -206,6 +214,11 @@ export class UndisclosedAgentContribution
       commandId: MEMORY.id,
       label: 'Memory',
       order: '1',
+    });
+    menus.registerMenuAction(MORE_MENU, {
+      commandId: TRIGGERS.id,
+      label: 'Automations',
+      order: '1.45',
     });
     menus.registerMenuAction(MORE_MENU, {
       commandId: MODELS.id,
