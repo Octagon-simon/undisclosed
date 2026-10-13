@@ -242,6 +242,11 @@ export const ProjectChatContainer: React.FC<ProjectChatContainerProps> = ({
   const jumpToBottom = useCallback(() => {
     const root = scrollContainerRef.current;
     if (!root) return;
+    // The pin has been released (the user scrolled up to read) — never yank the
+    // view back. This closes the one-frame window where a MutationObserver burst
+    // has already scheduled this rAF and the user's wheel releases the pin
+    // before the callback runs, so a released pin can't re-glue the view.
+    if (stickBottomProjectRef.current === null) return;
     programmaticScrollRef.current = true;
     root.scrollTo({ top: root.scrollHeight, behavior: 'auto' });
     // Release the guard once this scroll's event has fired, so a genuine
@@ -280,16 +285,57 @@ export const ProjectChatContainer: React.FC<ProjectChatContainerProps> = ({
 
   // A genuine user scroll-up releases the pin so they can read in peace. The
   // programmatic guard prevents our own jumpToBottom from self-releasing.
+  //
+  // We listen for `wheel`/`touch`, not just this container's own `scroll`,
+  // because the panel nests its own scrollable boxes (the live Thought Process
+  // body is `max-h-64 overflow-y-auto`, the Execution Summary `max-h-96`).
+  // While the gesture is inside one of those, THIS container does not scroll,
+  // so a scroll-only listener never sees it and the pin stays armed the whole
+  // time. Then the instant the nested box hits its top edge and the wheel
+  // chains out to this container, the next streamed token fires jumpToBottom
+  // (the MutationObserver above re-runs it every frame while thinking) and
+  // yanks the view back to the bottom — that is the scrollbar jitter you see
+  // when scrolling up out of the Thinking block. An upward wheel/touch drag is
+  // the user's intent to read history no matter which box consumes it, so we
+  // release the pin on the intent itself rather than on the container's
+  // resulting scrollTop.
   useEffect(() => {
     const root = scrollContainerRef.current;
     if (!root) return;
+    let touchStartY: number | null = null;
     const onScroll = () => {
       if (programmaticScrollRef.current) return;
       const dist = root.scrollHeight - root.scrollTop - root.clientHeight;
       if (dist > 120) stickBottomProjectRef.current = null;
     };
+    const onWheel = (e: WheelEvent) => {
+      if (programmaticScrollRef.current) return;
+      // deltaY < 0 === wheel up === reveal older turns.
+      if (e.deltaY < 0) stickBottomProjectRef.current = null;
+    };
+    const onTouchStart = (e: TouchEvent) => {
+      touchStartY = e.touches[0]?.clientY ?? null;
+    };
+    const onTouchMove = (e: TouchEvent) => {
+      if (programmaticScrollRef.current) return;
+      const y = e.touches[0]?.clientY;
+      // Finger dragged DOWN (>4px) === content scrolls down === older turns.
+      if (touchStartY !== null && y !== undefined && y > touchStartY + 4) {
+        stickBottomProjectRef.current = null;
+      }
+    };
     root.addEventListener('scroll', onScroll, { passive: true });
-    return () => root.removeEventListener('scroll', onScroll);
+    // `passive: true` — we only observe intent, we never preventDefault, so the
+    // browser's own chaining still does the scrolling.
+    root.addEventListener('wheel', onWheel, { passive: true });
+    root.addEventListener('touchstart', onTouchStart, { passive: true });
+    root.addEventListener('touchmove', onTouchMove, { passive: true });
+    return () => {
+      root.removeEventListener('scroll', onScroll);
+      root.removeEventListener('wheel', onWheel);
+      root.removeEventListener('touchstart', onTouchStart);
+      root.removeEventListener('touchmove', onTouchMove);
+    };
   }, [scrollContainerRef]);
 
   // Intersection Observer for scroll-based animations

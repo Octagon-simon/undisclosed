@@ -49,6 +49,12 @@ type BaseTextareaProps = Omit<React.ComponentProps<'textarea'>, 'size'> & {
   onBackIconClick?: () => void;
   trailingButton?: React.ReactNode;
   onEnter?: () => void;
+  /**
+   * Extra classes for the enhanced variant's bordered wrapper (the box that
+   * carries the field border). `className` styles the inner `<textarea>`, which
+   * is borderless, so use this to give the field a visible border.
+   */
+  containerClassName?: string;
 };
 
 const Textarea = React.forwardRef<HTMLTextAreaElement, BaseTextareaProps>(
@@ -70,6 +76,7 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, BaseTextareaProps>(
       placeholder,
       style,
       onEnter,
+      containerClassName,
       ...props
     },
     ref
@@ -173,7 +180,8 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, BaseTextareaProps>(
                   'focus-within:bg-ds-bg-neutral-subtle-default',
                   'focus-within:ring-ds-ring-brand-default-focus hover:ring-ds-ring-neutral-strong-default',
                   'focus-within:ring-1 focus-within:ring-offset-0 hover:ring-1 hover:ring-offset-0',
-                ]
+                ],
+              containerClassName
             )}
           >
             {leadingIcon ? (

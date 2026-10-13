@@ -42,6 +42,13 @@ export interface PanelSectionProps {
    * cards stay flat.
    */
   active?: boolean;
+  /**
+   * Freeze the live ring in place without removing it. Set while the agent is
+   * blocked on a human question (`ask_human_via_gui` in flight): the turn is
+   * paused, so the comet holds its position instead of sweeping, then resumes
+   * when the answer lands. No effect when `active` is false.
+   */
+  paused?: boolean;
   /** Extra classes for the outer box (e.g. spacing). */
   className?: string;
   /** Extra classes for the title row. */
@@ -56,6 +63,7 @@ export function PanelSection({
   onToggle,
   expanded,
   active = false,
+  paused = false,
   className,
   titleClassName,
   children,
@@ -108,8 +116,15 @@ export function PanelSection({
               bottom-left) and loops until the turn ends, the band shifting blue
               -> green -> the rest of the palette as it goes. The gradient + its
               keyframes live in `style/index.css` (`.panel-border-comet`) and use
-              `--colors-*` palette tokens; respects prefers-reduced-motion. */}
-          <div className="panel-border-comet absolute inset-0 rounded-lg" />
+              `--colors-*` palette tokens; respects prefers-reduced-motion.
+              While `paused` (blocked on a human question) the comet FREEZES in
+              place instead of sweeping, then resumes when the answer lands. */}
+          <div
+            className={cn(
+              'panel-border-comet absolute inset-0 rounded-lg',
+              paused && 'panel-border-comet--paused'
+            )}
+          />
         </div>
       ) : null}
       <div

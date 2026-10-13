@@ -131,36 +131,70 @@ export function formatTriggeredTaskMessage(task: TriggeredTask): string {
         }
       }
     } else if (task.triggerType === 'slack_trigger') {
+      // The local Socket Mode listener stores the RAW Slack event (`type`,
+      // `channel`, `user`, `ts`, `team`), while the cloud shape uses
+      // `event_type`, `channel_id`, `user_id`, `message_ts`, `team_id`. Read
+      // BOTH so the fired task always tells the agent which channel to reply
+      // in — without the channel id the agent has no idea where to post, which
+      // is why a Slack automation looked like it did nothing.
+      const slack = {
+        event_type: task.inputData.event_type ?? task.inputData.type,
+        text: task.inputData.text,
+        channel_id: task.inputData.channel_id ?? task.inputData.channel,
+        user_id: task.inputData.user_id ?? task.inputData.user,
+        thread_ts: task.inputData.thread_ts,
+        message_ts: task.inputData.message_ts ?? task.inputData.ts,
+        team_id: task.inputData.team_id ?? task.inputData.team,
+        reaction: task.inputData.reaction,
+        files: task.inputData.files,
+      };
+
       parts.push(`- **Source:** Slack trigger "${task.triggerName}"`);
 
       // Slack event context
-      if (task.inputData.event_type) {
-        parts.push(`- **Event Type:** ${task.inputData.event_type}`);
+      if (slack.event_type) {
+        parts.push(`- **Event Type:** ${slack.event_type}`);
       }
-      if (task.inputData.text) {
-        parts.push(`- **Message:** ${task.inputData.text}`);
+      if (slack.text) {
+        parts.push(`- **Message:** ${slack.text}`);
       }
-      if (task.inputData.channel_id) {
-        parts.push(`- **Channel ID:** ${task.inputData.channel_id}`);
+      if (slack.channel_id) {
+        parts.push(`- **Channel ID:** ${slack.channel_id}`);
       }
-      if (task.inputData.user_id) {
-        parts.push(`- **Sender User ID:** ${task.inputData.user_id}`);
+      if (slack.user_id) {
+        parts.push(`- **Sender User ID:** ${slack.user_id}`);
       }
-      if (task.inputData.thread_ts) {
-        parts.push(`- **Thread TS:** ${task.inputData.thread_ts}`);
+      if (slack.thread_ts) {
+        parts.push(`- **Thread TS:** ${slack.thread_ts}`);
       }
-      if (task.inputData.message_ts) {
-        parts.push(`- **Message TS:** ${task.inputData.message_ts}`);
+      if (slack.message_ts) {
+        parts.push(`- **Message TS:** ${slack.message_ts}`);
       }
-      if (task.inputData.team_id) {
-        parts.push(`- **Team ID:** ${task.inputData.team_id}`);
+      if (slack.team_id) {
+        parts.push(`- **Team ID:** ${slack.team_id}`);
       }
-      if (task.inputData.reaction) {
-        parts.push(`- **Reaction:** :${task.inputData.reaction}:`);
+      if (slack.reaction) {
+        parts.push(`- **Reaction:** :${slack.reaction}:`);
       }
-      if (task.inputData.files && task.inputData.files.length > 0) {
+      if (slack.files && slack.files.length > 0) {
         parts.push(
-          `- **Files:** ${task.inputData.files.length} file(s) attached`
+          `- **Files:** ${slack.files.length} file(s) attached`
+        );
+      }
+
+      // Thread continuity. A reply must land in the SAME thread it arrived on;
+      // otherwise the run's answer opens a fresh top-level message and the
+      // back-and-forth splits into two threads. Tell the agent explicitly to
+      // pass `thread_ts`, since the toolkit can only thread a post when it is
+      // given one. Use the event's thread root (Thread TS) when present, else
+      // the message that opened the thread (Message TS).
+      const replyThreadTs = slack.thread_ts || slack.message_ts;
+      if (slack.channel_id && replyThreadTs) {
+        parts.push(
+          `- **Reply target:** Post your reply with ` +
+            `send_slack_message(channel_id="${slack.channel_id}", ` +
+            `thread_ts="${replyThreadTs}", message=...) so it stays in this ` +
+            `thread. Do not post a new top-level message.`
         );
       }
     }

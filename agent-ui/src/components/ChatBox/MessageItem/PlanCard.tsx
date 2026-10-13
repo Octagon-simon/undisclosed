@@ -66,6 +66,11 @@ export interface PlanCardProps {
    * other way round. See `AgentPanelFull` / `UserQueryGroup`.
    */
   active?: boolean;
+  /**
+   * Freeze the live comet ring (keep it, stop its sweep) while the agent is
+   * blocked on a human question. See `PanelSection.paused`.
+   */
+  paused?: boolean;
   /** Start the checklist expanded. Defaults to open so progress is visible. */
   defaultOpen?: boolean;
   className?: string;
@@ -127,6 +132,7 @@ export function PlanCard({
   steps,
   running = false,
   active,
+  paused = false,
   defaultOpen = true,
   className,
 }: PlanCardProps) {
@@ -203,6 +209,7 @@ export function PlanCard({
       onToggle={() => setOpen((v) => !v)}
       expanded={open}
       active={showRing}
+      paused={paused}
       className={className}
     >
       <AnimatePresence initial={false}>

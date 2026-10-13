@@ -314,6 +314,7 @@ export function mountAgentPanel(
     isHistoryOpen: () => apiRef.current?.isHistoryOpen() ?? false,
     showStats: () => apiRef.current?.showStats(),
     showMemory: () => apiRef.current?.showMemory(),
+    showTriggers: () => apiRef.current?.showTriggers(),
     showModels: () => apiRef.current?.showModels(),
     showSettings: () => apiRef.current?.showSettings(),
     showBrowser: () => apiRef.current?.showBrowser(),

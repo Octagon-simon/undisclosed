@@ -25,12 +25,6 @@ interface ProjectSectionProps {
   chatId: string;
   chatStore: VanillaChatStore;
   taskId?: string;
-  /**
-   * User-message ids to hide because a placement race left the same turn in
-   * another task (see `collectDuplicateUserTurnIds`). Kept out of the grouped
-   * render so the duplicate bubble never shows.
-   */
-  hiddenUserMessageIds?: ReadonlySet<string>;
   activeQueryId: string | null;
   onQueryActive: (queryId: string | null) => void;
   // onPauseResume: () => void;  // Commented out - temporary not needed
@@ -47,7 +41,6 @@ export const ProjectSection = React.forwardRef<
       chatId,
       chatStore,
       taskId,
-      hiddenUserMessageIds,
       activeQueryId,
       onQueryActive,
       // onPauseResume,  // Commented out - temporary not needed
@@ -95,12 +88,8 @@ export const ProjectSection = React.forwardRef<
     const task = activeTaskId ? chatState.tasks[activeTaskId] : null;
 
     const messages = React.useMemo(() => {
-      const all = task?.messages || [];
-      // Hide user turns that a placement race duplicated into another task so
-      // the same bubble never renders twice (see collectDuplicateUserTurnIds).
-      if (!hiddenUserMessageIds || hiddenUserMessageIds.size === 0) return all;
-      return all.filter((m) => !hiddenUserMessageIds.has(m.id));
-    }, [task?.messages, hiddenUserMessageIds]);
+      return task?.messages || [];
+    }, [task?.messages]);
 
     // Memoize grouping to prevent re-creating objects on every render
     const queryGroups = React.useMemo(() => {
@@ -185,7 +174,7 @@ export const ProjectSection = React.forwardRef<
           // copy into one.
           const existingIds = new Set((task?.messages || []).map((m: any) => m.id));
           const contentKey = (role: string, content: any) =>
-            `${role} ${typeof content === 'string' ? content : JSON.stringify(content ?? '')}`;
+            `${role}\u0000${typeof content === 'string' ? content : JSON.stringify(content ?? '')}`;
           const existingContent = new Set(
             (task?.messages || []).map((m: any) => contentKey(m.role, m.content))
           );

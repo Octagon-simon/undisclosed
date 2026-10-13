@@ -39,10 +39,14 @@ import ChatBox from '@/components/ChatBox';
 import AgentConnectors from '@/components/CodeAgentWorkspace/AgentConnectors';
 import AgentMemorySettings from '@/components/CodeAgentWorkspace/AgentMemorySettings';
 import AgentSkills from '@/components/CodeAgentWorkspace/AgentSkills';
+import AgentTriggers from '@/components/CodeAgentWorkspace/AgentTriggers';
 import { TelemetryStrip } from '@/agent-embed/TelemetryStrip';
 import AgentModels from '@/components/CodeAgentWorkspace/AgentModels';
 import AgentSettings from '@/components/CodeAgentWorkspace/AgentSettings';
 import BrowserTakeControl from '@/components/BrowserAgentWorkspace/BrowserTakeControl';
+import { useBackgroundTaskProcessor } from '@/hooks/useBackgroundTaskProcessor';
+import { useExecutionSubscription } from '@/hooks/useExecutionSubscription';
+import { useTriggerTaskExecutor } from '@/hooks/useTriggerTaskExecutor';
 
 type PanelBody =
   | 'conversation'
@@ -50,6 +54,7 @@ type PanelBody =
   | 'stats'
   | 'skills'
   | 'connectors'
+  | 'triggers'
   | 'memory'
   | 'models'
   | 'settings'
@@ -96,6 +101,8 @@ export interface AgentPanelApi {
   showStats(): void;
   /** Show the memory settings screen. */
   showMemory(): void;
+  /** Show the Automations (triggers) screen. */
+  showTriggers(): void;
   /** Show the model configuration (BYOK) screen. */
   showModels(): void;
   /** Show the settings screen (language, …). */
@@ -121,6 +128,22 @@ const AgentEmbedPanel = forwardRef<AgentPanelApi>((_props, ref) => {
   const { t } = useTranslation();
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const setGovernanceMode = useAuthStore((s) => s.setGovernanceMode);
+
+  // Automation execution pipeline. In the standalone desktop app this lives in
+  // App.tsx (useExecutionSubscription + useTriggerTaskExecutor +
+  // useBackgroundTaskProcessor). The embedded panel is mounted INSTEAD of App,
+  // so none of it ran here: a fired trigger (Schedule / Webhook / Slack) created
+  // a *pending* execution on the brain and nothing ever executed it — the Slack
+  // bot would ingest your mention, log "dispatched 1 slack execution", and never
+  // reply. Wiring the same three hooks here closes that gap for the embed.
+  //
+  // The subscription dials the brain's /api/v1/execution/subscribe WS directly
+  // (brainEndpoint is injected by mountAgentPanel, token is 'local-session-token'),
+  // receives `execution_created`, and hands it to the executor, which queues the
+  // task into the bound project; the background processor then runs it.
+  useExecutionSubscription();
+  useTriggerTaskExecutor();
+  useBackgroundTaskProcessor();
 
   const [body, setBody] = useState<PanelBody>('conversation');
 
@@ -156,6 +179,8 @@ const AgentEmbedPanel = forwardRef<AgentPanelApi>((_props, ref) => {
       showStats: () => setBody((m) => (m === 'stats' ? 'conversation' : 'stats')),
       showMemory: () =>
         setBody((m) => (m === 'memory' ? 'conversation' : 'memory')),
+      showTriggers: () =>
+        setBody((m) => (m === 'triggers' ? 'conversation' : 'triggers')),
       showModels: () =>
         setBody((m) => (m === 'models' ? 'conversation' : 'models')),
       showSettings: () =>
@@ -239,6 +264,13 @@ const AgentEmbedPanel = forwardRef<AgentPanelApi>((_props, ref) => {
             onBack={() => setBody('conversation')}
           >
             <AgentConnectors />
+          </ManagedScreen>
+        ) : body === 'triggers' ? (
+          <ManagedScreen
+            title={t('triggers.title', { defaultValue: 'Automations' })}
+            onBack={() => setBody('conversation')}
+          >
+            <AgentTriggers />
           </ManagedScreen>
         ) : body === 'memory' ? (
           <ManagedScreen

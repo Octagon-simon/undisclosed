@@ -130,6 +130,11 @@ export interface ExecutionSummaryProps {
    */
   active?: boolean;
   /**
+   * Freeze the live comet ring (keep it, stop its sweep) while the agent is
+   * blocked on a human question. See `PanelSection.paused`.
+   */
+  paused?: boolean;
+  /**
    * Epoch ms the turn began (the user message's `createdAt`). While `running`,
    * the title row shows a live "Working for Xs" pill clocked from here, so the
    * card reads as in-progress the way "Worked for Xs" reads as finished. Omit to
@@ -145,6 +150,7 @@ export function ExecutionSummary({
   activities,
   running = false,
   active,
+  paused = false,
   startedAt,
   defaultOpen = false,
   className,
@@ -234,6 +240,7 @@ export function ExecutionSummary({
       onToggle={() => setOpen((v) => !v)}
       expanded={open}
       active={showRing}
+      paused={paused}
       className={className}
     >
       <AnimatePresence initial={false}>

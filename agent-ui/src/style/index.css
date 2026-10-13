@@ -796,6 +796,15 @@ code {
   }
 }
 
+/* Paused comet: while the agent is BLOCKED on a human question
+ * (`ask_human_via_gui` in flight) the turn is paused, so FREEZE the ring at its
+ * current angle instead of letting it keep sweeping. `animation-play-state`
+ * holds the running animation exactly where it is (no jump back to the start),
+ * so when the answer lands the comet resumes from the same spot. */
+.panel-border-comet--paused {
+  animation-play-state: paused;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-spin,
   .animate-pulse,

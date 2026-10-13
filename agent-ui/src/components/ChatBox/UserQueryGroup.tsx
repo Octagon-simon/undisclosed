@@ -502,6 +502,13 @@ export const UserQueryGroup: React.FC<UserQueryGroupProps> = ({
   // so its groups start collapsed.
   const summaryRunning = liveActivities.length > 0 && taskIsLive;
 
+  // The agent is blocked on an inline `ask_human_via_gui` question. The turn is
+  // paused (not finished), so the live comet ring should PAUSE with it: freeze
+  // the sweep on the Plan card / Execution Summary until the human answers and
+  // the run resumes. `activeAsk` is set when an ask arrives and cleared on the
+  // reply (chatStore), so it is exactly the "question in flight" signal.
+  const blockedOnHuman = Boolean((summaryTask as { activeAsk?: string } | null)?.activeAsk);
+
   // Inline agent-progress PLAN card. The decomposed subtasks (`taskInfo`) — the
   // same list the old sticky `PinnedPlanIndicator` surfaced — now render in the
   // turn body, between the Thought Process and the Execution Summary, so they
@@ -658,6 +665,7 @@ export const UserQueryGroup: React.FC<UserQueryGroupProps> = ({
             steps={planSteps}
             running={taskIsLive}
             active={taskIsLive && hasPlan}
+            paused={blockedOnHuman}
             className="mb-2"
           />
           {/* Execution Summary lives in the turn body (the slot the
@@ -677,6 +685,7 @@ export const UserQueryGroup: React.FC<UserQueryGroupProps> = ({
               // The ring lives on the Plan card above whenever a plan exists;
               // only a turn with no plan (todo list) shows it here.
               active={summaryRunning && !hasPlan}
+              paused={blockedOnHuman}
               startedAt={
                 Number.isFinite(turnStartedAtMs) ? turnStartedAtMs : undefined
               }

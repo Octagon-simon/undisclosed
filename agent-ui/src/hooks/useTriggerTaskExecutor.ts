@@ -13,6 +13,7 @@
 // ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
 
 import { proxyFetchGet } from '@/api/http';
+import { getOpenFolderRoot } from '@/lib/openFolder';
 import {
   ProjectType,
   useProjectRuntimeStore,
@@ -25,6 +26,47 @@ import {
 } from '@/store/triggerTaskStore';
 import { useCallback, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
+
+/**
+ * Whether THIS editor window owns the folder-space a trigger is scoped to.
+ *
+ * The brain's execution fan-out (`broadcast()` in `trigger_controller.py`) has
+ * no per-client routing: every editor connected to :5001 receives every
+ * `execution_created`. Without this check each open window rehydrates the
+ * project and queues/runs the task, so a single trigger fires in N editors at
+ * once ("the trigger is sent to both open editors"). A window owns the trigger
+ * iff its own open folder — the workspace root Theia handed the embed — is the
+ * same folder as the trigger's space root. Windows hosting a different folder
+ * ignore the event and let the owning window run it.
+ */
+export function ownsTriggerSpace(
+  spaceId?: string | null,
+  spaceRoot?: string | null
+): boolean {
+  const myRoot = getOpenFolderRoot()?.replace(/\/+$/, '') || null;
+
+  // Preferred check: the brain now sends the trigger's folder root in the event,
+  // so ownership is a direct path comparison against THIS window's open folder.
+  // This holds even when the space store isn't hydrated in this window, which is
+  // exactly why the older space-id lookup let every window through.
+  if (spaceRoot) {
+    return myRoot === spaceRoot.replace(/\/+$/, '');
+  }
+
+  if (!spaceId) {
+    // Event carries no space at all (older brain) -- can't scope, so don't block.
+    return true;
+  }
+  const space = useSpaceStore.getState().getSpaceById(spaceId);
+  const resolvedRoot = space?.rootPath?.replace(/\/+$/, '') || null;
+  if (!resolvedRoot) {
+    // Space unknown/unhydrated here -- can't prove ownership, so don't block.
+    return true;
+  }
+  // Only the window that has the trigger's folder open runs it. No folder open
+  // here (myRoot null) means another window owns it (or none does).
+  return myRoot === resolvedRoot;
+}
 
 /**
  * Hook that routes triggered tasks directly to project queuedMessages.
@@ -58,7 +100,8 @@ export function useTriggerTaskExecutor() {
   const loadProjectFromHistory = useCallback(
     async (
       projectId: string,
-      store: typeof projectStoreRef.current
+      store: typeof projectStoreRef.current,
+      spaceId?: string | null
     ): Promise<boolean> => {
       try {
         console.log(
@@ -97,13 +140,18 @@ export function useTriggerTaskExecutor() {
 
         // Use replayProject to load the project from history
         // store.replayProject(taskIdsList, question, projectId, historyId);
+        // Rehydrate into the trigger's OWN space, not whatever space the user
+        // currently has open. `createProject` defaults `spaceId` to the active
+        // space, which is exactly how an automation scoped to another folder
+        // ended up re-filed under the folder the user was looking at.
         store.createProject(
           `Trigger Project ${question}`,
           `No tasks to replay`,
           projectId,
           ProjectType.NORMAL,
           historyId,
-          false
+          false,
+          spaceId ? { spaceId } : undefined
         );
 
         return true;
@@ -164,7 +212,11 @@ export function useTriggerTaskExecutor() {
 
           if (!existingProject) {
             // Project doesn't exist locally, try to load from history
-            const loaded = await loadProjectFromHistory(targetProjectId, store);
+            const loaded = await loadProjectFromHistory(
+              targetProjectId,
+              store,
+              task.spaceId
+            );
 
             if (!loaded) {
               console.log(
@@ -231,6 +283,20 @@ export function useTriggerTaskExecutor() {
   // Watch for new tasks via WebSocket events and route to projectStore
   useEffect(() => {
     if (webSocketEvent) {
+      // One trigger, many connected editors: the brain broadcasts to all of
+      // them. Only the window whose open folder matches the trigger's
+      // folder-space runs it — everyone else drops the event so the task isn't
+      // executed N times.
+      if (!ownsTriggerSpace(webSocketEvent.spaceId, webSocketEvent.spaceRoot)) {
+        console.log(
+          '[TriggerTaskExecutor] Skipping execution for foreign folder-space:',
+          webSocketEvent.spaceId,
+          '— another editor owns it'
+        );
+        clearWebSocketEvent();
+        return;
+      }
+
       console.log(
         '[TriggerTaskExecutor] WebSocket event received:',
         webSocketEvent.executionId
