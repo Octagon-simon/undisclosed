@@ -13,6 +13,7 @@
 # limitations under the License.
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
 
+import asyncio
 import logging
 import os
 import uuid
@@ -63,9 +64,16 @@ from app.agent.toolkit.hybrid_browser_toolkit import HybridBrowserToolkit
 from app.agent.toolkit.observable_todo_toolkit import ObservableTodoToolkit
 from app.agent.toolkit.screenshot_toolkit import ScreenshotToolkit
 from app.agent.toolkit.figma_toolkit import FigmaToolkit
+from app.agent.toolkit.google_calendar_toolkit import GoogleCalendarToolkit
+from app.agent.toolkit.lark_toolkit import LarkToolkit
+from app.agent.toolkit.linkedin_toolkit import LinkedInToolkit
+from app.agent.toolkit.reddit_toolkit import RedditToolkit
 from app.agent.toolkit.search_toolkit import SearchToolkit
 from app.agent.toolkit.skill_toolkit import SkillToolkit
+from app.agent.toolkit.slack_toolkit import SlackToolkit
 from app.agent.toolkit.terminal_toolkit import TerminalToolkit
+from app.agent.toolkit.twitter_toolkit import TwitterToolkit
+from app.agent.toolkit.whatsapp_toolkit import WhatsAppToolkit
 from app.agent.toolkit.test_runner_toolkit import (
     WRITE_TOOL_NAMES as TEST_RUNNER_WRITE_TOOL_NAMES,
     TestRunnerToolkit,
@@ -91,6 +99,13 @@ DEFAULT_SINGLE_AGENT_TOOLKIT_CONFIG: dict[str, Any] = {
     "code_query": {"enabled": True},
     "code_search": {"enabled": True},
     "search": {"enabled": True},
+    # Third-party connectors (Slack, Lark, X/Twitter, WhatsApp, LinkedIn,
+    # Reddit, Google Calendar). Each toolkit is a no-op unless its token is
+    # configured, so this only surfaces the apps the user actually connected.
+    # Without it a SINGLE-AGENT turn (including a trigger execution) saw the
+    # file/terminal/MCP tools but never the Slack toolkit -- the agent then
+    # complained "I need Slack tools" and fell back to raw curl.
+    "connectors": {"enabled": True},
     "browser": {"enabled": True},
     "terminal": {"enabled": True},
     "web_fetch": {"enabled": True},
@@ -101,6 +116,22 @@ DEFAULT_SINGLE_AGENT_TOOLKIT_CONFIG: dict[str, Any] = {
     # require explicit human approval. Default AUTO = no gating (ship dark).
     "governance": {"enabled": True, "mode": "auto"},
 }
+
+# Communication/social "connectors" for the SINGLE agent. Matches the built-in
+# integrations advertised by the Connectors UI (chat_platform_controller's
+# `_config_info_map`). Each entry is (label, toolkit class); the toolkit's
+# `get_can_use_tools` returns [] unless its env token is set, so only connected
+# apps contribute tools. Figma / GitHub / MongoDB already have their own blocks
+# below, so they are deliberately left out here.
+_CONNECTOR_TOOLKITS: tuple[tuple[str, Any], ...] = (
+    ("slack_toolkit", SlackToolkit),
+    ("lark_toolkit", LarkToolkit),
+    ("twitter_toolkit", TwitterToolkit),
+    ("whatsapp_toolkit", WhatsAppToolkit),
+    ("linkedin_toolkit", LinkedInToolkit),
+    ("reddit_toolkit", RedditToolkit),
+    ("google_calendar_toolkit", GoogleCalendarToolkit),
+)
 
 
 @dataclass
@@ -680,6 +711,39 @@ async def assemble_single_agent_toolkits(
                 api_task_id=options.project_id,
             )
         assembly.add_tools(mongo_tools, MongoDBToolkit.toolkit_name())
+
+    # Connectors: the communication/social apps the user has connected (Slack,
+    # Lark, X/Twitter, WhatsApp, LinkedIn, Reddit, Google Calendar). Each
+    # get_can_use_tools is a no-op unless its token is set, so an unconnected
+    # app contributes nothing. This is what gives a single-agent turn -- and
+    # therefore a trigger execution -- the Slack tools it previously lacked.
+    if _enabled(config, "connectors"):
+        for _name, _toolkit_cls in _CONNECTOR_TOOLKITS:
+            try:
+                produced = _toolkit_cls.get_can_use_tools(options.project_id)
+                connector_tools = (
+                    await produced
+                    if asyncio.iscoroutine(produced)
+                    else produced
+                )
+                if connector_tools:
+                    connector_tools = message_integration.register_functions(
+                        list(connector_tools)
+                    )
+                    assembly.add_tools(
+                        connector_tools, _toolkit_cls.toolkit_name()
+                    )
+                    logger.info(
+                        "Connectors: attached %s (%d tools)",
+                        _toolkit_cls.toolkit_name(),
+                        len(connector_tools),
+                    )
+            except Exception:
+                logger.warning(
+                    "Connectors: failed to build %s; skipping",
+                    _name,
+                    exc_info=True,
+                )
 
     if _enabled(config, "browser") and (
         hands is None or hands.can_use_browser()
