@@ -41,6 +41,7 @@ from app.agent.toolkit.search_toolkit import SearchToolkit
 from app.agent.toolkit.skill_toolkit import SkillToolkit
 from app.agent.toolkit.terminal_toolkit import TerminalToolkit
 from app.agent.toolkit.test_runner_toolkit import TestRunnerToolkit
+from app.agent.toolkit.code_review_toolkit import CodeReviewToolkit
 from app.agent.toolkit.web_deploy_toolkit import WebDeployToolkit
 from app.agent.utils import NOW_STR
 from app.hands.interface import IHands
@@ -116,6 +117,13 @@ async def developer_agent(
             working_directory=working_directory,
         )
     )
+    code_review_toolkit = message_integration.register_toolkits(
+        CodeReviewToolkit(
+            options.project_id,
+            Agents.developer_agent,
+            working_directory=working_directory,
+        )
+    )
     code_execution_toolkit = message_integration.register_toolkits(
         CodeExecutionToolkit(options.project_id)
     )
@@ -145,6 +153,7 @@ async def developer_agent(
         *search_tools,
         *diff_toolkit.get_tools(),
         *test_runner_toolkit.get_tools(),
+        *code_review_toolkit.get_tools(),
         *code_execution_toolkit.get_tools(),
         *github_tools,
         *mongo_tools,
@@ -157,6 +166,7 @@ async def developer_agent(
         SkillToolkit.toolkit_name(),
         DiffToolkit.toolkit_name(),
         TestRunnerToolkit.toolkit_name(),
+        CodeReviewToolkit.toolkit_name(),
         CodeExecutionToolkit.toolkit_name(),
     ]
     if search_tools:

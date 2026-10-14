@@ -60,6 +60,11 @@ import {
 } from '@/lib/activityClassifier';
 import { getOpenFolderRoot } from '@/lib/openFolder';
 import { normalizeUserTurnContent } from '@/lib/dedupeUserTurns';
+import {
+  isReemittedUserTurn,
+  placedUserTurns,
+  resolveSourceUserTurnId,
+} from '@/lib/userTurnPlacement';
 import { deriveAttachFileName } from '@/lib/attachmentUrl';
 import { proxyUpdateTriggerExecution } from '@/service/triggerApi';
 import { ExecutionStatus } from '@/types';
@@ -794,6 +799,20 @@ export interface StartTaskOptions {
   resume?: boolean;
 }
 
+export interface AddMessagesOptions {
+  /**
+   * Remove a user turn from THIS store in the same update as the append. Used
+   * when a follow-up is migrated out of its optimistic task and into the
+   * `confirmed` task: doing the remove and the add in one `set()` leaves a late
+   * notice / acknowledgement / `end` (or a re-emitted `confirmed`) no gap to
+   * observe, so it can't re-place a second copy.
+   */
+  removeSource?: {
+    taskId: string;
+    messageId: string;
+  };
+}
+
 export interface ChatStore {
   updateCount: number;
   activeTaskId: string | null;
@@ -835,7 +854,11 @@ export interface ChatStore {
     taskId: string,
     type?: string
   ) => void;
-  addMessages: (taskId: string, messages: Message) => void;
+  addMessages: (
+    taskId: string,
+    messages: Message,
+    options?: AddMessagesOptions
+  ) => void;
   setMessages: (taskId: string, messages: Message[]) => void;
   updateMessage: (taskId: string, messageId: string, message: Message) => void;
   removeMessage: (taskId: string, messageId: string) => void;
@@ -2638,42 +2661,121 @@ const chatStore = (initial?: Partial<ChatStore>) =>
                * as it has been skipped earlier in startTask.
                */
               const nextTaskId = previousChatStore.nextTaskId || undefined;
+              const sourceMessages =
+                previousChatStore.tasks[currentTaskId]?.messages || [];
+              const lastMessage = sourceMessages.at(-1);
 
-              // Idempotency guard: a duplicate confirm for a turn that is
-              // ALREADY placed in the current task must not spin up another
-              // task. A genuine new follow-up has nextTaskId armed by
-              // ChatBox.handleSend before it POSTs; a re-emitted confirm (a
-              // re-attached stream replaying the confirm, or a double delivery)
-              // does not, while the current task already carries the same user
-              // turn. Without this the same turn was placed in a second task.
-              if (!previousChatStore.nextTaskId) {
-                const guardMessages =
-                  previousChatStore.tasks[currentTaskId]?.messages || [];
-                const guardLast = guardMessages.at(-1);
-                const guardKey = normalizeUserTurnContent(
-                  resolveConfirmedUserMessageContent({
-                    lastMessageContent:
-                      guardLast?.role === 'user'
-                        ? guardLast.content
-                        : undefined,
-                    messageContent,
-                    question,
-                    isFollowUpConfirm: true,
-                  })
-                );
-                const alreadyPlacedHere =
-                  !!guardKey &&
-                  guardMessages.some(
-                    (m) =>
-                      m.role === 'user' &&
-                      normalizeUserTurnContent(m.content) === guardKey
-                  );
-                if (alreadyPlacedHere) {
-                  skipFirstConfirm = false;
-                  return;
-                }
+              // Every `confirmed` that reaches this block is a NON-first
+              // confirm (the block is guarded by `!skipFirstConfirm`), i.e. a
+              // follow-up / subsequent turn. For those the SSE `question` is
+              // the Brain's echo of THIS turn's prompt and is authoritative;
+              // the closure `messageContent` is the ORIGINAL startTask prompt
+              // and is stale for every turn after the first (which goes to the
+              // else branch, not here).
+              //
+              // This used to be gated on `previousChatStore.nextTaskId`, but a
+              // mid-run steer that the Brain DEFERS loses that pointer by the
+              // time its deferred `confirmed` arrives (it reads null). That
+              // false negative flipped the resolver to the stale ORIGINAL
+              // prompt — rendering the wrong user bubble for the steered turn
+              // AND leaving its queued pill (keyed by the real prompt text)
+              // unmatched, so the pill stuck forever. Treat every confirm in
+              // this block as a follow-up so `question` wins.
+              const isFollowUpConfirm = true;
+
+              // Attaches for the new turn's user message. Prefer what the user
+              // actually attached THIS turn (lastMessage). On a follow-up with
+              // no new attachment, this must be empty -- NOT a fallback to
+              // `messageAttaches`, which is the closure-captured attaches from
+              // the ORIGINAL startTask (the long-lived SSE consumer never
+              // re-runs). Falling back there re-attaches the first turn's image
+              // to every subsequent turn, so the image "bleeds" back into the
+              // chatbox and the agent keeps re-describing it. Only the very
+              // first confirm (not a follow-up) should seed from messageAttaches.
+              // On a LIVE turn lastMessage already carries richer attach
+              // objects, so it wins; rebuiltFromConfirmed is the
+              // replay/reload source (lastMessage was reconstructed empty).
+              const attachesForNewMessage =
+                lastMessage?.role === 'user' && lastMessage?.attaches?.length
+                  ? lastMessage.attaches
+                  : rebuiltFromConfirmed.length
+                    ? rebuiltFromConfirmed
+                    : isFollowUpConfirm
+                      ? []
+                      : [
+                          ...(previousChatStore.tasks[currentTaskId]
+                            ?.attaches || []),
+                          ...(messageAttaches || []),
+                        ];
+
+              // Three candidate sources for the user prompt body.
+              //   1. lastMessage.content -- the prompt ChatBox.handleSend
+              //      just added to the previous chatStore. This is what
+              //      the user actually typed *this turn* and is therefore
+              //      authoritative for both startTask and improve flows.
+              //   2. question -- the SSE CONFIRMED event's question field.
+              //      This is the current improve/follow-up prompt.
+              //   3. messageContent -- the closure-captured arg passed to
+              //      the original startTask call. It is accurate for the
+              //      first run but stale for improve turns because the SSE
+              //      consumer remains alive across the whole Project.
+              //
+              // So the fallback order depends on the lifecycle:
+              // - first startTask confirmed: messageContent before question
+              // - follow-up confirmed: question before stale messageContent
+              const userMessageContent = resolveConfirmedUserMessageContent({
+                lastMessageContent:
+                  lastMessage?.role === 'user' ? lastMessage.content : undefined,
+                messageContent,
+                question,
+                isFollowUpConfirm,
+              });
+
+              // The stable id of THIS turn. Prefer `nextUserId`, minted by
+              // ChatBox.handleSend and recorded on the source task, so the
+              // identity survives even when the optimistic bubble is no longer
+              // the last message. Fall back to the trailing user message's id
+              // and leave it `undefined` only when there is no source user turn
+              // to carry over (pure replay) — that is the sole case the guard
+              // below consults the task's text.
+              const sourceTurnId =
+                previousChatStore.tasks[currentTaskId]?.nextUserId ||
+                (lastMessage?.role === 'user' && lastMessage?.id
+                  ? lastMessage.id
+                  : undefined);
+
+              // Option D, guard 1: an in-memory, ID-keyed re-emit guard. A
+              // re-emitted `confirmed` (a re-attached stream replaying the
+              // confirm, or a double delivery) for a turn whose id we have
+              // ALREADY placed must not spin up another task. This replaces the
+              // old text-keyed guard, which could hide a legitimate repeat of
+              // the same text (a re-sent "retry"/"continue" gets a fresh id, so
+              // it is correctly treated as a NEW turn and still placed).
+              if (
+                isReemittedUserTurn({
+                  resolvedTurnId: sourceTurnId,
+                  resolvedContent: userMessageContent,
+                  currentMessages: sourceMessages,
+                  registry: placedUserTurns,
+                })
+              ) {
+                skipFirstConfirm = false;
+                return;
               }
 
+              const carriedUserId = sourceTurnId || generateUniqueId();
+              // The SOURCE copy of this turn to remove, if any. Searching by
+              // the stable id (rather than only checking `.at(-1)`) is the core
+              // fix: a notice / acknowledgement / the previous turn's `end`
+              // landing after the optimistic add used to leave the user bubble
+              // here AND in the new task — the duplicated turn.
+              const sourceTurnIdToRemove = resolveSourceUserTurnId(
+                sourceMessages,
+                carriedUserId,
+                userMessageContent
+              );
+
+              const previousVanillaStore = lockedChatStore;
               const newChatResult = projectStore.appendInitChatStore(
                 project_id || projectStore.activeProjectId!,
                 nextTaskId
@@ -2704,126 +2806,46 @@ const chatStore = (initial?: Partial<ChatStore>) =>
                   newChatStore.getState().setType(newTaskId, 'replay');
                 }
 
-                // Every `confirmed` that reaches this block is a NON-first
-                // confirm (the block is guarded by `!skipFirstConfirm`), i.e. a
-                // follow-up / subsequent turn. For those the SSE `question` is
-                // the Brain's echo of THIS turn's prompt and is authoritative;
-                // the closure `messageContent` is the ORIGINAL startTask prompt
-                // and is stale for every turn after the first (which goes to the
-                // else branch, not here).
-                //
-                // This used to be gated on `previousChatStore.nextTaskId`, but a
-                // mid-run steer that the Brain DEFERS loses that pointer by the
-                // time its deferred `confirmed` arrives (it reads null). That
-                // false negative flipped the resolver to the stale ORIGINAL
-                // prompt — rendering the wrong user bubble for the steered turn
-                // AND leaving its queued pill (keyed by the real prompt text)
-                // unmatched, so the pill stuck forever. Treat every confirm in
-                // this block as a follow-up so `question` wins.
-                const isFollowUpConfirm = true;
-                const lastMessage =
-                  previousChatStore.tasks[currentTaskId]?.messages.at(-1);
-                // The source copy of this turn is removed further below, once
-                // `carriedUserId`/`userMessageContent` are resolved, so a
-                // notice / acknowledgement / the previous turn's `end` landing
-                // after the optimistic add can't orphan the bubble here AND in
-                // the new task — the duplicated turn.
-
-                // Attaches for the new turn's user message. Prefer what the user
-                // actually attached THIS turn (lastMessage). On a follow-up with
-                // no new attachment, this must be empty -- NOT a fallback to
-                // `messageAttaches`, which is the closure-captured attaches from
-                // the ORIGINAL startTask (the long-lived SSE consumer never
-                // re-runs). Falling back there re-attaches the first turn's image
-                // to every subsequent turn, so the image "bleeds" back into the
-                // chatbox and the agent keeps re-describing it. Only the very
-                // first confirm (not a follow-up) should seed from messageAttaches.
-                // On a LIVE turn lastMessage already carries richer attach
-                // objects, so it wins; rebuiltFromConfirmed is the
-                // replay/reload source (lastMessage was reconstructed empty).
-                const attachesForNewMessage =
-                  lastMessage?.role === 'user' && lastMessage?.attaches?.length
-                    ? lastMessage.attaches
-                    : rebuiltFromConfirmed.length
-                      ? rebuiltFromConfirmed
-                      : isFollowUpConfirm
-                        ? []
-                        : [
-                            ...(previousChatStore.tasks[currentTaskId]
-                              ?.attaches || []),
-                            ...(messageAttaches || []),
-                          ];
-
-                // Three candidate sources for the user prompt body.
-                //   1. lastMessage.content -- the prompt ChatBox.handleSend
-                //      just added to the previous chatStore. This is what
-                //      the user actually typed *this turn* and is therefore
-                //      authoritative for both startTask and improve flows.
-                //   2. question -- the SSE CONFIRMED event's question field.
-                //      This is the current improve/follow-up prompt.
-                //   3. messageContent -- the closure-captured arg passed to
-                //      the original startTask call. It is accurate for the
-                //      first run but stale for improve turns because the SSE
-                //      consumer remains alive across the whole Project.
-                //
-                // So the fallback order depends on the lifecycle:
-                // - first startTask confirmed: messageContent before question
-                // - follow-up confirmed: question before stale messageContent
-                const userMessageContent = resolveConfirmedUserMessageContent({
-                  lastMessageContent:
-                    lastMessage?.role === 'user'
-                      ? lastMessage.content
-                      : undefined,
-                  messageContent,
-                  question,
-                  isFollowUpConfirm,
-                });
-                // Reuse a STABLE user-turn id when this confirm is just moving
-                // the live message from the previous chat store into the new
-                // one. Prefer `nextUserId`, minted by ChatBox.handleSend and
-                // recorded on the source task, so the identity survives even
-                // when the optimistic bubble is no longer the last message.
-                // Fall back to the last message's id, then to a fresh id only
-                // when there is no source user turn to carry over (pure
-                // replay). A fresh id made the same question persist as TWO
-                // turns (the stranded original + this copy) — the duplicated
-                // "stacked" user bubble.
-                const carriedUserId =
-                  previousChatStore.tasks[currentTaskId]?.nextUserId ||
-                  (lastMessage?.role === 'user' && lastMessage?.id
-                    ? lastMessage.id
-                    : generateUniqueId());
-                // Remove the SOURCE copy of this turn. Searching by the stable
-                // id (rather than only checking `.at(-1)`) is the core fix: a
-                // notice / acknowledgement / the previous turn's `end` landing
-                // after the optimistic add used to leave the user bubble here
-                // AND in the new task — the duplicated turn.
-                const sourceUserMessages =
-                  previousChatStore.tasks[currentTaskId]?.messages || [];
-                const sourceById = sourceUserMessages.find(
-                  (m) => m.role === 'user' && m.id === carriedUserId
-                );
-                const sourceLast = sourceUserMessages.at(-1);
-                if (sourceById) {
-                  previousChatStore.removeMessage(currentTaskId, sourceById.id);
-                } else if (
-                  sourceLast?.role === 'user' &&
-                  sourceLast.id &&
-                  normalizeUserTurnContent(sourceLast.content) ===
-                    normalizeUserTurnContent(userMessageContent)
-                ) {
-                  previousChatStore.removeMessage(currentTaskId, sourceLast.id);
-                }
                 // Fresh turn: clear any stale live reasoning from a prior
                 // stalled/stopped turn so this thinking block starts clean.
                 newChatStore.getState().clearLiveReasoning(newTaskId);
                 newChatStore.getState().clearAcknowledgement(newTaskId);
-                newChatStore.getState().addMessages(newTaskId, {
+
+                // Option D, guard 2: place the turn into its final task. When
+                // both tasks live in the SAME chat store (the common case —
+                // appendInitChatStore reuses the project's primary store), fold
+                // the source-copy removal and the destination append into one
+                // `set()`, so a late notice/ack/end (or a re-emitted confirm)
+                // never observes the turn stranded in both tasks. When a fresh
+                // chat store was minted the two tasks are in different stores,
+                // so fall back to an explicit remove followed by the add.
+                const placementMessage: Message = {
                   id: carriedUserId,
                   role: 'user',
                   content: userMessageContent,
                   attaches: attachesForNewMessage,
-                });
+                };
+                if (newChatStore === previousVanillaStore) {
+                  newChatStore.getState().addMessages(newTaskId, placementMessage, {
+                    removeSource: sourceTurnIdToRemove
+                      ? {
+                          taskId: currentTaskId,
+                          messageId: sourceTurnIdToRemove,
+                        }
+                      : undefined,
+                  });
+                } else {
+                  if (sourceTurnIdToRemove) {
+                    previousChatStore.removeMessage(
+                      currentTaskId,
+                      sourceTurnIdToRemove
+                    );
+                  }
+                  newChatStore.getState().addMessages(newTaskId, placementMessage);
+                }
+                // Record the placement so a later re-emit of this turn is
+                // recognised by the id guard above.
+                placedUserTurns.markPlaced(carriedUserId);
                 // This queued follow-up's turn has started and it's now in the
                 // stream — drop its pending QueuedBox pill (display-only entries
                 // have no executionId), matched by content.
@@ -3292,29 +3314,51 @@ const chatStore = (initial?: Partial<ChatStore>) =>
                 currentChatStore.tasks[currentTaskId]?.messages || [];
               const stableTurnId =
                 currentChatStore.tasks[currentTaskId]?.nextUserId;
-              const existingById = stableTurnId
-                ? waitMessages.find(
-                    (m) => m.role === 'user' && m.id === stableTurnId
-                  )
-                : undefined;
-              const waitLast = waitMessages.at(-1);
-              if (existingById) {
-                currentChatStore.removeMessage(currentTaskId, existingById.id);
-              } else if (
-                waitLast?.role === 'user' &&
-                waitLast.id &&
-                normalizeUserTurnContent(waitLast.content) ===
-                  normalizeUserTurnContent(question)
-              ) {
-                currentChatStore.removeMessage(currentTaskId, waitLast.id);
+              // Option D, guard 1: a re-emitted `wait_confirm` for a turn whose
+              // id we have already placed must not re-add the user bubble.
+              // Keyed on the stable id, so a genuine new turn (fresh id) still
+              // places. `undefined` stableTurnId means replay — fall through to
+              // the existing replace-or-append behaviour.
+              if (!(stableTurnId && placedUserTurns.isPlaced(stableTurnId))) {
+                const existingById = stableTurnId
+                  ? waitMessages.find(
+                      (m) => m.role === 'user' && m.id === stableTurnId
+                    )
+                  : undefined;
+                const waitLast = waitMessages.at(-1);
+                const removeId = existingById
+                  ? existingById.id
+                  : waitLast?.role === 'user' &&
+                      waitLast.id &&
+                      normalizeUserTurnContent(waitLast.content) ===
+                        normalizeUserTurnContent(question)
+                    ? waitLast.id
+                    : undefined;
+                const placedTurnId = stableTurnId || generateUniqueId();
+                const userMessage: Message = {
+                  id: placedTurnId,
+                  role: 'user',
+                  content: question as string,
+                  step: AgentStep.WAIT_CONFIRM,
+                  isConfirm: false,
+                };
+                // Remove the optimistic copy and add the confirmed copy in ONE
+                // update so a re-emitted wait_confirm can't leave the bubble in
+                // two places (Option D, guard 2).
+                addMessages(
+                  currentTaskId,
+                  userMessage,
+                  removeId
+                    ? {
+                        removeSource: {
+                          taskId: currentTaskId,
+                          messageId: removeId,
+                        },
+                      }
+                    : undefined
+                );
+                placedUserTurns.markPlaced(placedTurnId);
               }
-              addMessages(currentTaskId, {
-                id: stableTurnId || generateUniqueId(),
-                role: 'user',
-                content: question as string,
-                step: AgentStep.WAIT_CONFIRM,
-                isConfirm: false,
-              });
             }
             addMessages(currentTaskId, {
               id: generateUniqueId(),
@@ -5313,7 +5357,7 @@ const chatStore = (initial?: Partial<ChatStore>) =>
         };
       });
     },
-    addMessages(taskId, message) {
+    addMessages(taskId, message, options) {
       // Stamp the wall-clock time on user turns so the turn header can render
       // "when" it was sent (Phase 4). Persistence already writes its own
       // createdAt; this keeps the in-memory copy in sync so LIVE turns show a
@@ -5324,16 +5368,35 @@ const chatStore = (initial?: Partial<ChatStore>) =>
         message?.role === 'user' && !(message as Message)?.createdAt
           ? { ...message, createdAt: new Date().toISOString() }
           : message;
-      set((state) => ({
-        ...state,
-        tasks: {
-          ...state.tasks,
-          [taskId]: {
-            ...state.tasks[taskId],
-            messages: [...state.tasks[taskId].messages, storedMessage],
+      set((state) => {
+        let tasks = state.tasks;
+        // Option D, guard 2: fold the source-copy removal into the same update
+        // as the destination append when the caller asks for it. A late event
+        // then never observes the turn present in neither (or both) tasks.
+        const source = options?.removeSource;
+        if (source && state.tasks[source.taskId]) {
+          const sourceTask = state.tasks[source.taskId];
+          tasks = {
+            ...tasks,
+            [source.taskId]: {
+              ...sourceTask,
+              messages: sourceTask.messages.filter(
+                (existing) => existing.id !== source.messageId
+              ),
+            },
+          };
+        }
+        return {
+          ...state,
+          tasks: {
+            ...tasks,
+            [taskId]: {
+              ...state.tasks[taskId],
+              messages: [...state.tasks[taskId].messages, storedMessage],
+            },
           },
-        },
-      }));
+        };
+      });
       try {
         // Persist turns so a reload can reconstruct the conversation. Both the
         // user query AND the assistant reply(ies) are persisted through the

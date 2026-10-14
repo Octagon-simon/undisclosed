@@ -87,3 +87,5 @@ brain/*.spec
 # despite the blanket `*.md` rule above so they are not silently dropped.
 !resources/example-skills/**/*.md
 brag-output-2026-10-11-065557/
+demo-live/
+capture.mov

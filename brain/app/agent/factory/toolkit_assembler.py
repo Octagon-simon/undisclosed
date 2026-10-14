@@ -74,10 +74,8 @@ from app.agent.toolkit.slack_toolkit import SlackToolkit
 from app.agent.toolkit.terminal_toolkit import TerminalToolkit
 from app.agent.toolkit.twitter_toolkit import TwitterToolkit
 from app.agent.toolkit.whatsapp_toolkit import WhatsAppToolkit
-from app.agent.toolkit.test_runner_toolkit import (
-    WRITE_TOOL_NAMES as TEST_RUNNER_WRITE_TOOL_NAMES,
-    TestRunnerToolkit,
-)
+from app.agent.toolkit.test_runner_toolkit import TestRunnerToolkit
+from app.agent.toolkit.code_review_toolkit import CodeReviewToolkit
 from app.agent.toolkit.web_deploy_toolkit import WebDeployToolkit
 from app.component.environment import env
 from app.hands.interface import IHands
@@ -108,6 +106,9 @@ DEFAULT_SINGLE_AGENT_TOOLKIT_CONFIG: dict[str, Any] = {
     "connectors": {"enabled": True},
     "browser": {"enabled": True},
     "terminal": {"enabled": True},
+    # Deterministic code review (run_checks + review_diff). Read-only, no
+    # external token; pairs with the typecheck/verification flow.
+    "code_review": {"enabled": True},
     "web_fetch": {"enabled": True},
     "planning_worktree": {"enabled": True},
     "mcp": {"enabled": True},
@@ -814,16 +815,21 @@ async def assemble_single_agent_toolkits(
             **_options(config, "test_runner"),
         )
         toolkit = message_integration.register_toolkits(toolkit)
-        test_tools = toolkit.get_tools()
-        if governance_mode is GovernanceMode.ASK:
-            test_tools = _gate_tool_if_named(
-                test_tools,
-                target_names=TEST_RUNNER_WRITE_TOOL_NAMES,
-                field_name="test_generation",
-                agent_name=Agents.single_agent,
-                api_task_id=options.project_id,
-            )
-        assembly.add_tools(test_tools, TestRunnerToolkit.toolkit_name())
+        # Read-only now (native coverage analysis; no generate/fix): no gate.
+        assembly.add_tools(toolkit.get_tools(), TestRunnerToolkit.toolkit_name())
+
+    if _enabled(config, "code_review"):
+        toolkit = CodeReviewToolkit(
+            options.project_id,
+            Agents.single_agent,
+            working_directory=working_directory,
+            **_options(config, "code_review"),
+        )
+        toolkit = message_integration.register_toolkits(toolkit)
+        # Deterministic + read-only: no Ask-mode gate needed.
+        assembly.add_tools(
+            toolkit.get_tools(), CodeReviewToolkit.toolkit_name()
+        )
 
     if _enabled(config, "diff"):
         toolkit = DiffToolkit(
