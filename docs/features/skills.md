@@ -71,3 +71,8 @@ enable toggle and delete, and adds a skill via zip upload. (A device symlink
   `<resources>/example-skills`. The frozen brain can't resolve that path from
   `__file__` (PyInstaller extracts to a temp dir), so `brain-launcher.ts` points
   it there explicitly with `UNDISCLOSED_EXAMPLE_SKILLS_DIR`.
+
+## See also
+
+- `docs/features/curated-skill-catalog.md` - the planned browse-and-install catalog,
+  so the app stops bundling and pre-installing every example skill.

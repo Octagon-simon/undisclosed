@@ -83,9 +83,10 @@ brain/*.spec
 !site/**
 
 # Bundled example agent skills (resources/example-skills/): ship with the app and
-# are synced into each user's skill store. Re-include their `SKILL.md` files
-# despite the blanket `*.md` rule above so they are not silently dropped.
-!resources/example-skills/**/*.md
+# are synced into each user's skill store. Re-include the whole tree, not just
+# `SKILL.md`: the blanket `*.md`, `*.png`, and `lib/` rules above would otherwise
+# silently drop skills' asset files (PNG textures) and `lib/` script dirs.
+!resources/example-skills/**
 brag-output-2026-10-11-065557/
 demo-live/
 capture.mov

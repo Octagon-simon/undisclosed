@@ -27,16 +27,51 @@ EXAMPLE_SKILL_MARKER = ".undisclosed-example-skill"
 logger = logging.getLogger("skill_service")
 
 
+def _frontmatter_scalar(block: str, key: str) -> str | None:
+    """Read one scalar value from a YAML frontmatter block.
+
+    Handles inline scalars (``key: text``, quoted or bare) and block scalars
+    (``key: >`` folded / ``key: |`` literal) whose value spans the following
+    indented lines. Only the first matching key is read.
+    """
+    lines = block.splitlines()
+    pattern = re.compile(rf"^\s*{re.escape(key)}\s*:\s*(.*)$")
+    for index, line in enumerate(lines):
+        match = pattern.match(line)
+        if not match:
+            continue
+        value = match.group(1).strip()
+        # Block scalar indicator: `>` (folded) or `|` (literal), optionally
+        # followed by a chomping/indent indicator like `>-` or `|2`.
+        if re.fullmatch(r"[>|][+-]?\d*", value):
+            folded = value.startswith(">")
+            collected: list[str] = []
+            for continuation in lines[index + 1 :]:
+                if not continuation.strip():
+                    collected.append("")
+                    continue
+                if not continuation[:1].isspace():
+                    break  # dedented: the block scalar has ended
+                collected.append(continuation.strip())
+            if folded:
+                text = " ".join(" ".join(collected).split())
+            else:
+                text = "\n".join(collected).strip()
+            text = text.strip().strip("'\"")
+            return text or None
+        text = value.strip("'\"")
+        return text or None
+    return None
+
+
 def _parse_skill_frontmatter(content: str) -> dict | None:
     """Parse name and description from SKILL.md frontmatter."""
     if not content.startswith("---"):
         return None
     end = content.find("\n---", 3)
     block = content[4:end] if end > 0 else content[4:]
-    name_match = re.search(r"^\s*name\s*:\s*(.+)$", block, re.MULTILINE)
-    desc_match = re.search(r"^\s*description\s*:\s*(.+)$", block, re.MULTILINE)
-    name = name_match.group(1).strip().strip("'\"") if name_match else None
-    desc = desc_match.group(1).strip().strip("'\"") if desc_match else None
+    name = _frontmatter_scalar(block, "name")
+    desc = _frontmatter_scalar(block, "description")
     if name and desc:
         return {"name": name, "description": desc}
     return None
