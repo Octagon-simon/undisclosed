@@ -19,6 +19,9 @@ import {
 /** Command id for our bottom-panel height toggle (expand ↔ restore). */
 const TOGGLE_BOTTOM_EXPAND = 'undisclosed.bottom.toggleExpand';
 
+/** Command id that collapses (hides) the bottom panel from its toolbar. */
+const COLLAPSE_BOTTOM = 'undisclosed.bottom.collapse';
+
 /** Widget ids removed from the default layout (unwanted stock-Theia views). */
 const REMOVE_VIEW_IDS = [
   'outline-view',
@@ -70,6 +73,16 @@ export class UndisclosedAgentLayoutContribution
         !!widget && this.shell.getAreaFor(widget) === 'bottom',
       priority: 100,
     });
+    registry.registerItem({
+      id: COLLAPSE_BOTTOM,
+      command: COLLAPSE_BOTTOM,
+      icon: 'codicon codicon-chevron-down',
+      tooltip: 'Collapse Panel',
+      // Same scope as the expand button: bottom panel only.
+      isVisible: (widget?: Widget) =>
+        !!widget && this.shell.getAreaFor(widget) === 'bottom',
+      priority: 99,
+    });
   }
 
   registerCommands(commands: CommandRegistry): void {
@@ -77,6 +90,22 @@ export class UndisclosedAgentLayoutContribution
       { id: TOGGLE_BOTTOM_EXPAND, label: 'Toggle Bottom Panel Height' },
       { execute: () => this.toggleBottomExpand() }
     );
+    commands.registerCommand(
+      { id: COLLAPSE_BOTTOM, label: 'Collapse Bottom Panel' },
+      { execute: () => this.collapseBottomPanel() }
+    );
+  }
+
+  /**
+   * Collapse (hide) the bottom panel — the same `collapsePanel('bottom')` the
+   * tab right-click menu's collapse action runs. The panel is hidden, not
+   * closed, so each terminal keeps its session and scrollback, and the panel can
+   * be reopened by re-selecting a view (Terminal / Problems / Output) or Ctrl/Cmd+J.
+   */
+  protected collapseBottomPanel(): void {
+    void this.shell
+      .collapsePanel('bottom')
+      .catch(() => undefined /* already collapsed */);
   }
 
   /**
