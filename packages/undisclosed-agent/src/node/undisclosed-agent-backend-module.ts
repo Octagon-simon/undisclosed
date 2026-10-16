@@ -196,21 +196,40 @@ export default new ContainerModule((bind) => {
 
         const proxy = httpProxy.createProxyServer({ changeOrigin: true });
 
-        // Re-stream a parsed JSON body so POST/PUT don't hang.
+        const PROXY_HEADERS_TIMEOUT_MS = Number(
+          process.env.UNDISCLOSED_PROXY_HEADERS_TIMEOUT_MS ?? 60000
+        );
+
         proxy.on('proxyReq', (...args: unknown[]) => {
           const proxyReq = args[0] as http.ClientRequest;
-          const req = args[1] as http.IncomingMessage & { body?: unknown };
-          const body = req.body;
+          const req = args[1] as http.IncomingMessage & {
+            body?: unknown;
+            _body?: boolean;
+          };
+
+          // Re-stream the body ONLY if body-parser consumed it (incl. `{}` / `[]`).
           if (
-            body &&
-            typeof body === 'object' &&
-            Object.keys(body as object).length > 0
+            req._body === true &&
+            req.body !== null &&
+            typeof req.body === 'object'
           ) {
-            const data = JSON.stringify(body);
+            const data = JSON.stringify(req.body);
             proxyReq.setHeader('Content-Type', 'application/json');
             proxyReq.setHeader('Content-Length', Buffer.byteLength(data));
             proxyReq.write(data);
           }
+
+          // Bound time-to-first-response-byte so a hung upstream can't pin a renderer
+          // connection slot. Streams are unaffected once headers have arrived.
+          const timer = setTimeout(
+            () =>
+              proxyReq.destroy(
+                new Error('upstream sent no response headers in time')
+              ),
+            PROXY_HEADERS_TIMEOUT_MS
+          );
+          proxyReq.once('response', () => clearTimeout(timer));
+          proxyReq.once('close', () => clearTimeout(timer));
         });
         proxy.on('error', (...args: unknown[]) => {
           const err = args[0] as NodeJS.ErrnoException;
