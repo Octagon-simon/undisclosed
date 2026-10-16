@@ -22,7 +22,7 @@
  */
 
 import { cn } from '@/lib/utils';
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 
 export interface PanelSectionProps {
   /** Leading icon rendered inside the title row. */
@@ -56,6 +56,12 @@ export interface PanelSectionProps {
   children?: ReactNode;
 }
 
+/**
+ * Number of comet-ring colour combinations defined in `style/index.css`
+ * (`.panel-border-comet--v1` .. `--v12`). A live section picks one at random.
+ */
+const COMET_RING_VARIANTS = 12;
+
 export function PanelSection({
   icon,
   title,
@@ -69,6 +75,13 @@ export function PanelSection({
   children,
 }: PanelSectionProps) {
   const hasTitle = title !== undefined && title !== null;
+
+  // Chosen once per section and held for its lifetime, so the ring keeps one
+  // palette for the whole turn instead of switching on every render.
+  const [ringVariant] = useState(
+    () =>
+      `panel-border-comet--v${1 + Math.floor(Math.random() * COMET_RING_VARIANTS)}`
+  );
 
   const left = (
     <div className="flex min-w-0 items-center gap-1.5 text-sm font-medium text-ds-text-neutral-default-default">
@@ -122,6 +135,7 @@ export function PanelSection({
           <div
             className={cn(
               'panel-border-comet absolute inset-0 rounded-lg',
+              ringVariant,
               paused && 'panel-border-comet--paused'
             )}
           />

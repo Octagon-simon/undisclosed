@@ -774,20 +774,117 @@ code {
 }
 
 .panel-border-comet {
+  /* Band stops. Defaults are the original "Ocean" palette; the `--v*` variant
+   * classes below swap these five so each live section can wear a different
+   * combination. PanelSection picks one at random per section. */
+  --comet-c1: var(--colors-blue-300);
+  --comet-c2: var(--colors-emerald-300);
+  --comet-c3: var(--colors-fuchsia-300);
+  --comet-c4: var(--colors-orange-300);
+  --comet-c5: var(--colors-yellow-300);
   background: conic-gradient(
     from calc(var(--panel-border-angle) + 315deg),
     transparent 0deg,
     transparent 140deg,
-    color-mix(in srgb, var(--colors-blue-300) 45%, transparent) 205deg,
-    var(--colors-blue-300) 248deg,
-    var(--colors-emerald-300) 288deg,
-    var(--colors-fuchsia-300) 320deg,
-    var(--colors-orange-300) 343deg,
-    var(--colors-yellow-300) 358deg,
+    color-mix(in srgb, var(--comet-c1) 45%, transparent) 205deg,
+    var(--comet-c1) 248deg,
+    var(--comet-c2) 288deg,
+    var(--comet-c3) 320deg,
+    var(--comet-c4) 343deg,
+    var(--comet-c5) 358deg,
     transparent 360deg
   );
   opacity: 0.9;
   animation: panel-border-comet 7.5s linear infinite;
+}
+
+/* Ring colour combinations. Each sets the five comet stops (head first, tail
+ * last). PanelSection adds one at random, `.panel-border-comet--v1` through
+ * `--v12`, so the working ring is a different palette run to run. Everything
+ * else (sweep, timing, reduced motion) is shared from the base class above. */
+.panel-border-comet--v1 {
+  --comet-c1: var(--colors-blue-300);
+  --comet-c2: var(--colors-emerald-300);
+  --comet-c3: var(--colors-fuchsia-300);
+  --comet-c4: var(--colors-orange-300);
+  --comet-c5: var(--colors-yellow-300);
+}
+.panel-border-comet--v2 {
+  --comet-c1: var(--colors-emerald-300);
+  --comet-c2: var(--colors-sky-300);
+  --comet-c3: var(--colors-indigo-300);
+  --comet-c4: var(--colors-purple-300);
+  --comet-c5: var(--colors-fuchsia-300);
+}
+.panel-border-comet--v3 {
+  --comet-c1: var(--colors-amber-300);
+  --comet-c2: var(--colors-orange-300);
+  --comet-c3: var(--colors-red-300);
+  --comet-c4: var(--colors-fuchsia-300);
+  --comet-c5: var(--colors-purple-300);
+}
+.panel-border-comet--v4 {
+  --comet-c1: var(--colors-fuchsia-300);
+  --comet-c2: var(--colors-purple-300);
+  --comet-c3: var(--colors-indigo-300);
+  --comet-c4: var(--colors-sky-300);
+  --comet-c5: var(--colors-emerald-300);
+}
+.panel-border-comet--v5 {
+  --comet-c1: var(--colors-green-300);
+  --comet-c2: var(--colors-emerald-300);
+  --comet-c3: var(--colors-yellow-300);
+  --comet-c4: var(--colors-amber-300);
+  --comet-c5: var(--colors-orange-300);
+}
+.panel-border-comet--v6 {
+  --comet-c1: var(--colors-sky-300);
+  --comet-c2: var(--colors-blue-300);
+  --comet-c3: var(--colors-indigo-300);
+  --comet-c4: var(--colors-purple-300);
+  --comet-c5: var(--colors-fuchsia-300);
+}
+.panel-border-comet--v7 {
+  --comet-c1: var(--colors-yellow-300);
+  --comet-c2: var(--colors-amber-300);
+  --comet-c3: var(--colors-orange-300);
+  --comet-c4: var(--colors-red-300);
+  --comet-c5: var(--colors-fuchsia-300);
+}
+.panel-border-comet--v8 {
+  --comet-c1: var(--colors-neon-300);
+  --comet-c2: var(--colors-fuchsia-300);
+  --comet-c3: var(--colors-sky-300);
+  --comet-c4: var(--colors-emerald-300);
+  --comet-c5: var(--colors-yellow-300);
+}
+.panel-border-comet--v9 {
+  --comet-c1: var(--colors-purple-300);
+  --comet-c2: var(--colors-fuchsia-300);
+  --comet-c3: var(--colors-red-300);
+  --comet-c4: var(--colors-orange-300);
+  --comet-c5: var(--colors-amber-300);
+}
+.panel-border-comet--v10 {
+  --comet-c1: var(--colors-sky-300);
+  --comet-c2: var(--colors-emerald-300);
+  --comet-c3: var(--colors-green-300);
+  --comet-c4: var(--colors-yellow-300);
+  --comet-c5: var(--colors-amber-300);
+}
+.panel-border-comet--v11 {
+  --comet-c1: var(--colors-indigo-300);
+  --comet-c2: var(--colors-purple-300);
+  --comet-c3: var(--colors-neon-300);
+  --comet-c4: var(--colors-fuchsia-300);
+  --comet-c5: var(--colors-sky-300);
+}
+.panel-border-comet--v12 {
+  --comet-c1: var(--colors-yellow-300);
+  --comet-c2: var(--colors-green-300);
+  --comet-c3: var(--colors-emerald-300);
+  --comet-c4: var(--colors-sky-300);
+  --comet-c5: var(--colors-blue-300);
 }
 
 @keyframes panel-border-comet {
