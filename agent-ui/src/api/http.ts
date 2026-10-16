@@ -367,7 +367,72 @@ export async function sseTransport(
   });
 }
 
-// =============== porxy ===============
+// =============== proxy ===============
+
+/**
+ * Global fetch tracker — wraps window.fetch once at module load so every
+ * network call (proxyFetch*, sseTransport / fetchEventSource, static assets,
+ * Theia's own requests) is visible in one place.
+ *
+ * At freeze time, open the browser console and run:
+ *   window.__live()
+ * It prints a table of every in-flight request, sorted oldest-first.
+ * The oldest entries are suspects (holding sockets); the newest are victims
+ * (queued behind them waiting for a free slot).
+ *
+ * SSE / event-stream responses stay in the map until their AbortController
+ * fires — treat them as an upper bound on connection age.
+ */
+(function installFetchTracker() {
+  if ((window as any).__fetchTrackerInstalled) return;
+  (window as any).__fetchTrackerInstalled = true;
+
+  const _fetch = window.fetch.bind(window);
+  let _seq = 0;
+  const _live = new Map<number, { url: string; method: string; t0: number }>();
+
+  window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+    const url =
+      typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.href
+          : (input as Request).url;
+    const id = ++_seq;
+    _live.set(id, { url, method: (init?.method ?? 'GET').toUpperCase(), t0: Date.now() });
+
+    const done = () => _live.delete(id);
+    // If the caller provides an AbortSignal, clean up when it fires.
+    init?.signal?.addEventListener('abort', done, { once: true });
+
+    return _fetch(input, init).then(
+      (res) => {
+        // Keep SSE connections in the map — they hold a socket for their whole
+        // life and are the most likely slot-consumers.
+        const ct = res.headers.get('content-type') ?? '';
+        if (!ct.includes('text/event-stream')) done();
+        return res;
+      },
+      (err: unknown) => {
+        done();
+        throw err;
+      }
+    );
+  };
+
+  (window as any).__live = () => {
+    const now = Date.now();
+    const rows = [..._live.values()]
+      .map((e) => ({ method: e.method, url: e.url, ageMs: now - e.t0 }))
+      .sort((a, b) => b.ageMs - a.ageMs); // oldest first = prime suspects
+    if (rows.length === 0) {
+      console.log('[fetch-tracker] no in-flight requests');
+    } else {
+      console.table(rows);
+    }
+    return rows;
+  };
+})();
 
 // get proxy base URL
 export async function getProxyBaseURL() {
@@ -423,10 +488,19 @@ async function proxyFetchRequest(
     }
   }
 
-  const options: RequestInit = {
-    method,
-    headers,
-  };
+  // Advisory warn: if this specific proxy call has been pending for 10 s,
+  // surface it in the console. No abort — use window.__live() to identify
+  // the root cause before adding per-endpoint timeouts.
+  const warnTimer = setTimeout(() => {
+    console.warn(
+      `[proxyFetch] ⚠ still pending after 10 s: ${method} ${fullUrl}` +
+        ' — run window.__live() to see all in-flight requests'
+    );
+  }, 10_000);
+
+  const options: RequestInit = { method, headers };
+
+  let fetchPromise: Promise<Response>;
 
   if (method === 'GET') {
     const query = data
@@ -438,14 +512,15 @@ async function proxyFetchRequest(
           )
           .join('&')
       : '';
-    return handleResponse(fetch(fullUrl + query, options));
+    fetchPromise = fetch(fullUrl + query, options);
+  } else {
+    if (data) options.body = JSON.stringify(data);
+    fetchPromise = fetch(fullUrl, options);
   }
 
-  if (data) {
-    options.body = JSON.stringify(data);
-  }
-
-  return handleResponse(fetch(fullUrl, options));
+  return handleResponse(
+    fetchPromise.finally(() => clearTimeout(warnTimer))
+  );
 }
 
 export const proxyFetchGet = (url: string, params?: any, headers?: any) =>
