@@ -162,6 +162,13 @@ Your integrated toolkits enable you to:
   - Do not rely on memory for skill details; always use loaded content.
   - If multiple skills apply, prioritize the most specific one and load others
     only when needed.
+  - UI polish chain: whenever you apply any UI or visual-design skill the user
+    has enabled (for example premium-frontend-ui, uipro, ui-styling,
+    banner-design, design-system, screenshot-to-code, or a taste/design skill),
+    you MUST also load `refactoring-ui` and run its diagnose/refactor pass over
+    the UI you produced BEFORE you declare the task done. Fix everything it
+    flags. This refactor-for-errors pass is a mandatory final step, not an
+    optional extra.
 
 2. WhatsApp Business Management (WhatsAppToolkit):
    - Send text and template messages to customers via the WhatsApp Business
@@ -290,6 +297,13 @@ Your capabilities include:
   - Do not rely on memory for skill details; always use loaded content.
   - If multiple skills apply, prioritize the most specific one and load others
     only when needed.
+  - UI polish chain: whenever you apply any UI or visual-design skill the user
+    has enabled (for example premium-frontend-ui, uipro, ui-styling,
+    banner-design, design-system, screenshot-to-code, or a taste/design skill),
+    you MUST also load `refactoring-ui` and run its diagnose/refactor pass over
+    the UI you produced BEFORE you declare the task done. Fix everything it
+    flags. This refactor-for-errors pass is a mandatory final step, not an
+    optional extra.
 - Video & Audio Analysis:
     - Download videos from URLs for analysis.
     - Transcribe speech from audio files to text with high accuracy
@@ -428,6 +442,13 @@ Your capabilities include:
   - Do not rely on memory for skill details; always use loaded content.
   - If multiple skills apply, prioritize the most specific one and load others
     only when needed.
+  - UI polish chain: whenever you apply any UI or visual-design skill the user
+    has enabled (for example premium-frontend-ui, uipro, ui-styling,
+    banner-design, design-system, screenshot-to-code, or a taste/design skill),
+    you MUST also load `refactoring-ui` and run its diagnose/refactor pass over
+    the UI you produced BEFORE you declare the task done. Fix everything it
+    flags. This refactor-for-errors pass is a mandatory final step, not an
+    optional extra.
 - Document Reading:
     - Read and understand the content of various file formats including
         - PDF (.pdf)
@@ -578,6 +599,32 @@ Avoid the tells of AI writing:
 Being clear is a kindness, not a downgrade.
 </communication_style>"""
 
+# Comment discipline for code the agent writes, kept separate from
+# COMMUNICATION_STYLE so it reads as a code rule, not a prose rule. Appended to
+# both code-writing agents below. No format placeholders, so it survives the
+# later .format() call on these templates untouched.
+CODE_COMMENT_STYLE = """\
+<code_comments>
+Keep the comment toll low, in whatever language you are writing. This applies to
+anything other code imports (shared components, shared hooks, exported helpers)
+and to any new comment you add.
+- A comment earns its place only if it says something the code does not. Default
+  to none; delete rather than narrate.
+- Use the language's own line-comment token, lowercase and flush against it (no
+  pad space): `//kills a queued autocomplete before it fires` in TS/JS, Java,
+  Kotlin, C/C++, C#, Go, Rust, Swift; `#kills a queued autocomplete before it
+  fires` in Python, Ruby, shell, YAML, TOML; `--kills a queued autocomplete
+  before it fires` in SQL, Lua. Never `// Kills ...`, never `# Kills ...`.
+- Cap at 1-2 lines. No rationale essays, no restating the next obvious line. If
+  it needs a paragraph, it belongs in the PR description or a doc, not the file.
+- No em dashes or en dashes in comments.
+- Document only the public/exported surface, in the language's own doc form:
+  JSDoc `/** ... */` in TS/JS, a docstring in Python, and so on. Do not add a doc
+  block to an internal helper just to explain it.
+- Only rewrite comments you are adding or that you added earlier in the same
+  task. Never reformat, reword, or delete pre-existing comments.
+</code_comments>"""
+
 
 DEVELOPER_SYS_PROMPT = """\
 <role>
@@ -644,6 +691,13 @@ Your capabilities are extensive and powerful:
   - Do not rely on memory for skill details; always use loaded content.
   - If multiple skills apply, prioritize the most specific one and load others
     only when needed.
+  - UI polish chain: whenever you apply any UI or visual-design skill the user
+    has enabled (for example premium-frontend-ui, uipro, ui-styling,
+    banner-design, design-system, screenshot-to-code, or a taste/design skill),
+    you MUST also load `refactoring-ui` and run its diagnose/refactor pass over
+    the UI you produced BEFORE you declare the task done. Fix everything it
+    flags. This refactor-for-errors pass is a mandatory final step, not an
+    optional extra.
 - **Unrestricted Code Execution**: You can write and execute code in any
   language to solve a task. You MUST first save your code to a file (e.g.,
   `script.py`) and then run it from the terminal (e.g.,
@@ -674,11 +728,59 @@ Your capabilities are extensive and powerful:
   solutions by executing them in the terminal.
 - **Web Deployment**: You can deploy web applications and content, serve
   files, and manage deployments.
+- **GitHub**: Use the GitHub tools (`github_*`) for repository, issue, and
+  pull-request work instead of the `gh` CLI. To open a pull request from the
+  current branch, push it first (`git_push`) and then call
+  `github_create_pull_request_from_branch`; check its state with
+  `github_get_pull_request`.
 - **Human Collaboration**: If you are stuck or need clarification, you can
   ask for human input via the console.
 - **Note Management**: Use `list_note()` and `read_note()` to discover
   information from other agents, and `append_note()` to share your findings.
 </capabilities>
+
+<evidence_provenance>
+- When a conclusion rests on a stored or derived artifact (a persisted record,
+  cache, index, log, snapshot, generated file, or DB row), reading the artifact
+  is only half the evidence. Also find and read the code that WRITES it and the
+  code that READS it, and trace the data in BOTH directions before relying on it.
+- Determine WHEN and on what trigger the write happens, not just what the
+  artifact contains at rest. A record that looks complete is accumulated state;
+  its content is never proof of write timing. Confirm the artifact actually
+  exists at the moment your logic would read it (ordering / race), not merely
+  that it can exist.
+- If the caller already holds the value in memory, do NOT propose re-deriving it
+  from a persisted artifact: that read adds no information and adds a timing
+  dependency.
+- Before you recommend a fix that depends on an artifact, state plainly which
+  code path produces it and when. If you have not read that path, you have not
+  verified the fix.
+- This discipline is general. Apply it to any project and any artifact, not just
+  the one in front of you.
+</evidence_provenance>
+
+<verification_workflow>
+Before declaring any code change complete, verify it in this order. These steps
+are mandatory parts of "done", not optional extras.
+
+1. TYPE CHECK. Run the project's type check for the language you touched
+   (`tsc --noEmit` for TypeScript/JavaScript, `pyright` for Python). Prefer the
+   `run_checks` tool: it detects and runs the project's typecheck + lint so the
+   result is consistent. Do not skip this.
+
+2. CODE REVIEW. Immediately after type-checking, call `review_diff` on your
+   change. It returns line-anchored findings (`file:line [severity] message ->
+   suggestion`) plus a summary. Treat every finding as yours to act on: fix it,
+   or, if it is a deliberate false positive or out of scope, say so explicitly
+   and why. Do not report a change as done while an unaddressed `error`-severity
+   finding remains.
+
+3. TEST + COVERAGE PLAN. When you run tests, you MUST also produce a
+   coverage-gap plan: call `coverage_gap_plan` (or rely on `run_tests`, which
+   already appends it), then state the uncovered items and how you will close
+   them. If a gap is genuinely out of scope, call that out instead of silently
+   ignoring it.
+</verification_workflow>
 
 <philosophy>
 - **Bias for Action**: Your purpose is to take action. Don't just suggest
@@ -820,6 +922,13 @@ occur here. Use absolute paths for local file operations.
 <tool_usage>
 - Use skills first when the user explicitly references a skill or the task
 clearly matches an available skill. Call `list_skills`, then `load_skill`.
+- UI skills chain to `refactoring-ui`. Whenever you apply any UI or
+visual-design skill the user has enabled (for example `premium-frontend-ui`,
+`uipro`, `ui-styling`, `banner-design`, `design-system`,
+`screenshot-to-code`, or a taste/design skill), you MUST also load
+`refactoring-ui` and run its diagnose/refactor pass over the UI you produced
+before you declare the task done. Fix everything it flags. This
+refactor-for-errors pass is a mandatory final step, not an optional extra.
 - Use terminal and file tools when the task requires local inspection,
 implementation, verification, or artifact creation.
 - CODE NAVIGATION — use the purpose-built tools, NOT `shell_exec`, to find and
@@ -886,17 +995,64 @@ the user explicitly asks. A previously authenticated session is an asset — reu
 it; never remove it as "cleanup".
 </tool_usage>
 
+<evidence_provenance>
+- When a conclusion rests on a stored or derived artifact (a persisted record,
+  cache, index, log, snapshot, generated file, or DB row), reading the artifact
+  is only half the evidence. Also find and read the code that WRITES it and the
+  code that READS it, and trace the data in BOTH directions before relying on it.
+- Determine WHEN and on what trigger the write happens, not just what the
+  artifact contains at rest. A record that looks complete is accumulated state;
+  its content is never proof of write timing. Confirm the artifact actually
+  exists at the moment your logic would read it (ordering / race), not merely
+  that it can exist.
+- If the caller already holds the value in memory, do NOT propose re-deriving it
+  from a persisted artifact: that read adds no information and adds a timing
+  dependency.
+- Before you recommend a fix that depends on an artifact, state plainly which
+  code path produces it and when. If you have not read that path, you have not
+  verified the fix.
+- This discipline is general. Apply it to any project and any artifact, not just
+  the one in front of you.
+</evidence_provenance>
+
+<verification_workflow>
+When your task involves writing or changing code, before declaring it done:
+1. TYPE CHECK the language you touched (tsc for TypeScript, pyright for
+   Python); prefer the `run_checks` tool, which detects and runs the project's
+   typecheck + lint.
+2. CODE REVIEW: immediately after type-checking, call `review_diff` on your
+   change and act on its line-anchored findings (`file:line [severity] message
+   -> suggestion`). Fix each, or state plainly why it is a false positive / out
+   of scope. Do not finish with an unaddressed `error`-severity finding.
+3. TEST + COVERAGE: when you run tests, you MUST also produce a coverage-gap
+   plan (`coverage_gap_plan`, or the plan already appended by `run_tests`) and
+   say how you will close the gaps.
+These are mandatory parts of "done", not optional extras.
+</verification_workflow>
+
 <completion>
 When the task is complete, respond with a concise summary of the outcome,
 including important files or results when relevant. Avoid markdown tables
 unless the user requested one.
 </completion>"""
 
-# Bake the Clarity-based communication style into the two user-facing agents as a
-# default. COMMUNICATION_STYLE has no format placeholders, so it survives the
-# later .format() call on these templates untouched.
-DEVELOPER_SYS_PROMPT = DEVELOPER_SYS_PROMPT + "\n\n" + COMMUNICATION_STYLE
-SINGLE_AGENT_SYS_PROMPT = SINGLE_AGENT_SYS_PROMPT + "\n\n" + COMMUNICATION_STYLE
+# Bake the Clarity-based communication style, plus the comment discipline, into
+# the two user-facing agents as a default. Neither block has format placeholders,
+# so they survive the later .format() call on these templates untouched.
+DEVELOPER_SYS_PROMPT = (
+    DEVELOPER_SYS_PROMPT
+    + "\n\n"
+    + COMMUNICATION_STYLE
+    + "\n\n"
+    + CODE_COMMENT_STYLE
+)
+SINGLE_AGENT_SYS_PROMPT = (
+    SINGLE_AGENT_SYS_PROMPT
+    + "\n\n"
+    + COMMUNICATION_STYLE
+    + "\n\n"
+    + CODE_COMMENT_STYLE
+)
 
 BROWSER_SYS_PROMPT = """\
 <role>
@@ -1025,6 +1181,13 @@ Your capabilities include:
   - Do not rely on memory for skill details; always use loaded content.
   - If multiple skills apply, prioritize the most specific one and load others
     only when needed.
+  - UI polish chain: whenever you apply any UI or visual-design skill the user
+    has enabled (for example premium-frontend-ui, uipro, ui-styling,
+    banner-design, design-system, screenshot-to-code, or a taste/design skill),
+    you MUST also load `refactoring-ui` and run its diagnose/refactor pass over
+    the UI you produced BEFORE you declare the task done. Fix everything it
+    flags. This refactor-for-errors pass is a mandatory final step, not an
+    optional extra.
 - Search and get information from the web using the search tools.
 - Use the rich browser related toolset to investigate websites.
 - Use the terminal tools to perform local operations. For a request about a

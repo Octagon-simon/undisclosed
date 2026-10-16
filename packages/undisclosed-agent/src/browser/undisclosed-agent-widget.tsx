@@ -42,6 +42,8 @@ export interface AgentPanelHandle {
   isHistoryOpen(): boolean;
   showStats(): void;
   showMemory(): void;
+  /** Show the Automations (triggers) screen. */
+  showTriggers(): void;
   showModels(): void;
   showSettings(): void;
   showBrowser(): void;
@@ -325,6 +327,9 @@ export class UndisclosedAgentWidget extends BaseWidget {
   }
   showMemory(): void {
     this.handle?.showMemory();
+  }
+  showTriggers(): void {
+    this.handle?.showTriggers();
   }
   showModels(): void {
     this.handle?.showModels();

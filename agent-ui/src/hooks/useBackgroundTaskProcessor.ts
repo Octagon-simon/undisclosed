@@ -36,6 +36,59 @@ interface ActiveBackgroundTask {
 }
 
 /**
+ * Decide *why* a project's chat activity blocks starting a queued trigger task.
+ * Returns a human-readable reason, or `null` if the project is free.
+ *
+ * Returning the reason instead of a bare boolean lets the skip breadcrumb name
+ * the exact clause that matched, so a pending execution that never runs is
+ * diagnosable straight from the panel devtools.
+ */
+function getBusyReason(
+  chatStores: Record<string, { getState: () => any }>
+): string | null {
+  for (const cs of Object.values(chatStores || {})) {
+    const state = cs.getState();
+    for (const [taskId, raw] of Object.entries(state.tasks || {})) {
+      const t = raw as {
+        status?: string;
+        messages?: Array<{ step?: string; isConfirm?: boolean }>;
+        hasWaitComfirm?: boolean;
+        isTakeControl?: boolean;
+      };
+      const messages = t.messages || [];
+      if (t.status === ChatTaskStatus.RUNNING) {
+        return `task ${taskId} RUNNING`;
+      }
+      if (t.status === ChatTaskStatus.PAUSE) {
+        return `task ${taskId} PAUSED`;
+      }
+      if (
+        messages.some(
+          (m) => m.step === AgentStep.TO_SUB_TASKS && !m.isConfirm
+        )
+      ) {
+        return `task ${taskId} splitting (to_sub_tasks unconfirmed)`;
+      }
+      // skeleton/computing phase — only while the task is still live. Without
+      // the FINISHED guard a completed task (messages present, no to_sub_tasks
+      // step) read as "running" forever, permanently starving queued triggers.
+      if (
+        t.status !== ChatTaskStatus.FINISHED &&
+        !messages.find((m) => m.step === AgentStep.TO_SUB_TASKS) &&
+        !t.hasWaitComfirm &&
+        messages.length > 0
+      ) {
+        return `task ${taskId} skeleton/computing (status=${t.status}, ${messages.length} msgs)`;
+      }
+      if (t.isTakeControl) {
+        return `task ${taskId} user take-control`;
+      }
+    }
+  }
+  return null;
+}
+
+/**
  * Hook that processes background tasks from project queuedMessages.
  * Supports trigger tasks (with executionId) and can be extended for other task types.
  *
@@ -49,6 +102,21 @@ export function useBackgroundTaskProcessor() {
   const activeTasksRef = useRef<Map<string, ActiveBackgroundTask>>(new Map());
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isProcessingRef = useRef(false);
+  // Last skip reason logged per project. Deduped so the 2s poll does not flood
+  // the console with the same "skipping" line while a project stays blocked.
+  const lastSkipRef = useRef<Map<string, string>>(new Map());
+
+  // Breadcrumb a skipped/deferred project exactly once per distinct reason.
+  const logSkip = useCallback((key: string, reason: string) => {
+    if (lastSkipRef.current.get(key) === reason) return;
+    lastSkipRef.current.set(key, reason);
+    console.log(
+      '[BackgroundTaskProcessor] Skipping project',
+      key,
+      '-',
+      reason
+    );
+  }, []);
 
   const processOneTask = useCallback(async () => {
     if (isProcessingRef.current) return;
@@ -76,42 +144,16 @@ export function useBackgroundTaskProcessor() {
           activeTasksRef.current.values()
         ).some((t) => t.projectId === project.id);
         if (hasActiveBackgroundTask) {
-          console.log(
-            '[BackgroundTaskProcessor] Skipping project',
-            project.id,
-            '- already has an active background task'
-          );
+          logSkip(project.id, 'already has an active background task');
           continue;
         }
 
-        // Also check if any chat in this project has a running/paused task
-        const hasRunningChatTask = Object.values(
-          projectData.chatStores || {}
-        ).some((cs) => {
-          const state = cs.getState();
-          return Object.values(state.tasks).some(
-            (t) =>
-              t.status === ChatTaskStatus.RUNNING ||
-              t.status === ChatTaskStatus.PAUSE ||
-              // splitting phase
-              t.messages.some(
-                (m) => m.step === AgentStep.TO_SUB_TASKS && !m.isConfirm
-              ) ||
-              // skeleton/computing phase
-              (!t.messages.find((m) => m.step === AgentStep.TO_SUB_TASKS) &&
-                !t.hasWaitComfirm &&
-                t.messages.length > 0) ||
-              t.isTakeControl
-          );
-        });
-
-        if (hasRunningChatTask) {
-          console.log(
-            '[BackgroundTaskProcessor] Skipping project',
-            project.id,
-            '- has a running/paused chat task',
-            hasRunningChatTask
-          );
+        // Also check if any chat in this project has a running/paused task.
+        // getBusyReason names the exact clause that matched, so the skip breadcrumb
+        // is diagnosable instead of a bare boolean.
+        const busyReason = getBusyReason(projectData.chatStores || {});
+        if (busyReason) {
+          logSkip(project.id, `has a running/paused chat task: ${busyReason}`);
           continue;
         }
 
@@ -141,11 +183,7 @@ export function useBackgroundTaskProcessor() {
             );
             closeSSEConnectionsForTasks(allTaskIds);
           } else {
-            console.log(
-              '[BackgroundTaskProcessor] Skipping project',
-              project.id,
-              '- SSE active, task still in progress'
-            );
+            logSkip(project.id, 'SSE active, task still in progress');
           }
           continue;
         }
@@ -169,7 +207,29 @@ export function useBackgroundTaskProcessor() {
         }
       }
 
-      if (!messageToProcess) return;
+      if (!messageToProcess) {
+        // Nothing startable this poll. Two distinct cases, both diagnostic:
+        //  - trigger messages queued but all marked `processing`: a pass is
+        //    mid-flight, so log which executions are in flight.
+        //  - queue fully drained: clear dedupe state so the next real skip logs.
+        const inFlight = projects.flatMap((p) => {
+          const pd = projectStore.getProjectById(p.id);
+          return (pd?.queuedMessages || [])
+            .filter((m) => m.executionId && m.processing)
+            .map((m) => `${m.executionId}@${p.id}`);
+        });
+        if (inFlight.length) {
+          logSkip(
+            '__in_flight__',
+            `${inFlight.length} trigger execution(s) already in flight: ${inFlight.join(
+              ', '
+            )}`
+          );
+        } else {
+          lastSkipRef.current.clear();
+        }
+        return;
+      }
 
       const {
         projectId,
@@ -196,6 +256,10 @@ export function useBackgroundTaskProcessor() {
       });
 
       projectStore.markQueuedMessageAsProcessing(projectId, task_id);
+
+      // This project is no longer skipped; reset its dedupe so a future skip
+      // (after this task finishes) logs again.
+      lastSkipRef.current.delete(projectId);
 
       console.log(
         '[BackgroundTaskProcessor] Marked message as processing:',
@@ -322,7 +386,7 @@ export function useBackgroundTaskProcessor() {
     } finally {
       isProcessingRef.current = false;
     }
-  }, [projectStore, triggerTaskStore]);
+  }, [projectStore, triggerTaskStore, logSkip]);
 
   const checkCompletedTasks = useCallback(() => {
     const toRemove: string[] = [];

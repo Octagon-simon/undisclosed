@@ -56,6 +56,9 @@ export default function AgentPanelHistory({
   );
   const activeSpaceId = useSpaceStore((s) => s.activeSpaceId);
   const projectsBySpaceId = useSpaceStore((s) => s.projectsBySpaceId);
+  const lastVisitedProjectBySpace = useSpaceStore(
+    (s) => s.lastVisitedProjectBySpace
+  );
   const {
     pinnedProjectIds,
     handlePinProject,
@@ -102,10 +105,26 @@ export default function AgentPanelHistory({
     }
   }, [activeSpaceId, isRefreshing]);
 
-  const projectMetas = useMemo(
-    () => getVisibleProjectMetasForSpace(projectsBySpaceId, activeSpaceId),
-    [projectsBySpaceId, activeSpaceId]
-  );
+  // Order the conversation list by recency. `getVisibleProjectMetasForSpace`
+  // returns creation order, which is wrong for a history list: a long-lived
+  // chat you just sent a message in would sink below a fresh, empty one.
+  // Float the folder's last-visited chat to the very top (that is the one the
+  // user last opened), then order the rest newest-activity-first using the
+  // server's project `updated_at` (bumped as turns land), falling back to
+  // creation time when a project has no server timestamp yet.
+  const projectMetas = useMemo(() => {
+    const lastVisitedProjectId = activeSpaceId
+      ? lastVisitedProjectBySpace[activeSpaceId]
+      : undefined;
+    return getVisibleProjectMetasForSpace(
+      projectsBySpaceId,
+      activeSpaceId
+    ).sort((a, b) => {
+      if (a.id === lastVisitedProjectId) return -1;
+      if (b.id === lastVisitedProjectId) return 1;
+      return (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt);
+    });
+  }, [projectsBySpaceId, activeSpaceId, lastVisitedProjectBySpace]);
 
   const navProjects = useMemo(
     () =>

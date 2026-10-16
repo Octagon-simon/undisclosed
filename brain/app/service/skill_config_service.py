@@ -24,6 +24,7 @@ from pathlib import Path
 from app.service.skill_service import (
     example_skills_metadata,
     get_example_skills_root,
+    is_example_skill_dir,
 )
 
 logger = logging.getLogger("skill_config")
@@ -194,7 +195,24 @@ def skill_config_init(
     try:
         for skill in example_skills_metadata():
             skill_name = skill["name"]
-            if skill_name in config["skills"]:
+            skill_dir_name = skill.get("skillDirName")
+            entry = config["skills"].get(skill_name)
+            if entry is not None:
+                # Backfill example status for skills that already had a config
+                # entry before they became bundled examples (e.g. a skill the
+                # user imported personally that we later shipped). Without this
+                # the stale isExample flag keeps them under "Yours" instead of
+                # "Examples", and the toggle there never dims them.
+                if (
+                    not entry.get("isExample")
+                    and skill_dir_name
+                    and is_example_skill_dir(skill_dir_name)
+                ):
+                    entry["isExample"] = True
+                    changed = True
+                    logger.info(
+                        "Marked bundled example skill: %s", skill_name
+                    )
                 continue
             config["skills"][skill_name] = {
                 "enabled": True,

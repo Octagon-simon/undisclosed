@@ -52,7 +52,7 @@ export function LiveReasoning() {
         <div
           ref={bodyRef}
           onScroll={handleScroll}
-          className="mt-1 max-h-40 overflow-y-auto overscroll-contain whitespace-pre-wrap text-label-xs leading-relaxed text-ds-text-neutral-subtle-default"
+          className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap text-label-xs leading-relaxed text-ds-text-neutral-subtle-default"
         >
           {reasoning}
         </div>

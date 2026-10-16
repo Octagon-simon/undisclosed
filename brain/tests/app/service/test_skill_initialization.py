@@ -237,3 +237,84 @@ def test_skill_toolkit_normalizes_selected_single_agent_aliases():
     assert agent_skill_toolkit._is_agent_allowed(
         "demo", "single_agent", config
     )
+
+
+def test_parse_skill_frontmatter_keeps_inline_description():
+    content = "\n".join(
+        [
+            "---",
+            "name: plain",
+            'description: "A single-line description."',
+            "---",
+            "",
+            "Body.",
+        ]
+    )
+    assert skill_service._parse_skill_frontmatter(content) == {
+        "name": "plain",
+        "description": "A single-line description.",
+    }
+
+
+def test_parse_skill_frontmatter_reads_folded_block_description():
+    content = "\n".join(
+        [
+            "---",
+            "name: hyperframes",
+            "description: >",
+            "  Mandatory entry point: read this first for any request to make,",
+            "  create, edit, animate, or render a video.",
+            "---",
+            "",
+            "Body.",
+        ]
+    )
+    assert skill_service._parse_skill_frontmatter(content) == {
+        "name": "hyperframes",
+        "description": (
+            "Mandatory entry point: read this first for any request to make, "
+            "create, edit, animate, or render a video."
+        ),
+    }
+
+
+def test_parse_skill_frontmatter_reads_literal_block_description():
+    content = "\n".join(
+        [
+            "---",
+            "name: literal",
+            "description: |",
+            "  line one",
+            "  line two",
+            "---",
+        ]
+    )
+    assert skill_service._parse_skill_frontmatter(content) == {
+        "name": "literal",
+        "description": "line one\nline two",
+    }
+
+
+def test_parse_skill_frontmatter_block_scalar_stops_at_dedent():
+    # The folded block must end at the next dedented key, not swallow it.
+    content = "\n".join(
+        [
+            "---",
+            "name: dedent",
+            "description: >",
+            "  first line",
+            "",
+            "  second line",
+            "tags: [a, b]",
+            "---",
+        ]
+    )
+    assert skill_service._parse_skill_frontmatter(content) == {
+        "name": "dedent",
+        "description": "first line second line",
+    }
+
+
+def test_parse_skill_frontmatter_returns_none_without_description():
+    content = "\n".join(["---", "name: only-name", "---"])
+    assert skill_service._parse_skill_frontmatter(content) is None

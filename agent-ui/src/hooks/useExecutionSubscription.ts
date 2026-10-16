@@ -12,10 +12,13 @@
 // limitations under the License.
 // ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
 
+import { getDefaultBrainEndpoint } from '@/api/http';
+import { getOpenFolderRoot } from '@/lib/openFolder';
 import { queryClient, queryKeys } from '@/lib/queryClient';
 import { proxyFetchTriggerConfig } from '@/service/triggerApi';
 import { ActivityType, useActivityLogStore } from '@/store/activityLogStore';
 import { useAuthStore } from '@/store/authStore';
+import { getConnectionConfig } from '@/store/connectionStore';
 import { useTriggerStore } from '@/store/triggerStore';
 import { ExecutionStatus, ExecutionType, TriggerType } from '@/types';
 import { useCallback, useEffect, useRef } from 'react';
@@ -36,6 +39,17 @@ interface ExecutionCreatedMessage {
   input_data: any;
   user_id: number;
   project_id: string;
+  /**
+   * Folder-space the trigger belongs to. Optional for backwards compatibility
+   * with an older brain that didn't send it; when present the executor uses it
+   * to run the task in the trigger's own space instead of the active one.
+   */
+  space_id?: string | null;
+  /**
+   * Root path of the trigger's folder-space. Optional; when present the client
+   * uses it to decide whether THIS window owns the trigger.
+   */
+  space_root?: string | null;
   timestamp: string;
   task_prompt?: string;
 }
@@ -48,6 +62,8 @@ interface ExecutionUpdatedMessage {
   updated_fields: string[];
   user_id: number;
   project_id: string;
+  space_id?: string | null;
+  space_root?: string | null;
   timestamp: string;
   task_prompt?: string;
 }
@@ -230,9 +246,29 @@ export function useExecutionSubscription(enabled: boolean = true) {
     setWsConnectionStatusRef.current('connecting');
 
     try {
-      const baseURL = import.meta.env.DEV
-        ? import.meta.env.VITE_PROXY_URL
-        : import.meta.env.VITE_BASE_URL;
+      // The execution-subscribe WS is served by the BRAIN, and the editor's
+      // `/api` proxy only answers plain HTTP (it never handles the WS upgrade),
+      // so dial the brain origin directly. Prefer the runtime-injected brain
+      // endpoint: the embed supplies it via mountAgentPanel and the build envs
+      // are unset there, so the old `import.meta.env.VITE_PROXY_URL` was
+      // `undefined` -> throw -> the socket stayed "disconnected" forever, which
+      // dimmed AND disabled the whole trigger list (`pointer-events-none`).
+      const baseURL = (
+        getConnectionConfig().brainEndpoint ||
+        getDefaultBrainEndpoint() ||
+        (import.meta.env.DEV
+          ? import.meta.env.VITE_PROXY_URL
+          : import.meta.env.VITE_BASE_URL) ||
+        ''
+      ).replace(/\/+$/, '');
+
+      if (!baseURL) {
+        console.warn(
+          '[ExecutionSubscription] No brain endpoint configured — cannot subscribe'
+        );
+        setWsConnectionStatusRef.current('disconnected');
+        return;
+      }
 
       // Convert http/https to ws/wss
       const wsProtocol = baseURL.startsWith('https') ? 'wss' : 'ws';
@@ -260,6 +296,11 @@ export function useExecutionSubscription(enabled: boolean = true) {
           type: 'subscribe',
           session_id: sessionIdRef.current,
           auth_token: token, // ⚠️ Remove "Bearer " prefix
+          // Announce this window's open folder so the brain routes execution
+          // events to the ONE editor that owns the trigger's folder, instead of
+          // fanning them out to every open window (which made a trigger fire in
+          // all of them at once).
+          space_root: getOpenFolderRoot() || undefined,
         };
 
         ws.send(JSON.stringify(subscribeMessage));
@@ -326,6 +367,8 @@ export function useExecutionSubscription(enabled: boolean = true) {
                 // New fields for programmatic task execution
                 triggerType: message.trigger_type,
                 projectId: message.project_id, // Future: triggers will be associated with projects
+                spaceId: message.space_id ?? null,
+                spaceRoot: message.space_root ?? null,
                 inputData: message.input_data || {},
               });
               break;

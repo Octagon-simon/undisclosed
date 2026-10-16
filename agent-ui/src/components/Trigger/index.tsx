@@ -22,15 +22,21 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { TooltipSimple } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
+import { proxyFetchWorkspaceTriggers } from '@/service/triggerApi';
+import { useProjectStore } from '@/store/projectStore';
+import { useSpaceStore } from '@/store/spaceStore';
 import { useTriggerStore } from '@/store/triggerStore';
 import {
   ArrowUpDown,
   Plus,
+  RefreshCw,
   SquareChevronRight,
   SquareCode,
 } from 'lucide-react';
-import { useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { toast } from 'sonner';
+import type { Trigger } from '@/types';
 import Overview, { sortTriggersList, type TriggerSortKey } from './Triggers';
 
 type TriggerPanelProps = {
@@ -57,7 +63,52 @@ export default function TriggerPanel({
   onDialogOpenChange,
 }: TriggerPanelProps) {
   const { t } = useTranslation();
-  const { wsConnectionStatus, triggers } = useTriggerStore();
+  const { triggers, setTriggers } = useTriggerStore();
+  const activeProjectId = useProjectStore((state) => state.activeProjectId);
+  const activeSpaceId = useSpaceStore((state) => state.activeSpaceId);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Fetch the ACTIVE WORKSPACE's triggers. Automations are attached either to
+  // the whole folder-space (visible across every conversation in it) or to one
+  // conversation. We never fall back to a global, unscoped list: an unscoped
+  // call would leak another workspace's triggers into this screen. Within the
+  // workspace we show the workspace-scoped triggers plus the conversation-scoped
+  // ones that belong to the conversation currently open.
+  const refreshTriggers = useCallback(async () => {
+    if (!activeSpaceId) {
+      setTriggers([]);
+      return;
+    }
+    setIsRefreshing(true);
+    try {
+      const response = await proxyFetchWorkspaceTriggers(
+        activeSpaceId,
+        undefined,
+        undefined,
+        1,
+        200
+      );
+      const items = ((response.items || []) as Trigger[]).filter(
+        (trigger: Trigger) =>
+          trigger.scope === 'workspace' ||
+          trigger.project_id === activeProjectId
+      );
+      setTriggers(items);
+    } catch (error) {
+      console.error('Failed to fetch triggers:', error);
+      toast.error(
+        t('triggers.failed-to-load', { defaultValue: 'Failed to load triggers' })
+      );
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [activeSpaceId, activeProjectId, setTriggers, t]);
+
+  // Refresh on entry (mount) and whenever the active project changes. This is
+  // the "refresh on page enter" behaviour for the Automations screen.
+  useEffect(() => {
+    void refreshTriggers();
+  }, [refreshTriggers]);
 
   const sortedTriggersForHeader = useMemo(
     () => sortTriggersList(triggers, sortBy),
@@ -89,6 +140,24 @@ export default function TriggerPanel({
           <span className="truncate">{t('triggers.title')}</span>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          <TooltipSimple
+            content={t('triggers.refresh', { defaultValue: 'Refresh' })}
+            variant="instant"
+            side="bottom"
+          >
+            <Button
+              variant="ghost"
+              size="icon"
+              className="opacity-70"
+              aria-label={t('triggers.refresh', { defaultValue: 'Refresh' })}
+              disabled={isRefreshing}
+              onClick={() => void refreshTriggers()}
+            >
+              <RefreshCw
+                className={cn('h-4 w-4', isRefreshing && 'animate-spin')}
+              />
+            </Button>
+          </TooltipSimple>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
@@ -159,22 +228,26 @@ export default function TriggerPanel({
             selectedTrigger={null}
             isOpen={isDialogOpen}
             onOpenChange={onDialogOpenChange}
+            onTriggerCreated={() => void refreshTriggers()}
           />
         </div>
       </div>
-      <div
-        className={cn(
-          'min-h-0 w-full flex-1',
-          wsConnectionStatus === 'disconnected' &&
-            'pointer-events-none opacity-50 grayscale'
-        )}
-      >
+      {/* The list is backed by the REST API (`/api/v1/trigger/*`), NOT the
+          execution WebSocket, so it must stay interactive even when the live
+          event socket is down. Gating it on `wsConnectionStatus` greyed out the
+          whole list and killed pointer events with `pointer-events-none` — and
+          because the EMBEDDED panel never runs `useExecutionSubscription`, the
+          status stayed 'disconnected' forever, leaving Automations permanently
+          read-only (rows unclickable, no Slack select, no webhook copy). The
+          socket input is gone; interactivity no longer depends on it. */}
+      <div className="min-h-0 w-full flex-1">
         <Overview
           sortBy={sortBy}
           selectedTriggerId={selectedTriggerId}
           onSelectedTriggerIdChange={onSelectedTriggerIdChange}
           isExecutionLogsOpen={isExecutionLogsOpen}
           onExecutionLogsOpenChange={onExecutionLogsOpenChange}
+          onRefresh={refreshTriggers}
         />
       </div>
     </div>

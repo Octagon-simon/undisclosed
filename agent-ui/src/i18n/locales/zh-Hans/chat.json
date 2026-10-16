@@ -64,6 +64,7 @@
   "splitting-tasks": "拆分任务",
   "working-on-tasks-for": "正在处理任务 · <elapsed>{{time}}</elapsed>",
   "worked-for": "已工作 <elapsed>{{time}}</elapsed>",
+  "working-for": "正在工作 <elapsed>{{time}}</elapsed>",
   "start-task": "立即执行",
   "auto-start-in": "{{seconds}}秒后自动开始",
   "message-cannot-be-empty": "消息不能为空",

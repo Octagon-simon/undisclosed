@@ -29,6 +29,7 @@ export type EmbedScreen =
   | 'stats'
   | 'skills'
   | 'connectors'
+  | 'triggers'
   | 'memory'
   | 'models'
   | 'settings'

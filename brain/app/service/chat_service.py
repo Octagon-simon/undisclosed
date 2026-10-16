@@ -460,9 +460,18 @@ def build_context_for_workforce(
 
 
 @sync_step
-async def step_solve(options: Chat, request: Request, task_lock: TaskLock):
+async def step_solve(
+    options: Chat,
+    request: Request,
+    task_lock: TaskLock,
+    stream_id: str | None = None,
+):
     """Main task execution loop. Called when POST /chat endpoint
     is hit to start a new chat session.
+
+    ``stream_id`` identifies this consumer's generation on the task lock. When a
+    newer stream attaches to the same project, ``task_lock.active_stream_id``
+    changes and this loop exits, so only one consumer ever drains the queue.
 
     Processes task queue, manages workforce lifecycle, and streams
     responses back to the client via SSE.
@@ -534,7 +543,7 @@ async def step_solve(options: Chat, request: Request, task_lock: TaskLock):
 
     if options.session_mode == "single-agent":
         async for chunk in single_agent_solve(
-            options, request, task_lock, hands=hands
+            options, request, task_lock, hands=hands, stream_id=stream_id
         ):
             yield chunk
         return
@@ -548,6 +557,26 @@ async def step_solve(options: Chat, request: Request, task_lock: TaskLock):
                 "task_id": options.task_id,
             },
         )
+
+        if (
+            stream_id is not None
+            and getattr(task_lock, "active_stream_id", None) != stream_id
+        ):
+            # A newer stream attached to this project (client re-attach after a
+            # dead stream). End this consumer WITHOUT deleting the task lock —
+            # the new consumer owns it and must keep draining the queue.
+            logger.info(
+                "[LIFECYCLE] Stream superseded by newer attach; ending this consumer",
+                extra={
+                    "project_id": options.project_id,
+                    "stream_id": stream_id,
+                },
+            )
+            if workforce is not None and workforce._running:
+                workforce.stop()
+                workforce.stop_gracefully()
+            task_lock.status = Status.confirming
+            break
 
         if await request.is_disconnected():
             logger.warning("=" * 80)
@@ -604,6 +633,25 @@ async def step_solve(options: Chat, request: Request, task_lock: TaskLock):
             )
             # Continue waiting instead of breaking on queue error
             continue
+
+        if (
+            stream_id is not None
+            and getattr(task_lock, "active_stream_id", None) != stream_id
+        ):
+            # Superseded after dequeue: hand the item back for the new consumer.
+            logger.info(
+                "[LIFECYCLE] Stream superseded after dequeue; requeueing item",
+                extra={
+                    "project_id": options.project_id,
+                    "stream_id": stream_id,
+                },
+            )
+            await task_lock.put_queue(item)
+            if workforce is not None and workforce._running:
+                workforce.stop()
+                workforce.stop_gracefully()
+            task_lock.status = Status.confirming
+            break
 
         try:
             if item.action == Action.improve or start_event_loop:

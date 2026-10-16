@@ -117,6 +117,14 @@ export enum TriggerStatus {
   Active = 'active',
 }
 
+/**
+ * Where a trigger is attached. `workspace` ties it to the folder-space and it
+ * stays visible across every conversation in that folder; `conversation` ties
+ * it to a single project. Workspace scope survives deleting the conversation a
+ * trigger was created from.
+ */
+export type TriggerScope = 'workspace' | 'conversation';
+
 export enum ListenerType {
   Workforce = 'workforce',
 }
@@ -147,6 +155,7 @@ export type Trigger = {
   name: string;
   space_id?: string;
   project_id?: string;
+  scope?: TriggerScope;
   description: string;
   trigger_type: TriggerType;
   status: TriggerStatus;
@@ -176,6 +185,7 @@ export type TriggerInput = {
   description?: string;
   space_id?: string;
   project_id?: string;
+  scope?: TriggerScope;
   trigger_type: TriggerType;
   custom_cron_expression?: string;
   webhook_url?: string;

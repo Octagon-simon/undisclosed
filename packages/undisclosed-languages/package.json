@@ -11,10 +11,10 @@
     }
   ],
   "dependencies": {
-    "@theia/core": "1.60.0",
-    "@theia/filesystem": "1.60.0",
-    "@theia/monaco": "1.60.0",
-    "@theia/monaco-editor-core": "1.96.302"
+    "@theia/core": "1.76.0",
+    "@theia/filesystem": "1.76.0",
+    "@theia/monaco": "1.76.0",
+    "@theia/monaco-editor-core": "1.108.201"
   },
   "devDependencies": {
     "typescript": "~5.4.5"

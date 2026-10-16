@@ -13,6 +13,7 @@
 // ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
 
 import {
+  getDefaultBrainEndpoint,
   proxyFetchDelete,
   proxyFetchGet,
   proxyFetchPost,
@@ -23,6 +24,7 @@ import {
   recordScheduledTriggerCreated,
 } from '@/lib/events/appEvents';
 import { ActivityType, useActivityLogStore } from '@/store/activityLogStore';
+import { getConnectionConfig } from '@/store/connectionStore';
 import {
   ExecutionStatus,
   SkipReason,
@@ -32,6 +34,37 @@ import {
   TriggerType,
   TriggerUpdate,
 } from '@/types';
+
+/**
+ * Absolute, copy-pasteable URL for a trigger's inbound webhook.
+ *
+ * `relativePath` is the `webhook_url` the backend hands back (e.g.
+ * `/api/v1/webhook/<token>`) — an inbound route served by the BRAIN itself and
+ * mounted WITHOUT the brain-auth dependency, so an external caller's tokenless
+ * POST reaches it. It must therefore resolve against the brain origin DIRECTLY:
+ *
+ *  - the editor's own `/api` proxy 403s a tokenless POST, so pointing at the
+ *    panel's proxy/page origin hands out a URL that never authenticates; and
+ *  - in the packaged app the panel runs from a `file://` page, so the old
+ *    `window.location.origin` fallback rendered `file:///api/v1/webhook/...`,
+ *    which resolves to nothing.
+ *
+ * Prefer the runtime-injected brain endpoint (the embed supplies it via
+ * `mountAgentPanel`); fall back to the build env, then the dev default.
+ */
+export const resolveWebhookUrl = (relativePath: string): string => {
+  // Already absolute (e.g. a cloud deployment hands back a full URL) — leave it.
+  if (/^https?:\/\//i.test(relativePath)) {
+    return relativePath;
+  }
+  const path = relativePath.startsWith('/') ? relativePath : `/${relativePath}`;
+  const base = (
+    getConnectionConfig().brainEndpoint ||
+    getDefaultBrainEndpoint() ||
+    ''
+  ).replace(/\/+$/, '');
+  return `${base}${path}`;
+};
 
 // Helper function to update or add execution log
 const updateExecutionLog = (
@@ -132,6 +165,46 @@ export const proxyFetchProjectTriggers = async (
     return res;
   } catch (error) {
     console.error('Failed to fetch triggers:', error);
+    throw error;
+  }
+};
+
+/**
+ * Fetch every trigger filed under a folder-space (workspace), regardless of
+ * which conversation is active. This is the workspace-scoped listing: it
+ * returns both workspace-scoped triggers and any conversation-scoped triggers
+ * living in the same folder. The caller narrows to what it wants to show.
+ */
+export const proxyFetchWorkspaceTriggers = async (
+  space_id: string | null,
+  triggerType?: TriggerType,
+  status?: TriggerStatus,
+  page: number = 1,
+  size: number = 200
+) => {
+  try {
+    if (!space_id) {
+      throw new Error('Space ID is required to fetch workspace triggers.');
+    }
+
+    const params: Record<string, any> = {
+      page,
+      size,
+      space_id,
+    };
+
+    if (triggerType !== undefined) {
+      params.trigger_type = triggerType;
+    }
+
+    if (status !== undefined) {
+      params.status = status;
+    }
+
+    const res = await proxyFetchGet(`/api/v1/trigger/`, params);
+    return res;
+  } catch (error) {
+    console.error('Failed to fetch workspace triggers:', error);
     throw error;
   }
 };

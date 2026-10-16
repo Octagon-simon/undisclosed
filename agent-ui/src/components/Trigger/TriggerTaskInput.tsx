@@ -43,6 +43,9 @@ export const TriggerTaskInput: React.FC<TriggerTaskInputProps> = ({
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder || t('triggers.task-prompt-placeholder')}
       className="min-h-[100px] flex-1 resize-none"
+      // The enhanced variant's default state is border-transparent, so the task
+      // prompt read as a borderless block. Give the field box a visible border.
+      containerClassName="border-ds-border-neutral-default-default"
       state={state}
       note={note}
       maxLength={1500}

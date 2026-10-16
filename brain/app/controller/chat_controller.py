@@ -18,6 +18,7 @@ import inspect
 import logging
 import os
 import time
+import uuid
 from dataclasses import replace
 from pathlib import Path
 
@@ -83,6 +84,12 @@ chat_logger = logging.getLogger("chat_controller")
 
 # SSE timeout configuration (60 minutes in seconds)
 SSE_TIMEOUT_SECONDS = 60 * 60
+
+# Idle heartbeat interval for live chat streams. A comment/`sync` tick keeps a
+# healthy-but-idle session from tripping SSE_TIMEOUT_SECONDS and stops
+# intermediaries from dropping a quiet connection. Kept comfortably below the
+# timeout so several heartbeats fire before the hard close.
+SSE_HEARTBEAT_SECONDS = 20
 
 # CAMEL reads this as a process-level logging toggle, not as per-run state.
 os.environ.setdefault("CAMEL_MODEL_LOG_ENABLED", "true")
@@ -317,33 +324,68 @@ async def timeout_stream_wrapper(
     stream_generator,
     timeout_seconds: int = SSE_TIMEOUT_SECONDS,
     task_lock=None,
+    heartbeat_seconds: int = SSE_HEARTBEAT_SECONDS,
 ):
-    """Wraps a stream generator with timeout handling.
+    """Wraps a stream generator with idle-timeout handling and heartbeats.
 
-    Closes the SSE connection if no data is received within the timeout period.
-    Triggers cleanup if timeout occurs to prevent resource leaks.
+    Emits a lightweight `sync` heartbeat whenever the wrapped generator is
+    silent for ``heartbeat_seconds`` so a healthy-but-idle session stays alive
+    (no false ``SSE_TIMEOUT_SECONDS`` close) and the client can distinguish a
+    live stream from a dead one. The connection is closed only after
+    ``timeout_seconds`` of *true* silence; a completed session with
+    conversation history keeps its task lock so a later re-attach still has
+    context.
+
+    The wrapped generator is advanced through a single reusable Task so a
+    heartbeat tick never cancels an in-flight ``__anext__`` — a plain
+    ``asyncio.wait_for`` on the short heartbeat interval would cancel (and
+    therefore kill) a long-running tool round on every tick.
     """
     last_data_time = time.time()
     generator = stream_generator.__aiter__()
     cleanup_triggered = False
+    pending: asyncio.Task | None = None
+    heartbeat_interval = max(0.001, min(heartbeat_seconds, timeout_seconds))
 
     try:
         while True:
+            if pending is None:
+                pending = asyncio.ensure_future(generator.__anext__())
+
             elapsed = time.time() - last_data_time
             remaining_timeout = timeout_seconds - elapsed
+            tick = max(0.001, min(heartbeat_interval, remaining_timeout))
 
-            try:
-                data = await asyncio.wait_for(
-                    generator.__anext__(), timeout=remaining_timeout
-                )
+            done, _ = await asyncio.wait({pending}, timeout=tick)
+
+            if pending in done:
+                try:
+                    data = pending.result()
+                except StopAsyncIteration:
+                    pending = None
+                    break
+                pending = None
                 last_data_time = time.time()
                 yield data
-            except TimeoutError:
+                continue
+
+            # Underlying generator produced nothing within this tick.
+            if time.time() - last_data_time >= timeout_seconds:
                 chat_logger.warning(
                     "SSE timeout: No data received, closing connection",
                     extra={"timeout_seconds": timeout_seconds},
                 )
                 timeout_min = timeout_seconds // 60
+                if _should_preserve_task_lock_on_cancel(task_lock):
+                    chat_logger.info(
+                        "[TIMEOUT] Preserving completed task lock for"
+                        " follow-up context",
+                        extra={"task_id": getattr(task_lock, "id", None)},
+                    )
+                else:
+                    cleanup_triggered = await _cleanup_task_lock_safe(
+                        task_lock, "TIMEOUT"
+                    )
                 yield sse_json(
                     "error",
                     {
@@ -352,17 +394,18 @@ async def timeout_stream_wrapper(
                         " minutes"
                     },
                 )
-                cleanup_triggered = await _cleanup_task_lock_safe(
-                    task_lock, "TIMEOUT"
-                )
                 break
-            except StopAsyncIteration:
-                break
+
+            # Healthy but idle: keep the stream warm for the client and any
+            # proxy that would otherwise reap a quiet connection.
+            yield sse_json("sync", {"heartbeat": True})
 
     except asyncio.CancelledError:
         chat_logger.info(
             "[STREAM-CANCELLED] Stream cancelled, triggering cleanup"
         )
+        if pending is not None and not pending.done():
+            pending.cancel()
         if _should_preserve_task_lock_on_cancel(task_lock):
             chat_logger.info(
                 "[STREAM-CANCELLED] Preserving completed task lock for follow-up context",
@@ -381,6 +424,9 @@ async def timeout_stream_wrapper(
         if not cleanup_triggered:
             await _cleanup_task_lock_safe(task_lock, "ERROR")
         raise
+    finally:
+        if pending is not None and not pending.done():
+            pending.cancel()
 
 
 async def start_chat_stream(data: Chat, request: Request):
@@ -391,16 +437,28 @@ async def start_chat_stream(data: Chat, request: Request):
     # TODO(brain-auth): Phase B should derive canonical user_id from
     # request.state.brain_auth, then verify/replace Chat.email before any
     # workspace snapshot, artifact path, or task lock is resolved.
+    is_resume = bool(getattr(data, "resume", False))
     chat_logger.info(
-        "Starting new chat session",
+        "Resuming chat session stream"
+        if is_resume
+        else "Starting new chat session",
         extra={
             "project_id": data.project_id,
             "task_id": data.task_id,
             "user": data.email,
+            "resume": is_resume,
         },
     )
 
     task_lock = get_or_create_task_lock(data.project_id)
+
+    # Bump the per-project stream generation. A resume/attach supersedes any
+    # stale consumer still looping on this project's queue (e.g. a half-open
+    # socket the client could no longer read) so exactly one consumer drains the
+    # queue. The superseded loop notices on its next tick and exits cleanly,
+    # leaving the task lock (and conversation context) for the new consumer.
+    stream_id = uuid.uuid4().hex
+    task_lock.active_stream_id = stream_id
 
     # Set user-specific environment path for this thread
     set_user_env_path(data.env_path)
@@ -448,46 +506,56 @@ async def start_chat_stream(data: Chat, request: Request):
 
     # Local memory: write Space/Project/Run scaffolding + append user prompt.
     # Best-effort; MemoryService swallows write errors so chat keeps working.
+    # On a resume we only rebind the service (so end-of-turn finalization still
+    # works); the follow-up turn's Run is opened by the improve handler, so we
+    # must NOT append the prompt here or the user turn would be recorded twice.
     memory_service = get_memory_service()
-    memory_mode = (
-        "single_agent" if data.session_mode == "single-agent" else "workforce"
-    )
-    memory_space_source = (
-        "legacy"
-        if data.space_id and data.space_id.startswith("legacy_")
-        else ("folder" if data.space_root_path else "blank")
-    )
-    memory_service.on_run_start(
-        run_context=run_context,
-        space_name=None,
-        project_name=None,
-        space_source_type=memory_space_source,
-        mode=memory_mode,
-        user_prompt=data.question,
-        prompt_source="chat",
-    )
+    if not is_resume:
+        memory_mode = (
+            "single_agent"
+            if data.session_mode == "single-agent"
+            else "workforce"
+        )
+        memory_space_source = (
+            "legacy"
+            if data.space_id and data.space_id.startswith("legacy_")
+            else ("folder" if data.space_root_path else "blank")
+        )
+        memory_service.on_run_start(
+            run_context=run_context,
+            space_name=None,
+            project_name=None,
+            space_source_type=memory_space_source,
+            mode=memory_mode,
+            user_prompt=data.question,
+            prompt_source="chat",
+        )
     task_lock.memory_service = memory_service
 
     # Set the initial current_task_id in task_lock
     set_current_task_id(data.project_id, data.task_id)
 
-    # Put initial action in queue to start processing
-    await task_lock.put_queue(
-        ActionImproveData(
-            data=ImprovePayload(
-                question=data.question,
-                attaches=data.attaches or [],
-                project_context=data.project_context,
-            ),
-            new_task_id=data.task_id,
+    if not is_resume:
+        # Put initial action in queue to start processing. A resume attaches a
+        # consumer WITHOUT enqueueing anything: the follow-up that prompted the
+        # re-attach is enqueued by the improve endpoint and drained by this loop.
+        await task_lock.put_queue(
+            ActionImproveData(
+                data=ImprovePayload(
+                    question=data.question,
+                    attaches=data.attaches or [],
+                    project_context=data.project_context,
+                ),
+                new_task_id=data.task_id,
+            )
         )
-    )
 
     chat_logger.info(
-        "Chat session initialized",
+        "Chat session initialized" + (" (resume)" if is_resume else ""),
         extra={
             "project_id": data.project_id,
             "task_id": data.task_id,
+            "resume": is_resume,
             "log_dir": str(camel_log),
             "working_directory": str(frozen_dirs.working_directory),
             "binding_source": frozen_dirs.binding_source,
@@ -495,7 +563,7 @@ async def start_chat_stream(data: Chat, request: Request):
     )
     return timeout_stream_wrapper(
         stream_with_run_context(
-            step_solve(data, request, task_lock),
+            step_solve(data, request, task_lock, stream_id=stream_id),
             lambda: getattr(task_lock, "run_context", run_context),
         ),
         task_lock=task_lock,

@@ -70,7 +70,42 @@ def _start_hybrid_job_recovery() -> None:
 async def _lifespan(_app: FastAPI):
     _register_main_event_loop()
     _start_hybrid_job_recovery()
-    yield
+    _start_slack_socket_mode()
+    try:
+        yield
+    finally:
+        _stop_slack_socket_mode()
+
+
+def _start_slack_socket_mode() -> None:
+    """Start the Slack Socket Mode listener (inbound Slack events, no public URL).
+
+    Lives here, in the FastAPI lifespan, and NOT in a ``@api.on_event("startup")``
+    handler: this app passes ``lifespan=_lifespan`` to ``FastAPI(...)``, and
+    Starlette ignores every ``on_event`` startup/shutdown handler once a custom
+    lifespan is set. The listener previously lived in a startup handler in
+    ``main.py`` and therefore never ran, so Slack events went nowhere.
+
+    The listener runs on its own supervisor thread and is a no-op until
+    ``SLACK_APP_TOKEN`` + ``SLACK_BOT_TOKEN`` are present in the live env.
+    """
+    try:
+        from app.service.slack_socket_listener import start_slack_socket_listener
+
+        start_slack_socket_listener()
+    except Exception:  # noqa: BLE001 - listener must never block boot
+        logging.getLogger("main").warning(
+            "Slack Socket Mode listener failed to start", exc_info=True
+        )
+
+
+def _stop_slack_socket_mode() -> None:
+    try:
+        from app.service.slack_socket_listener import stop_slack_socket_listener
+
+        stop_slack_socket_listener()
+    except Exception:  # noqa: BLE001 - shutdown must never raise
+        pass
 
 
 def _register_main_event_loop() -> None:

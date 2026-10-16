@@ -507,10 +507,427 @@ try {
     logLine('sleep/wake recovery armed');
   };
 
-  if (app.isReady()) {
+  // --- App Nap / idle-suspension opt-out -------------------------------------
+  // macOS App Nap silently freezes a backgrounded or occluded app: its timers
+  // stop running, so socket.io's heartbeat and Theia's 5s connection ping blow
+  // their deadlines and the editor flips to "Offline - Cannot connect to
+  // backend." even though the backend and the brain are both perfectly healthy.
+  // A `prevent-app-suspension` power-save blocker maps to an NSProcessInfo
+  // activity (NSActivityUserInitiated), which IS the OS-level App Nap opt-out:
+  // it keeps the process scheduled while still letting the DISPLAY sleep.
+  // It canNOT stop a real user-initiated/system sleep or a power-off; the
+  // resume recovery above covers the wake side of those.
+  // Opt out with UNDISCLOSED_DISABLE_POWER_SAVE_BLOCKER=1.
+  const registerAppNapOptOut = () => {
+    if (process.env.UNDISCLOSED_DISABLE_POWER_SAVE_BLOCKER === '1') {
+      return;
+    }
+    try {
+      const id = electron.powerSaveBlocker.start('prevent-app-suspension');
+      logLine(
+        `power-save blocker armed (id=${id}, prevent-app-suspension) - App Nap disabled`
+      );
+    } catch (e) {
+      logLine(`power-save blocker failed to arm: ${e && e.message}`);
+    }
+  };
+
+  // --- Theia BACKEND (node server) auto-recovery -----------------------------
+  //
+  // The brain has its own watchdog above; the Theia node BACKEND — the editor's
+  // RPC/WS server, forked by the electron main on an ephemeral port — had none.
+  // When that forked process dies or wedges, the renderer flips to
+  // "Offline - Cannot connect to backend." and STAYS there: Theia's frontend only
+  // ever retries the SAME port, so nothing revives it and the only way out was to
+  // quit and reopen the entire app by hand.
+  //
+  // The renderer already knows the truth: core's connection-status service adds
+  // `theia-mod-offline` to <body> the instant a ping to the backend fails and
+  // removes it the instant one succeeds. We read that class straight out of the
+  // page (cheap and authoritative — no second health model to keep in sync).
+  //
+  // When the renderer has stayed offline for BACKEND_OFFLINE_STRIKES x
+  // BACKEND_WATCH_MS (default ~5s), the DEFAULT ('auto') strategy runs a
+  // PROBE-GATED LADDER so the cheap fix is tried before the expensive one. A
+  // wedged-but-ALIVE backend sets `theia-mod-offline` exactly like a dead one, so
+  // we probe the port to tell them apart rather than guessing:
+  //   1. parse the backend port from the window's `?port=` query and probe it;
+  //   2. if it answers, the process is ALIVE and only the socket died, so RELOAD
+  //      the renderer to re-establish the connection. The reload re-points at the
+  //      SAME port and touches neither the main process nor the brain sidecar
+  //      (:5001), so the agent session and the brain's conversation store
+  //      survive — ~2s instead of a full boot. If the reload does not clear the
+  //      offline state within the grace window, or the reload budget
+  //      (UNDISCLOSED_BACKEND_RELOAD_MAX) is spent, we escalate;
+  //   3. if the port does NOT answer (refused / timeout) the process is DEAD, or
+  //      the reload rung did not help: quit and relaunch the whole app, capped by
+  //      UNDISCLOSED_BACKEND_RELAUNCH_MAX.
+  //
+  // The "fork a replacement backend in place" step is NOT on the default path: it
+  // flapped (offline -> live -> offline -> ...) because the second backend
+  // competed with the wedged first one. It survives only behind
+  // UNDISCLOSED_BACKEND_RECOVERY_MODE=inplace (the old stay-open strategy).
+  // RECOVERY_MODE=relaunch skips the probe and always quits + relaunches.
+  //
+  // Packaged apps only: in dev the backend is a separate `theia start` server
+  // that relaunching Electron would not (and should not) touch.
+  // Opt out with UNDISCLOSED_DISABLE_BACKEND_RECOVERY=1.
+  const backendRecoveryDisabled =
+    process.env.UNDISCLOSED_DISABLE_BACKEND_RECOVERY === '1';
+  // 'auto' (default) = probe-gated ladder (reload if alive, relaunch if dead);
+  // 'relaunch' = skip the probe, always quit + relaunch; 'inplace' = keep the app
+  // open and fork a replacement backend (opt-in, the pre-ladder behavior).
+  const BACKEND_RECOVERY_MODE = (
+    process.env.UNDISCLOSED_BACKEND_RECOVERY_MODE || 'auto'
+  ).toLowerCase();
+  // How often we sample the renderer's offline state, and how many consecutive
+  // offline reads before we act (~5 x 1s = ~5s of real downtime by default). The
+  // renderer only sets `theia-mod-offline` after a backend ping actually fails
+  // (and clears it the instant one succeeds), so sustained samples mean the
+  // backend is really unreachable, not a transient blip.
+  const BACKEND_WATCH_MS = Number(
+    process.env.UNDISCLOSED_BACKEND_WATCH_MS || 1000
+  );
+  const BACKEND_OFFLINE_STRIKES = Number(
+    process.env.UNDISCLOSED_BACKEND_OFFLINE_STRIKES || 5
+  );
+  // Ladder knobs (used in 'auto' mode): how long to wait for the port to answer
+  // before deciding alive-vs-dead, how many reloads to try before escalating, and
+  // how long to give a just-reloaded renderer to boot and land its first
+  // successful ping before the reload rung is deemed a failure.
+  const BACKEND_PROBE_MS = Number(
+    process.env.UNDISCLOSED_BACKEND_PROBE_MS || 1500
+  );
+  const BACKEND_RELOAD_MAX = Number(
+    process.env.UNDISCLOSED_BACKEND_RELOAD_MAX || 1
+  );
+  const BACKEND_RELOAD_GRACE_MS = Number(
+    process.env.UNDISCLOSED_BACKEND_RELOAD_GRACE_MS || 12000
+  );
+  // Cap auto-relaunches in an app "session chain" so a backend that dies on every
+  // launch cannot turn into an infinite restart loop.
+  const BACKEND_RELAUNCH_MAX = Number(
+    process.env.UNDISCLOSED_BACKEND_RELAUNCH_MAX || 3
+  );
+
+  /** True if ANY HTTP response came back from `port` (even a 404 = server up). */
+  const probeBackend = (port, timeoutMs) =>
+    new Promise((resolve) => {
+      let settled = false;
+      const done = (ok) => {
+        if (!settled) {
+          settled = true;
+          resolve(ok);
+        }
+      };
+      if (!port) {
+        done(false);
+        return;
+      }
+      const req = http.get(
+        { host: '127.0.0.1', port, path: '/', timeout: timeoutMs },
+        (res) => {
+          res.resume(); // drain so the socket frees up
+          done(true);
+        }
+      );
+      req.on('timeout', () => {
+        req.destroy();
+        done(false);
+      });
+      req.on('error', () => done(false));
+      req.on('close', () => done(false));
+    });
+
+  /** Ask a renderer whether it is offline and which backend port it targets. */
+  const readRendererState = async () => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (win.isDestroyed() || win.webContents.isDestroyed()) {
+        continue;
+      }
+      try {
+        return await win.webContents.executeJavaScript(
+          '(function(){try{return{offline:document.body.classList.contains(' +
+            '"theia-mod-offline"),port:new URLSearchParams(location.search)' +
+            '.get("port")};}catch(e){return null;}})()',
+          true
+        );
+      } catch (_e) {
+        /* window not ready / navigated away — try the next one */
+      }
+    }
+    return null;
+  };
+
+  /**
+   * Poll the renderer until it reports the backend ONLINE again, or `timeoutMs`
+   * elapses. Used after a reload to decide whether the cheap rung worked: a
+   * just-reloaded renderer needs a moment to boot the frontend and land its first
+   * successful backend ping, and it reads back null while the page is mid-load.
+   */
+  const waitForBackendOnline = async (timeoutMs) => {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      await sleep(1000);
+      const state = await readRendererState();
+      if (state && !state.offline) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  /**
+   * Fork a REPLACEMENT Theia backend WITHOUT touching the app.
+   *
+   * The live ElectronMainApplication (published on globalThis by
+   * MainAppBridgeContribution) is the only object that can fork a backend: it
+   * holds the globals, the argv and the electron security token. Its own
+   * startBackend() re-forks on a fresh ephemeral port and resolves once that
+   * server is listening, so we then point every window at the new port. This is
+   * the ONE way to revive the backend in place: Theia's start() resolved the port
+   * once and never re-resolves, and its built-in restart() only re-creates the
+   * WINDOW against that stale (dead) port.
+   *
+   * Returns the new port, or undefined when the bridge/backend is unavailable.
+   */
+  const restartBackendInPlace = async () => {
+    // `--no-cluster` runs the backend INSIDE this process, so there is no
+    // forked server to replace — startBackend() would dynamicRequire it again.
+    // Leave that case to the relaunch fallback.
+    if (process.argv.indexOf('--no-cluster') !== -1) {
+      return undefined;
+    }
+    const application = globalThis.__undisclosed_main_app__;
+    if (!application || typeof application.startBackend !== 'function') {
+      return undefined;
+    }
+    let startTimer;
+    let newPort;
+    try {
+      newPort = await Promise.race([
+        application.startBackend(),
+        new Promise((_resolve, reject) => {
+          startTimer = setTimeout(
+            () => reject(new Error('backend start timed out')),
+            20000
+          );
+        }),
+      ]);
+    } finally {
+      if (startTimer) {
+        clearTimeout(startTimer);
+      }
+    }
+    if (!newPort) {
+      return undefined;
+    }
+    // The token is generated once per main process, so the replacement shares it,
+    // and the security cookie is scoped to `localhost` (not the port) — the
+    // reloaded renderer authenticates unchanged. Re-attach anyway so a fresh
+    // session still carries the cookie.
+    try {
+      await application.attachElectronSecurityToken(newPort);
+    } catch (_e) {
+      /* best-effort */
+    }
+    // `backendPort` is a resolved-once Deferred; re-point it so any window Theia
+    // opens later also targets the live backend.
+    try {
+      application.backendPort = Promise.resolve(newPort);
+    } catch (_e) {
+      /* best-effort */
+    }
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (win.isDestroyed() || win.webContents.isDestroyed()) {
+        continue;
+      }
+      try {
+        const url = new URL(win.webContents.getURL());
+        url.searchParams.set('port', String(newPort));
+        await win.webContents.loadURL(url.toString());
+      } catch (_e) {
+        /* window not ready — the next strike retries */
+      }
+    }
+    return newPort;
+  };
+
+  let backendOfflineStrikes = 0;
+  let backendWatchBusy = false;
+  let relaunching = false;
+  let backendInPlaceAttempts = 0;
+  let backendReloadAttempts = 0;
+
+  // Quit and relaunch the whole app - the manual "close and reopen" step,
+  // automated. Graceful quit (not app.exit) so will-quit runs and the
+  // brain-teardown sweep frees :5001 before the new instance starts. Capped per
+  // app "session chain" so a backend that dies on every launch cannot loop.
+  const autoRelaunch = (port) => {
+    const attempt = Number(
+      process.env.UNDISCLOSED_BACKEND_RELAUNCH_ATTEMPT || 0
+    );
+    if (attempt >= BACKEND_RELAUNCH_MAX) {
+      logLine(
+        `backend unreachable on :${port} — already auto-relaunched ` +
+          `${attempt} time(s); not relaunching again (raise ` +
+          'UNDISCLOSED_BACKEND_RELAUNCH_MAX to retry)'
+      );
+      return false;
+    }
+    relaunching = true;
+    process.env.UNDISCLOSED_BACKEND_RELAUNCH_ATTEMPT = String(attempt + 1);
+    logLine(
+      `backend unreachable on :${port} — quitting and relaunching app ` +
+        `(attempt ${attempt + 1}/${BACKEND_RELAUNCH_MAX})`
+    );
+    app.relaunch();
+    app.quit();
+    return true;
+  };
+
+  const startBackendWatchdog = () => {
+    const timer = setInterval(async () => {
+      if (backendWatchBusy || relaunching) {
+        return;
+      }
+      backendWatchBusy = true;
+      try {
+        const state = await readRendererState();
+        // No renderer answered (mid-reload, blank window): nothing to read yet —
+        // the crash hooks above own a dead renderer. Deliberately does NOT reset
+        // the counters, so a failing recovery can't hide behind a blank window.
+        if (!state) {
+          return;
+        }
+        // Renderer reports the backend online: clear the strike run AND the
+        // recovery budgets, so a future death is revived from the bottom of the
+        // ladder again.
+        if (!state.offline) {
+          backendOfflineStrikes = 0;
+          backendInPlaceAttempts = 0;
+          backendReloadAttempts = 0;
+          return;
+        }
+        backendOfflineStrikes += 1;
+        logLine(
+          `backend offline in renderer ` +
+            `(${backendOfflineStrikes}/${BACKEND_OFFLINE_STRIKES})`
+        );
+        if (backendOfflineStrikes < BACKEND_OFFLINE_STRIKES) {
+          return;
+        }
+        backendOfflineStrikes = 0;
+
+        const port = Number(state.port);
+
+        // 'relaunch' = skip the probe, always quit + relaunch (the old default).
+        if (BACKEND_RECOVERY_MODE === 'relaunch') {
+          autoRelaunch(port);
+          return;
+        }
+
+        // 'auto' (default) = probe-gated ladder. Probe the port first: a backend
+        // that is ALIVE but whose socket wedged is fixed by a reload (which keeps
+        // the main process and the brain sidecar alive, so the agent session and
+        // the conversation store survive); only a DEAD process, or a reload that
+        // did not clear the offline state, is worth the full relaunch.
+        if (BACKEND_RECOVERY_MODE !== 'inplace') {
+          if (await probeBackend(port, BACKEND_PROBE_MS)) {
+            if (backendReloadAttempts < BACKEND_RELOAD_MAX) {
+              backendReloadAttempts += 1;
+              logLine(
+                `backend alive on :${port} but renderer offline — reloading ` +
+                  `windows (reload ${backendReloadAttempts}/${BACKEND_RELOAD_MAX})`
+              );
+              reloadAllWindows();
+              if (await waitForBackendOnline(BACKEND_RELOAD_GRACE_MS)) {
+                logLine(
+                  'reload cleared backend offline — recovered without relaunch'
+                );
+                backendReloadAttempts = 0;
+                return;
+              }
+              logLine('reload did not clear offline — escalating to relaunch');
+            } else {
+              logLine(
+                `reload budget spent (${backendReloadAttempts}/` +
+                  `${BACKEND_RELOAD_MAX}) — relaunching`
+              );
+            }
+          } else {
+            logLine(
+              `backend unreachable on :${port} — process dead, relaunching`
+            );
+          }
+          autoRelaunch(port);
+          return;
+        }
+
+        // 'inplace': keep the app open. If the port still answers, only the
+        // renderer socket died, so reload it; otherwise fork a replacement.
+        if (await probeBackend(port, 3000)) {
+          logLine(
+            `backend alive on :${port} but renderer offline — reloading windows`
+          );
+          reloadAllWindows();
+          return;
+        }
+
+        // Revive the BACKEND only and keep the app up. Forking a replacement
+        // needs the live main-app instance; when it is absent (older bundle) or
+        // the fork fails, fall through to a full app relaunch below.
+        if (backendInPlaceAttempts < BACKEND_RELAUNCH_MAX) {
+          backendInPlaceAttempts += 1;
+          logLine(
+            `backend unreachable on :${port} — restarting backend in place ` +
+              `(attempt ${backendInPlaceAttempts}/${BACKEND_RELAUNCH_MAX}, app kept open)`
+          );
+          let newPort;
+          try {
+            newPort = await restartBackendInPlace();
+          } catch (e) {
+            logLine(`in-place backend restart failed: ${e && e.message}`);
+          }
+          if (newPort) {
+            logLine(`backend restarted in place on :${newPort} — app kept open`);
+            return;
+          }
+        } else {
+          logLine(
+            `in-place backend restart gave up after ${backendInPlaceAttempts} ` +
+              'attempt(s) — falling back to a full app relaunch'
+          );
+        }
+
+        // Last resort in 'inplace' mode: fall back to a full relaunch.
+        autoRelaunch(port);
+      } finally {
+        backendWatchBusy = false;
+      }
+    }, BACKEND_WATCH_MS);
+    if (timer.unref) {
+      timer.unref();
+    }
+  };
+
+  const registerBackendRecovery = () => {
+    if (backendRecoveryDisabled || !app.isPackaged) {
+      return;
+    }
+    startBackendWatchdog();
+    logLine('backend (Theia node server) watchdog armed');
+  };
+
+  const onReady = () => {
     registerPowerRecovery();
+    registerAppNapOptOut();
+    registerBackendRecovery();
+  };
+  if (app.isReady()) {
+    onReady();
   } else {
-    app.once('ready', registerPowerRecovery);
+    app.once('ready', onReady);
   }
 } catch (_e) {
   /* recovery wiring is best-effort; never prevent the app from starting */

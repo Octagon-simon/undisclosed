@@ -1,4 +1,5 @@
 // ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+// Portions Copyright 2026 Simon Ugorji. All Rights Reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -22,6 +23,7 @@ import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { Button } from '../../ui/button';
 import { MarkDown } from './MarkDown';
+import { StatusDot } from './PanelSection';
 
 const COPIED_RESET_MS = 2000;
 
@@ -36,6 +38,10 @@ interface AgentMessageCardProps {
   onTyping?: () => void;
   onMarkdownRenderComplete?: () => void;
   hideFeedbackAndCopyBtn?: boolean; //hide the feedback (thumb up/thumb down and copy btn from being actioned)
+  /** Render the inline cyan response-indicator dot to the left of the body
+   *  (reference design Section 3). Opt-in so only the actual agent reply is
+   *  prefixed, not notices/approval cards. */
+  indicator?: boolean;
 }
 
 // Tracks agent messages that have already played the typewriter (by stable message id).
@@ -50,7 +56,8 @@ export function AgentMessageCard({
   className,
   attaches,
   deferredFooter,
-  hideFeedbackAndCopyBtn
+  hideFeedbackAndCopyBtn,
+  indicator,
 }: AgentMessageCardProps) {
   const openFilePreview = usePageTabStore((s) => s.openFilePreview);
   const host = useHost();
@@ -123,14 +130,28 @@ export function AgentMessageCard({
   return (
     <div
       key={id}
-      className={`rounded-xl px-6 py-3 flex w-full flex-col bg-transparent ${className || ''} overflow-hidden`}
+      className={`rounded-xl py-3 flex w-full flex-col bg-transparent ${className || ''} overflow-hidden`}
     >
-      <MarkDown
-        content={content}
-        onTyping={handleTypingComplete}
-        onMarkdownRenderComplete={handleMarkdownRenderComplete}
-        enableTypewriter={enableTypewriter && typewriter}
-      />
+      {indicator ? (
+        <div className="flex w-full items-start gap-2">
+          <StatusDot className="mt-[6px] bg-ds-bg-information-default-default" />
+          <div className="min-w-0 flex-1">
+            <MarkDown
+              content={content}
+              onTyping={handleTypingComplete}
+              onMarkdownRenderComplete={handleMarkdownRenderComplete}
+              enableTypewriter={enableTypewriter && typewriter}
+            />
+          </div>
+        </div>
+      ) : (
+        <MarkDown
+          content={content}
+          onTyping={handleTypingComplete}
+          onMarkdownRenderComplete={handleMarkdownRenderComplete}
+          enableTypewriter={enableTypewriter && typewriter}
+        />
+      )}
       {showDeferredFileUi && attaches && attaches.length > 0 && (
         <div className="gap-2 mt-[10px] flex flex-wrap">
           {attaches?.map((file) => {

@@ -145,6 +145,15 @@ async def startup_event():
     initialize_tracer_provider()
     app_logger.info("Telemetry tracer provider initialized")
 
+    # Slack Socket Mode: receive inbound Slack events over an OUTBOUND websocket
+    # so a Slack automation works even though the Brain is bound to localhost
+    # (Slack's cloud cannot reach a loopback webhook URL). No-op until
+    # SLACK_APP_TOKEN + SLACK_BOT_TOKEN are present; picks them up live.
+    from app.service.slack_socket_listener import start_slack_socket_listener
+
+    start_slack_socket_listener()
+    app_logger.info("Slack Socket Mode listener started")
+
 
 @api.on_event("shutdown")
 async def shutdown_event_handler():
@@ -212,6 +221,16 @@ async def cleanup_resources():
         app_logger.warning("Browser WebSocket pool shutdown timed out")
     except Exception as e:
         app_logger.warning(f"Browser WebSocket pool shutdown failed: {e}")
+
+    # Stop the Slack Socket Mode listener (closes any outbound websocket).
+    try:
+        from app.service.slack_socket_listener import (
+            stop_slack_socket_listener,
+        )
+
+        stop_slack_socket_listener()
+    except Exception as e:
+        app_logger.warning(f"Slack Socket Mode shutdown failed: {e}")
 
     set_main_event_loop(None)
     app_logger.info("All resources cleaned up successfully")

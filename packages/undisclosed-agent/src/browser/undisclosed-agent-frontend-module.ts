@@ -12,21 +12,23 @@ import {
   CommandContribution,
   MenuContribution,
 } from '@theia/core/lib/common';
+import { KeybindingContribution } from '@theia/core/lib/browser';
 import { SidePanelHandler } from '@theia/core/lib/browser/shell/side-panel-handler';
 import { UndisclosedSidePanelHandler } from './undisclosed-side-panel-handler';
 import { UndisclosedAgentWidget } from './undisclosed-agent-widget';
 import { UndisclosedAgentContribution } from './undisclosed-agent-contribution';
 import { UndisclosedAgentLayoutContribution } from './undisclosed-agent-layout-contribution';
 import { GitExtrasContribution } from './git-extras-contribution';
+import { GitCommitGuardContribution } from './git-commit-guard-contribution';
 import { TerminalWidget } from '@theia/terminal/lib/browser/base/terminal-widget';
 import { PersistentTerminalWidget } from './persistent-terminal-widget';
 import { UndisclosedWelcomeWidget } from './undisclosed-welcome-widget';
 import { UndisclosedWelcomeContribution } from './undisclosed-welcome-contribution';
 import { UndisclosedExplorerAutoRevealContribution } from './undisclosed-explorer-auto-reveal-contribution';
-import { MenusContributionPointHandler } from '@theia/plugin-ext/lib/main/browser/menus/menus-contribution-handler';
-import { UndisclosedMenusContributionHandler } from './vscode-git-ui-suppressor';
+import { UndisclosedTitleBarContribution } from './undisclosed-title-bar-contribution';
 import { WebviewEnvironment } from '@theia/plugin-ext/lib/main/browser/webview/webview-environment';
 import { UndisclosedWebviewEnvironment } from './undisclosed-webview-environment';
+import { JsxCommentContribution } from './jsx-comment-contribution';
 
 /**
  * Frontend DI module (referenced by `theiaExtensions` in package.json). Binds
@@ -49,14 +51,11 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
   // degrades to a normal terminal if the addon fails, so this is non-breaking.
   rebind(TerminalWidget).to(PersistentTerminalWidget).inTransientScope();
 
-  // "Keep the API, kill the duplicate UI." The VS Code git built-ins stay
-  // deployed (so `vscode.git`'s API remains available to GitLens et al.), but
-  // their Source Control menu contributions are withheld so they stop
-  // duplicating @theia/git's inline actions. See vscode-git-ui-suppressor.ts.
-  // Our frontend module loads after @theia/plugin-ext, so this rebind wins.
-  rebind(MenusContributionPointHandler)
-    .to(UndisclosedMenusContributionHandler)
-    .inSingletonScope();
+  // NOTE (Theia 1.76): the Source Control UI is now served by the built-in
+  // `vscode.git` extension (upstream removed `@theia/git`). The previous
+  // `MenusContributionPointHandler` rebind that suppressed vscode.git's SCM
+  // menus to avoid duplicating @theia/git has been retired — suppressing them
+  // now would remove Source Control entirely. Its API stays available as-is.
 
   // Webview resource URLs lose the empty-authority separator under the stock
   // @theia/plugin-ext URI.resolve(), 404ing every webview asset (pets render a
@@ -104,10 +103,31 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
     UndisclosedExplorerAutoRevealContribution
   );
 
+  // Custom centered macOS title bar: replaces the (macOS 26) native, left
+  // aligned window title while keeping the native traffic lights. Electron +
+  // macOS only; a no-op in the browser and on Windows/Linux, where Theia
+  // already draws its own centered title bar.
+  bind(UndisclosedTitleBarContribution).toSelf().inSingletonScope();
+  bind(FrontendApplicationContribution).toService(
+    UndisclosedTitleBarContribution
+  );
+
   // Extra git commands (Undo Last Commit, unstage/discard all) + AI commit
   // message button in the Source Control toolbar.
   bind(GitExtrasContribution).toSelf().inSingletonScope();
   bind(CommandContribution).toService(GitExtrasContribution);
   bind(MenuContribution).toService(GitExtrasContribution);
   bind(TabBarToolbarContribution).toService(GitExtrasContribution);
+
+  // Stop the Source Control commit box from hanging on an empty message: force
+  // the prompt flow (not the editor hand-off) and show an inline validation.
+  bind(GitCommitGuardContribution).toSelf().inSingletonScope();
+  bind(FrontendApplicationContribution).toService(GitCommitGuardContribution);
+
+  // `Cmd/Ctrl+/` in `.tsx`/`.jsx` files: Monaco's line comment emits `//`, which
+  // is invalid inside JSX. This contribution rebinds the chord for those two
+  // languages to a JSX-aware `{/* … */}` toggle. See jsx-comment-contribution.ts.
+  bind(JsxCommentContribution).toSelf().inSingletonScope();
+  bind(CommandContribution).toService(JsxCommentContribution);
+  bind(KeybindingContribution).toService(JsxCommentContribution);
 });

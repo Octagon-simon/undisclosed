@@ -9,6 +9,16 @@ are touching.
 
 ---
 
+## Using the app
+
+| Doc | What it covers |
+| --- | --- |
+| [installing.md](installing.md) | Installing and launching Undisclosed on macOS, Windows, and Linux (via GitHub Releases or the homepage download button), including the first-open steps for the current unsigned builds. |
+| [extra-skills.md](extra-skills.md) | The extra (video/media) skills that are not bundled: each skill's upstream GitHub project and how to install one by pasting its URL into the agent. |
+| [automate-your-workflow-with-triggers.md](automate-your-workflow-with-triggers.md) | A user-facing article: build a two-trigger workflow that works your tasks on a schedule, posts to Slack, and replies to Slack mentions in the same conversation. |
+
+---
+
 ## Systems (the core problems we solved)
 
 These are the load-bearing systems. They answer "how does the agent understand a
@@ -50,6 +60,8 @@ above and are kept for history.
 | [PACKAGING.md](PACKAGING.md) | Building/signing the desktop installers. |
 | [reviews/project-context-tree-sitter.md](reviews/project-context-tree-sitter.md) | The "why" review: repomix vs tree-sitter for project understanding. |
 | [reviews/grep-tool-efficiency.md](reviews/grep-tool-efficiency.md) | Findings: why `grep_files`/`search_files` are slow and unbounded, and what the output cap really covers. |
+| [plans/multi-editor-shared-brain.md](plans/multi-editor-shared-brain.md) | Plan: why several editors sharing one brain contend, why the (reverted) SSE relay doesn't fix it, and the options (single-instance windows, real brain concurrency, per-editor isolation). |
+| [plans/sse-relay-and-next-features.md](plans/sse-relay-and-next-features.md) | The SSE relay port + next-feature sequencing (relay reverted 2026-10-12; see the change ledger). |
 | [plans/tree-sitter-implementation-plan.md](plans/tree-sitter-implementation-plan.md) | The tree-sitter implementation plan (R1 shipped). |
 | [plans/hybrid-memory-implementation.md](plans/hybrid-memory-implementation.md) | Hybrid memory module map + spec section index. |
 | [rolling-conversation-summary-plan.md](../rolling-conversation-summary-plan.md) | The rolling summary plan (repo root). |

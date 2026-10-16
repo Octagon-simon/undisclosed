@@ -1,0 +1,72 @@
+# Tests: brain (pytest) + agent-ui (vitest). These BLOCK — a red run fails CI.
+#
+# Heads up: the branch baseline is not green (brain 7 failures, agent-ui 4), so
+# the first runs will be red until those are fixed. The brain job runs with
+# --fast-test-mode so it needs no model-backend secrets and no network.
+name: Tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  brain:
+    name: pytest (brain)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: brain
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Sync brain deps
+        run: uv sync
+
+      # --fast-test-mode skips the tests that need a real LLM / machine state,
+      # so CI runs with no secrets.
+      - name: Run brain tests
+        run: uv run pytest --fast-test-mode -q
+
+  agent-ui:
+    name: vitest (agent-ui)
+    runs-on: ubuntu-latest
+    env:
+      HUSKY: "0"
+    defaults:
+      run:
+        working-directory: agent-ui
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: agent-ui/package-lock.json
+
+      - name: Install deps
+        run: npm ci --ignore-scripts
+
+      - name: Type check
+        run: npm run type-check
+
+      # `npm test` runs a `pretest` vite build that needs the Electron entry,
+      # which this repo does not ship; run vitest directly instead.
+      - name: Unit tests
+        run: npx vitest run

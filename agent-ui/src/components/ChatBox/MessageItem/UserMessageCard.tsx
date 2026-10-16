@@ -48,6 +48,17 @@ interface UserMessageCardProps {
   content: string;
   className?: string;
   attaches?: File[];
+  /** Wall-clock time the turn was sent (ISO string). Renders at the right end
+   *  of the turn header; the header shows just "User" when it is absent. */
+  timestamp?: string;
+}
+
+/** Format an ISO timestamp as a 24h `HH:MM:SS` clock (reference design "22:48:31"). */
+function formatClockTime(value: string | number | Date): string {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
 export function UserMessageCard({
@@ -55,6 +66,7 @@ export function UserMessageCard({
   content,
   className,
   attaches,
+  timestamp,
 }: UserMessageCardProps) {
   const host = useHost();
   const ipcRenderer = host?.ipcRenderer;
@@ -133,7 +145,20 @@ export function UserMessageCard({
 
   return (
     <div key={id} className={cn('group/msg relative w-full', className)}>
-      <div className="w-full overflow-visible rounded-xl bg-ds-bg-neutral-strong-default px-4 py-2">
+      <div className="w-full overflow-visible rounded-lg border border-ds-border-neutral-subtle-default bg-ds-bg-neutral-default-default p-3.5">
+        {/* Turn header: who spoke, and when. Mirrors the reference design's
+            elevated user card (Phase 4) so the user turn reads as its own
+            section, matching the boxed agent sections below it. */}
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <span className="text-label-xs font-medium text-ds-text-neutral-subtle-default">
+            {t('chat.user', { defaultValue: 'User' })}
+          </span>
+          {timestamp ? (
+            <span className="font-mono text-label-xs text-ds-text-neutral-subtle-default opacity-60">
+              {formatClockTime(timestamp)}
+            </span>
+          ) : null}
+        </div>
         {attaches && attaches.length > 0 && (
           <div className="relative mb-2 box-border flex w-full flex-wrap items-start gap-1">
             {(() => {
@@ -292,7 +317,7 @@ export function UserMessageCard({
             <UserMessageRichContent content={content} variant="card" />
             {canClamp && !expanded && (
               <div
-                className="pointer-events-none absolute inset-x-0 bottom-0 z-[1] h-14 bg-ds-bg-neutral-strong-default"
+                className="pointer-events-none absolute inset-x-0 bottom-0 z-[1] h-14 bg-ds-bg-neutral-default-default"
                 style={USER_MESSAGE_FOLD_FADE_STYLE}
                 aria-hidden
               />

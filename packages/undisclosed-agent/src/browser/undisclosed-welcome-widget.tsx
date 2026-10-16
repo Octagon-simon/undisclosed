@@ -6,7 +6,9 @@
 // actually needs (open a folder) plus recents, styled with Theia theme vars so
 // it fits light/dark.
 
-import * as React from '@theia/core/shared/react';
+// Theia 1.76's `@theia/core/shared/react` is a CommonJS `export =` module, so
+// it must be default-imported (a namespace import fails with TS2497).
+import React from '@theia/core/shared/react';
 import {
   inject,
   injectable,

@@ -64,6 +64,7 @@
   "splitting-tasks": "Division des tâches",
   "working-on-tasks-for": "Travaille sur les tâches depuis <elapsed>{{time}}</elapsed>",
   "worked-for": "A travaillé pendant <elapsed>{{time}}</elapsed>",
+  "working-for": "Travaille depuis <elapsed>{{time}}</elapsed>",
   "start-task": "Exécuter maintenant",
   "auto-start-in": "Démarrage auto dans {{seconds}}s",
   "message-cannot-be-empty": "Le message ne peut pas être vide",

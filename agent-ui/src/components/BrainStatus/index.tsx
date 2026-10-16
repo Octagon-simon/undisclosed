@@ -1,179 +1,66 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Simon Ugorji
 //
-// Live brain (backend :5001) status pill for the agent panel. Polls the brain's
-// /health directly so the user is never "left in the dark" about whether the
-// backend is up — and, when it's down, offers a one-click Restart that asks the
-// Theia backend (which can spawn processes; the renderer can't) to resurrect it.
-// This dissolves the quit-app → restart-brain → relaunch-app dance.
+// BrainStatus — the live brain (backend :5001) indicator for the agent panel:
+// a coloured dot + label, plus a one-click Restart when the brain is down.
+//
+// It is PRESENTATIONAL: the `/health` polling lives in ./useBrainStatus so the
+// panel telemetry sub-strip and this pill share a single poller instead of two.
+// Colors are semantic `ds-*` tokens only — no literal hex — so it re-themes with
+// the app (light/dark + Theia).
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { StatusDot } from '@/components/ChatBox/MessageItem/PanelSection';
+import type { BrainState } from './useBrainStatus';
 
-type BrainState = 'checking' | 'live' | 'dead' | 'restarting';
+export type { BrainState } from './useBrainStatus';
 
-// The brain is a fixed-port local sidecar (see docs/PACKAGING.md). Health lives
-// at /health (NOT under the /api proxy). Direct fetch works in dev + packaged
-// (the brain sets permissive CORS on localhost).
-const BRAIN_HEALTH_URL = 'http://localhost:5001/health';
-// Served by the Theia backend (undisclosed-agent backend module). Must be an
-// ABSOLUTE url: the packaged app runs the panel from a file:// page, so a
-// relative '/undisclosed-agent/...' resolves to file:///… and 404s
-// (ERR_FILE_NOT_FOUND). mount.tsx stashes the real backend origin on window.
-function brainRestartUrl(): string {
-  const origin = (
-    window as unknown as { __UNDISCLOSED_BACKEND_ORIGIN__?: string }
-  ).__UNDISCLOSED_BACKEND_ORIGIN__;
-  const base = origin && /^https?:\/\//.test(origin) ? origin : '';
-  return `${base}/undisclosed-agent/brain/restart`;
-}
-const POLL_MS = 4000;
+const LABELS: Record<BrainState, string> = {
+  checking: 'Checking…',
+  live: 'Brain live',
+  dead: 'Brain offline',
+  restarting: 'Restarting…',
+};
 
-async function probe(url: string, timeoutMs = 2500): Promise<boolean> {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, { signal: ctrl.signal, cache: 'no-store' });
-    return res.ok;
-  } catch {
-    return false;
-  } finally {
-    clearTimeout(t);
-  }
-}
+// Green when live, red when down, amber while checking / restarting.
+const DOT_TONE: Record<BrainState, string> = {
+  live: 'bg-ds-bg-status-completed-default-default',
+  dead: 'bg-ds-bg-error-default-default',
+  checking: 'bg-ds-bg-warning-default-default',
+  restarting: 'bg-ds-bg-warning-default-default',
+};
 
-export function BrainStatus() {
-  const [state, setState] = useState<BrainState>('checking');
-  const mounted = useRef(true);
-  // Only re-bootstrap on a DEAD→LIVE recovery, not on a normal live launch
-  // (mount already bootstrapped then). Set once we've observed a dead probe.
-  const sawDead = useRef(false);
-
-  const check = useCallback(async () => {
-    const ok = await probe(BRAIN_HEALTH_URL);
-    if (!mounted.current) return;
-    if (!ok) {
-      sawDead.current = true;
-    } else if (sawDead.current) {
-      // Brain recovered after being down: re-run workspace bootstrap so a null
-      // activeSpaceId (from a load that failed while it was dead) recovers and
-      // History/refresh work again without a full app relaunch.
-      sawDead.current = false;
-      const reboot = (
-        window as unknown as { __UNDISCLOSED_REBOOTSTRAP__?: () => Promise<void> }
-      ).__UNDISCLOSED_REBOOTSTRAP__;
-      if (reboot) {
-        void reboot().catch(() => {
-          /* best-effort recovery */
-        });
-      }
-    }
-    // Don't stomp the transient "restarting" label with a stale dead-probe.
-    setState((prev) => (prev === 'restarting' && !ok ? 'restarting' : ok ? 'live' : 'dead'));
-  }, []);
-
-  useEffect(() => {
-    mounted.current = true;
-    void check();
-    const id = setInterval(() => void check(), POLL_MS);
-    return () => {
-      mounted.current = false;
-      clearInterval(id);
-    };
-  }, [check]);
-
-  const restart = useCallback(async () => {
-    setState('restarting');
-    try {
-      await fetch(brainRestartUrl(), { method: 'POST' });
-    } catch {
-      /* backend may not expose the route in this build — fall through to polling */
-    }
-    // Poll until it answers. The frozen brain binary has a SLOW cold start
-    // (~20-40s: it imports camel/chromadb/etc. before binding /health), so a
-    // short window made the pill flash "offline" while the brain was still
-    // booting — then the background poll caught it and flipped to "live"
-    // ("restarting → offline → live"). Keep showing "restarting" for the whole
-    // window so the state reflects reality; the background check() also promotes
-    // to "live" the moment it answers, so we never get stuck.
-    const deadline = Date.now() + 90_000;
-    while (Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 1500));
-      if (!mounted.current) return;
-      if (await probe(BRAIN_HEALTH_URL)) {
-        if (mounted.current) setState('live');
-        return;
-      }
-    }
-    // Only after a genuinely long wait do we call it dead (real failure).
-    if (mounted.current) setState('dead');
-  }, []);
-
-  const color =
-    state === 'live'
-      ? '#3fb950'
-      : state === 'dead'
-        ? '#f85149'
-        : '#d29922'; // checking / restarting
-  const label =
-    state === 'live'
-      ? 'Brain live'
-      : state === 'dead'
-        ? 'Brain offline'
-        : state === 'restarting'
-          ? 'Restarting…'
-          : 'Checking…';
+export function BrainStatus({
+  state,
+  onRestart,
+}: {
+  state: BrainState;
+  onRestart: () => void;
+}) {
+  const label = LABELS[state];
 
   return (
-    <div
+    <span
       title={
         state === 'dead'
           ? 'The agent backend on :5001 is not responding. Click Restart to resurrect it.'
           : `Agent backend (:5001): ${label}`
       }
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 6,
-        fontSize: 11,
-        lineHeight: 1,
-        userSelect: 'none',
-        opacity: 0.85,
-      }}
+      className="inline-flex items-center gap-1.5"
     >
-      <span
-        aria-hidden
-        style={{
-          width: 8,
-          height: 8,
-          borderRadius: '50%',
-          background: color,
-          boxShadow: `0 0 0 2px ${color}22`,
-          transition: 'background 0.2s',
-          animation:
-            state === 'checking' || state === 'restarting'
-              ? 'undisclosed-pulse 1s ease-in-out infinite'
-              : undefined,
-        }}
+      <StatusDot
+        pulse={state === 'checking' || state === 'restarting'}
+        className={DOT_TONE[state]}
       />
-      <span style={{ color: 'var(--theia-foreground, currentColor)' }}>{label}</span>
+      <span>{label}</span>
       {state === 'dead' && (
         <button
-          onClick={restart}
-          style={{
-            marginLeft: 4,
-            padding: '1px 8px',
-            fontSize: 11,
-            borderRadius: 4,
-            border: '1px solid #f8514966',
-            background: 'transparent',
-            color: '#f85149',
-            cursor: 'pointer',
-          }}
+          type="button"
+          onClick={onRestart}
+          className="ml-1 rounded border border-ds-border-status-error-default-default px-2 py-[1px] text-ds-text-status-error-strong-default outline-none transition-colors hover:bg-ds-bg-status-error-subtle-default"
         >
           Restart
         </button>
       )}
-      <style>{`@keyframes undisclosed-pulse{0%,100%{opacity:1}50%{opacity:0.35}}`}</style>
-    </div>
+    </span>
   );
 }

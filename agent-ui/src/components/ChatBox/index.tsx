@@ -44,6 +44,7 @@ import { proxyUpdateTriggerExecution } from '@/service/triggerApi';
 import { useAuthStore } from '@/store/authStore';
 import {
   buildProjectContinuationContext,
+  hasLiveSessionStream,
   resolveChatModelForProject,
 } from '@/store/chatStore';
 import { usePageTabStore } from '@/store/pageTabStore';
@@ -1111,12 +1112,51 @@ export default function ChatBox(): JSX.Element {
             const nextTaskId = generateUniqueId();
             chatStore.setNextTaskId(nextTaskId);
             chatStore.setNextExecutionId(_taskId as string, executionId);
+            // Stable id for THIS follow-up's user turn. Recorded on the source
+            // task and reused when the turn is (re)placed, so a duplicated
+            // `confirmed`/`wait_confirm` can recognise and skip a second copy
+            // instead of rendering the same user bubble twice.
+            const turnUserId = generateUniqueId();
+            chatStore.setNextUserId(_taskId as string, turnUserId);
 
             // Use improve endpoint (POST /chat/{id}) - {id} is project_id.
             // Resolve the currently selected model so a mid-conversation switch
             // (e.g. model A -> model B) is honored on this follow-up turn.
             const improveModel =
               await resolveChatModelForProject(targetProjectId);
+
+            // Make sure a live consumer exists before enqueuing the turn. After
+            // a brain restart or a long idle drop the session's SSE stream is
+            // gone; without a consumer the improve POST lands in a queue nobody
+            // drains and the agent appears to "stop responding". Re-open a
+            // resume stream (attach WITHOUT re-running a turn) so the queued
+            // follow-up has somewhere to land.
+            if (!hasLiveSessionStream(targetProjectId)) {
+              try {
+                console.debug(
+                  '[handleSend] no live session stream; re-attaching before follow-up',
+                  { targetProjectId, _taskId }
+                );
+                await chatStore.startTask(
+                  _taskId,
+                  undefined,
+                  undefined,
+                  undefined,
+                  undefined,
+                  undefined,
+                  executionId,
+                  targetProjectId,
+                  effectiveSessionMode,
+                  { preserveTaskId: true, resume: true }
+                );
+              } catch (reAttachErr) {
+                console.error(
+                  '[handleSend] failed to re-attach session stream:',
+                  reAttachErr
+                );
+              }
+            }
+
             // The follow-up POST was fire-and-forget: if it rejected (4xx/5xx,
             // network, backend not consuming), the failure was SILENT and the
             // queued pill got stuck forever with no send ever happening — the
@@ -1181,7 +1221,7 @@ export default function ChatBox(): JSX.Element {
               chatStore.clearLiveReasoning(_taskId);
               chatStore.clearAcknowledgement(_taskId);
               chatStore.addMessages(_taskId, {
-                id: generateUniqueId(),
+                id: turnUserId,
                 role: 'user',
                 content: displayContent,
                 attaches: attachesForThisTurn,
