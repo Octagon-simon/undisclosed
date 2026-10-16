@@ -20,7 +20,10 @@ behavior (below) is replaced deliberately, not by accident.
 
 ## Current behavior (what we have today)
 
-- `resources/example-skills/` holds **35 skills, 37 MB total**.
+- `resources/example-skills/` holds **12 bundled skills, ~3 MB total** (frontend,
+  UI, design, and skill-authoring). The video/media skills that used to sit here are
+  **no longer shipped, auto-installed, or vendored**: they live in their upstream
+  GitHub projects and install on demand - see `docs/extra-skills.md`.
 - At startup `skill_service.sync_example_skills()` copies **every** example into
   `~/.undisclosed/skills/` and writes a `.undisclosed-example-skill` marker per
   directory. `skills_scan` then reports each with `isExample: true`, and
@@ -34,15 +37,11 @@ behavior (below) is replaced deliberately, not by accident.
 
 ### Sizes (the reason this matters)
 
-Nothing approaches 100 MB. The bundle is dominated by a few asset-heavy skills:
-
-- `brag` 16 MB (about 12 MB is four mp3 beds under `assets/music/`)
-- `music-to-video` 6.3 MB
-- `embedded-captions` 3.6 MB
-- `media-use` 2.0 MB
-- `uipro` 1.7 MB
-- `hyperframes-animation` 1.4 MB, `hyperframes-creative` 1.3 MB
-- everything else under 1 MB
+The **bundled** tree is now ~3 MB; the largest entry is `uipro` at 1.7 MB.
+The asset-heavy video/media skills were removed from the repo entirely (they were
+~34 MB, dominated by `brag` at 16 MB - about 12 MB of mp3 beds - plus
+`music-to-video` 6.3 MB, `embedded-captions` 3.6 MB, and `media-use` 2.0 MB).
+They now install on demand from upstream GitHub - see `docs/extra-skills.md`.
 
 ## Goal
 

@@ -65,8 +65,9 @@ enable toggle and delete, and adds a skill via zip upload. (A device symlink
 - Toolkit: `brain/app/agent/toolkit/skill_toolkit.py`
 - Backend: `brain/app/controller/skill_controller.py`, `brain/app/service/skill_service.py`, `skill_config_service.py`
 - UI: `agent-ui/src/components/CodeAgentWorkspace/AgentSkills.tsx`, `ChatBox/BottomBox/PickerPanel.tsx`
-- Examples: `resources/example-skills/` (bundled: `uipro`, `premium-frontend-ui`,
-  `skill-creator`)
+- Bundled examples: `resources/example-skills/` (frontend/design/authoring, shipped
+  and auto-installed). Extra skills (video/media/motion) are no longer vendored; they
+  live in their upstream GitHub projects and install on demand - see `docs/extra-skills.md`.
 - Packaging: the examples ship via electron-builder `extraResources` to
   `<resources>/example-skills`. The frozen brain can't resolve that path from
   `__file__` (PyInstaller extracts to a temp dir), so `brain-launcher.ts` points
@@ -76,3 +77,5 @@ enable toggle and delete, and adds a skill via zip upload. (A device symlink
 
 - `docs/features/curated-skill-catalog.md` - the planned browse-and-install catalog,
   so the app stops bundling and pre-installing every example skill.
+- `docs/extra-skills.md` - the extra (video/media) skills, their upstream GitHub
+  projects, and how to install one on demand.
