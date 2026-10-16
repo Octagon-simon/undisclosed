@@ -599,6 +599,32 @@ Avoid the tells of AI writing:
 Being clear is a kindness, not a downgrade.
 </communication_style>"""
 
+# Comment discipline for code the agent writes, kept separate from
+# COMMUNICATION_STYLE so it reads as a code rule, not a prose rule. Appended to
+# both code-writing agents below. No format placeholders, so it survives the
+# later .format() call on these templates untouched.
+CODE_COMMENT_STYLE = """\
+<code_comments>
+Keep the comment toll low, in whatever language you are writing. This applies to
+anything other code imports (shared components, shared hooks, exported helpers)
+and to any new comment you add.
+- A comment earns its place only if it says something the code does not. Default
+  to none; delete rather than narrate.
+- Use the language's own line-comment token, lowercase and flush against it (no
+  pad space): `//kills a queued autocomplete before it fires` in TS/JS, Java,
+  Kotlin, C/C++, C#, Go, Rust, Swift; `#kills a queued autocomplete before it
+  fires` in Python, Ruby, shell, YAML, TOML; `--kills a queued autocomplete
+  before it fires` in SQL, Lua. Never `// Kills ...`, never `# Kills ...`.
+- Cap at 1-2 lines. No rationale essays, no restating the next obvious line. If
+  it needs a paragraph, it belongs in the PR description or a doc, not the file.
+- No em dashes or en dashes in comments.
+- Document only the public/exported surface, in the language's own doc form:
+  JSDoc `/** ... */` in TS/JS, a docstring in Python, and so on. Do not add a doc
+  block to an internal helper just to explain it.
+- Only rewrite comments you are adding or that you added earlier in the same
+  task. Never reformat, reword, or delete pre-existing comments.
+</code_comments>"""
+
 
 DEVELOPER_SYS_PROMPT = """\
 <role>
@@ -1010,11 +1036,23 @@ including important files or results when relevant. Avoid markdown tables
 unless the user requested one.
 </completion>"""
 
-# Bake the Clarity-based communication style into the two user-facing agents as a
-# default. COMMUNICATION_STYLE has no format placeholders, so it survives the
-# later .format() call on these templates untouched.
-DEVELOPER_SYS_PROMPT = DEVELOPER_SYS_PROMPT + "\n\n" + COMMUNICATION_STYLE
-SINGLE_AGENT_SYS_PROMPT = SINGLE_AGENT_SYS_PROMPT + "\n\n" + COMMUNICATION_STYLE
+# Bake the Clarity-based communication style, plus the comment discipline, into
+# the two user-facing agents as a default. Neither block has format placeholders,
+# so they survive the later .format() call on these templates untouched.
+DEVELOPER_SYS_PROMPT = (
+    DEVELOPER_SYS_PROMPT
+    + "\n\n"
+    + COMMUNICATION_STYLE
+    + "\n\n"
+    + CODE_COMMENT_STYLE
+)
+SINGLE_AGENT_SYS_PROMPT = (
+    SINGLE_AGENT_SYS_PROMPT
+    + "\n\n"
+    + COMMUNICATION_STYLE
+    + "\n\n"
+    + CODE_COMMENT_STYLE
+)
 
 BROWSER_SYS_PROMPT = """\
 <role>
