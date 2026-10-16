@@ -1,0 +1,84 @@
+# Lint: Python (ruff) + TypeScript (ESLint). Everything here runs REPORT-ONLY.
+#
+# The repo carries a pre-existing lint backlog (brain ~98 ruff findings,
+# agent-ui ~66 ESLint errors, packages/* two stale inline directives), so each
+# lint step is `continue-on-error: true`: it runs, annotates the diff, and
+# prints the count, but does not fail the build. As each area is burned down,
+# delete its `continue-on-error` so regressions start failing CI again.
+name: Lint
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: ruff (brain)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: brain
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Sync brain deps
+        run: uv sync
+
+      - name: Ruff lint (report-only)
+        continue-on-error: true
+        run: uv run ruff check . --output-format=github
+
+      - name: Ruff format check (report-only)
+        continue-on-error: true
+        run: uv run ruff format --check .
+
+  typescript:
+    name: eslint (agent-ui + packages)
+    runs-on: ubuntu-latest
+    env:
+      # husky's `prepare` runs on install; there is no need for git hooks in CI.
+      HUSKY: "0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            agent-ui/package-lock.json
+
+      # --ignore-scripts skips node-gyp / @theia native builds and Electron's
+      # binary download. Lint needs none of them, and it keeps CI fast.
+      - name: Install root deps
+        run: npm ci --ignore-scripts
+
+      - name: Install agent-ui deps
+        working-directory: agent-ui
+        run: npm ci --ignore-scripts
+
+      - name: ESLint the Theia packages (report-only)
+        continue-on-error: true
+        run: npx eslint packages --format=github
+
+      - name: ESLint agent-ui (report-only)
+        continue-on-error: true
+        working-directory: agent-ui
+        run: npx eslint . --no-warn-ignored --format=github
