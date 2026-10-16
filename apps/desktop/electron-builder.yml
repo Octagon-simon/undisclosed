@@ -57,7 +57,8 @@ extraResources:
     to: "brain"
     filter:
       - "undisclosed-brain*"
-  # Bundled example agent skills (uipro, premium-frontend-ui, skill-creator) ->
+  # Bundled example agent skills (uipro, premium-frontend-ui, refactoring-ui,
+  # skill-creator) ->
   # <resources>/example-skills. The brain's skill_service discovers this dir in
   # the packaged app and syncs each skill into the per-user store on startup, so
   # we ship the exact skills users get. Without this the bundled skills never
