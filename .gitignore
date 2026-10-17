@@ -103,6 +103,12 @@ videos/
 *.tiff
 .tmp-ocr.*
 
+# Scratch dumps from debugging/build runs (screenshots are already covered by *.png)
+agent-progress*.html
+chat_history_preserve.txt
+COMMIT_MESSAGES.md
+dist/*.skill
+
 # The `!site/**` exception above re-includes everything under site/, including
 # editor auto-backups. Keep those out of the deployable tree.
 site/**/*.bak
