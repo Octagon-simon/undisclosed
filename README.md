@@ -30,8 +30,8 @@ model.
 <video src="docs/media/undisclosed-demo.mp4" width="100%" controls poster="docs/media/undisclosed-demo-poster.jpg"></video>
 
 [Watch the 35-second demo](docs/media/undisclosed-demo.mp4) (1920x1080, mp4) if your
-viewer doesn't play it inline. The demo was written, animated and rendered inside
-Undisclosed itself, with the agent driving the HyperFrames pipeline.
+viewer doesn't play it inline. The demo video was cut, captioned and rendered
+inside Undisclosed itself, with the agent driving the HyperFrames pipeline.
 
 ---
 
