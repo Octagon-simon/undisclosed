@@ -188,7 +188,7 @@ One command freezes the brain, builds the agent UI, and packages:
 ```bash
 nvm use 20
 export npm_config_python="$PWD/brain/.venv/bin/python"   # node-gyp needs Python 3.11
-npm run desktop:install                                  # once — apps/desktop node_modules
+npm run desktop:install                                  # once, for apps/desktop node_modules
 npm --prefix apps/desktop run rebuild                    # native modules → Electron ABI
 npm run dist:mac        # also dist:win / dist:linux → apps/desktop/dist/*
 ```

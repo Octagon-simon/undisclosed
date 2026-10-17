@@ -102,3 +102,7 @@ videos/
 # One-off local artifacts from screen capture and OCR passes.
 *.tiff
 .tmp-ocr.*
+
+# The `!site/**` exception above re-includes everything under site/, including
+# editor auto-backups. Keep those out of the deployable tree.
+site/**/*.bak

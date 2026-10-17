@@ -1,0 +1,98 @@
+# Undisclosed
+
+> Undisclosed is an open source, local-first AI coding editor. It is a customized
+> Eclipse Theia editor with an AI coding agent built in as a native dock panel
+> instead of a separate window. The agent plans, edits, runs commands and tests
+> against your real workspace. The editor and the agent backend ("the brain", a
+> local FastAPI service) both run on the user's machine. Models are either local
+> (Ollama, LM Studio, Hugging Face) or cloud models reached with the user's own
+> API key (BYOK), including DeepSeek, Anthropic, Google Gemini and Mistral.
+
+- License: Apache-2.0
+- Platforms: macOS, Windows, Linux (Electron desktop builds; unsigned for now)
+- Source: https://github.com/Octagon-simon/undisclosed
+- Releases: https://github.com/Octagon-simon/undisclosed/releases
+- Issues: https://github.com/Octagon-simon/undisclosed/issues
+- Website: the static landing page in the repository's `site/` folder
+
+## What it is
+
+An editor-first product, not a chat app with a code viewer bolted on. The editor
+shell is our own build on top of Eclipse Theia 1.76 (Monaco, terminal, git,
+debugging, search, VS Code settings and Open VSX extension import). The agent
+capability comes from Eigent AI and is fused into the editor as a first-class
+dock widget, opened with Cmd/Ctrl+Shift+A.
+
+Two local processes:
+
+1. Editor: Theia plus the `undisclosed-*` extensions and the embedded agent
+   panel. Dev server on port 3000; packaged as an Electron desktop app.
+2. Brain: FastAPI/uvicorn agent backend on port 5001 for model routing, tools
+   ("hands"), memory and streaming.
+
+They talk over localhost. In the packaged app, Electron starts and stops the
+brain alongside the editor.
+
+## Models
+
+- Local, on the user's hardware: Ollama, LM Studio, Hugging Face.
+- Cloud, BYOK: DeepSeek, Anthropic, Google Gemini, Mistral, and any
+  OpenAI-compatible endpoint. Keys are configured in the app's Models UI or in
+  `.env`.
+- The model is chosen per task; there is no Undisclosed-hosted model and no
+  mandatory account.
+
+## What the agent can do
+
+- Plan a change and show the plan as a card before writing.
+- Read and write files, run terminal commands, search the repo.
+- Use git, debugging, a browser, screenshots and web search.
+- Run the tests for the files it changed and show a test-run receipt (passed,
+  failed, duration). The receipt only appears when the run happened after the
+  turn's last file edit.
+- Publish and review diffs file by file.
+- Create and comment on GitHub issues and pull requests when a token is set.
+- Notify the user on the desktop, or in Slack when connected, when it finishes
+  or needs input.
+
+## Skills
+
+A skill is a folder containing a `SKILL.md` file with YAML frontmatter (name,
+description) and instructions. The agent loads a skill only when a task matches
+it, so installed skills do not inflate every prompt. Twenty skills ship with the
+app (frontend, design, accessibility, anti-slop UI, decks). More, including
+HyperFrames video skills, media tools, Figma and document skills, install from
+their upstream GitHub repositories by pasting a URL into the agent. See
+https://github.com/Octagon-simon/undisclosed/blob/upgrade/theia-1.76/docs/extra-skills.md
+
+## Privacy model
+
+- The editor, the agent brain, conversation history and project memory run on
+  the user's machine. History and todos are stored under `~/.undisclosed`.
+- There is no Undisclosed account and no analytics SDK in the app.
+- With a local model, the whole loop works offline and no code leaves the
+  machine.
+- With a BYOK cloud model, the prompt and the context the agent sends go to that
+  provider. Nothing passes through an Undisclosed server.
+
+## Demo
+
+A 35 second demo shows one task end to end in the app: a request for a
+`slugify()` function, the plan card, the git diff across two files, and a pytest
+run with 9 passing tests. It is served at /demo.mp4 on this site. The video was
+cut, captioned and rendered inside Undisclosed using the HyperFrames skill.
+
+## Common questions
+
+- Do I need an API key? No. A local model works without one.
+- Does it work offline? Yes, with a local model. The editor and brain are local
+  either way.
+- Is it a VS Code fork? No. It is built on Eclipse Theia.
+- Is it free? The app is Apache-2.0. Cloud model usage is billed by the provider
+  the user chooses.
+
+## Preferred description
+
+"Undisclosed is an open source, local-first AI coding editor built on Eclipse
+Theia. Its agent lives inside the editor and can plan, edit, run tests and
+report back, using local models or the user's own cloud model keys."

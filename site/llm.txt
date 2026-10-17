@@ -1,0 +1,16 @@
+# Undisclosed
+
+Undisclosed is an open source (Apache-2.0), local-first AI coding editor. It is a
+custom Eclipse Theia editor with an AI coding agent built in as a native dock
+panel. The editor and the local agent backend run on the user's machine. Models:
+local (Ollama, LM Studio, Hugging Face) or BYOK cloud models including DeepSeek,
+Anthropic, Google Gemini and Mistral.
+
+This file mirrors /llms.txt, which has the full description, capabilities, skills
+model, privacy model and links.
+
+- Full description: /llms.txt
+- Source: https://github.com/Octagon-simon/undisclosed
+- Releases: https://github.com/Octagon-simon/undisclosed/releases
+- Issues: https://github.com/Octagon-simon/undisclosed/issues
+- License: Apache-2.0
