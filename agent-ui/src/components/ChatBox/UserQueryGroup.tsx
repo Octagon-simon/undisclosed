@@ -15,6 +15,7 @@
 
 import { inferSessionModeFromTask } from '@/lib/sessionMode';
 import { getTaskElapsedMs } from '@/lib/taskTime';
+import { latestTestRun, type TestRunSnapshot } from '@/lib/testRunParser';
 import { VanillaChatStore } from '@/store/chatStore';
 import { usePageTabStore } from '@/store/pageTabStore';
 import { AgentStep, ChatTaskStatus, SessionMode } from '@/types/constants';
@@ -44,6 +45,7 @@ import {
   type ActivityItem,
 } from '@/lib/activityClassifier';
 import { ExecutionSummary } from './MessageItem/ExecutionSummary';
+import { TestRunCard } from './MessageItem/TestRunCard';
 import { PlanCard } from './MessageItem/PlanCard';
 import { PlanTaskBox } from './TaskBox/PlanTaskBox';
 import { isPlanSplittingPhase } from './TaskBox/PlanTaskBox/utils';
@@ -502,6 +504,24 @@ export const UserQueryGroup: React.FC<UserQueryGroupProps> = ({
   // so its groups start collapsed.
   const summaryRunning = liveActivities.length > 0 && taskIsLive;
 
+  // The turn's verification receipt. Live turns parse the shell activity (the
+  // command + its output are both there); reloaded turns read the snapshot the
+  // END message persisted, because `toPersistedActivity` drops raw tool I/O.
+  const liveTestRun = latestTestRun(liveActivities);
+  const persistedTestRuns: TestRunSnapshot[] = (() => {
+    const msgs = queryGroup.otherMessages ?? [];
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const runs = (msgs[i] as { testRuns?: TestRunSnapshot[] })?.testRuns;
+      if (Array.isArray(runs) && runs.length) return runs;
+    }
+    return [];
+  })();
+  const testRun =
+    liveTestRun ??
+    (persistedTestRuns.length
+      ? persistedTestRuns[persistedTestRuns.length - 1]
+      : null);
+
   // The agent is blocked on an inline `ask_human_via_gui` question. The turn is
   // paused (not finished), so the live comet ring should PAUSE with it: freeze
   // the sweep on the Plan card / Execution Summary until the human answers and
@@ -689,6 +709,17 @@ export const UserQueryGroup: React.FC<UserQueryGroupProps> = ({
               startedAt={
                 Number.isFinite(turnStartedAtMs) ? turnStartedAtMs : undefined
               }
+            />
+          ) : null}
+          {testRun ? (
+            <TestRunCard
+              {...testRun}
+              running={Boolean(liveTestRun && summaryRunning && testRun.running)}
+              animate={Boolean(liveTestRun && summaryRunning && testRun.running)}
+              // Folded by default: the header already carries `9 passed in
+              // 0.01s`, and an open roster would push the answer below the fold.
+              defaultOpen={false}
+              className="mt-2"
             />
           ) : null}
         </motion.div>

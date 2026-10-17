@@ -14,6 +14,7 @@
 // ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
 
 import type { ActivityItem } from '@/lib/activityClassifier';
+import type { TestRunSnapshot } from '@/lib/testRunParser';
 import type {
   AgentMessageStatusType,
   AgentStatusType,
@@ -129,6 +130,9 @@ declare global {
      *  the summary re-renders after a reload. Live turns derive the same data
      *  from `taskAssigning`; this is the reload fallback. */
     activities?: ActivityItem[];
+    /** Verification receipts for the turn, persisted with the END message so
+     *  the test card survives a reload (raw tool output is not persisted). */
+    testRuns?: TestRunSnapshot[];
     /** Wall-clock time the message entered the conversation (ISO 8601). Drives
      *  the timestamp in the user-turn header; absent when the source it was
      *  rebuilt from (some history/replay paths) doesn't carry one. */
@@ -177,6 +181,8 @@ declare global {
       current_length?: number;
       max_length?: number;
       text?: string;
+      /** Verification receipts replayed with an END event. */
+      testRuns?: TestRunSnapshot[];
     };
     status?: AgentMessageStatusType;
   }

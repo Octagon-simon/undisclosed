@@ -199,6 +199,8 @@ export const ProjectSection = React.forwardRef<
               const patch: any = {};
               if (m.activities && !existing.activities)
                 patch.activities = m.activities;
+              if (m.testRuns && !existing.testRuns)
+                patch.testRuns = m.testRuns;
               if (m.reasoning && !existing.reasoning)
                 patch.reasoning = m.reasoning;
               if (m.createdAt && !existing.createdAt)

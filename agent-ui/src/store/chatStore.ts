@@ -58,6 +58,10 @@ import {
   toPersistedActivities,
   type ActivityItem,
 } from '@/lib/activityClassifier';
+import {
+  latestTestRun,
+  type TestRunSnapshot,
+} from '@/lib/testRunParser';
 import { getOpenFolderRoot } from '@/lib/openFolder';
 import { normalizeUserTurnContent } from '@/lib/dedupeUserTurns';
 import {
@@ -1649,6 +1653,7 @@ const chatStore = (initial?: Partial<ChatStore>) =>
                     content: String(content ?? ''),
                     reasoning: (message as any)?.reasoning ?? null,
                     activities: (message as any)?.activities ?? null,
+                    testRuns: (message as any)?.testRuns ?? null,
                     agent_name: (message as any)?.agent_name || null,
                     attaches: (message as any)?.attaches || [],
                     fileList: (message as any)?.fileList || [],
@@ -4544,6 +4549,19 @@ const chatStore = (initial?: Partial<ChatStore>) =>
               Array.isArray((endData as { activities?: unknown }).activities)
                 ? (endData as { activities: ActivityItem[] }).activities
                 : undefined;
+            // Verification receipt. Derived BEFORE the activity rows are
+            // persisted, because `toPersistedActivity` drops the raw tool
+            // output the parser needs. A replay payload may carry the snapshot
+            // already; otherwise read it off the live shell activity now.
+            const endTestRuns = Array.isArray(
+              (endData as { testRuns?: unknown } | null)?.testRuns
+            )
+              ? ((endData as { testRuns: TestRunSnapshot[] }).testRuns ?? [])
+              : undefined;
+            const liveActivitiesForEnd = endActivities
+              ? []
+              : collectTaskActivities(tasks[currentTaskId]?.taskAssigning);
+            const liveTestRun = latestTestRun(liveActivitiesForEnd);
             const endMessageId = generateUniqueId();
             const endUiMessage: Message = {
               id: endMessageId,
@@ -4554,10 +4572,8 @@ const chatStore = (initial?: Partial<ChatStore>) =>
               fileList: [],
               reasoning: finalReasoning,
               activities:
-                endActivities ??
-                toPersistedActivities(
-                  collectTaskActivities(tasks[currentTaskId]?.taskAssigning)
-                ),
+                endActivities ?? toPersistedActivities(liveActivitiesForEnd),
+              testRuns: endTestRuns ?? (liveTestRun ? [liveTestRun] : undefined),
             };
 
             addMessages(currentTaskId, endUiMessage);
@@ -5493,6 +5509,7 @@ const chatStore = (initial?: Partial<ChatStore>) =>
                     content: String(content ?? ''),
                     reasoning: (message as any)?.reasoning ?? null,
                     activities: (message as any)?.activities ?? null,
+                    testRuns: (message as any)?.testRuns ?? null,
                     agent_name: (message as any)?.agent_name || null,
                     attaches: (message as any)?.attaches || [],
                     fileList: (message as any)?.fileList || [],

@@ -29,6 +29,8 @@ class Message:
     # persisted). Stored opaquely: the route keeps the raw posted dict, so this
     # field is only here to document the shape.
     activities: list[dict] | None = None
+    # Parsed verification receipts, persisted before the raw tool I/O is dropped.
+    testRuns: list[dict] | None = None
     attaches: list[dict] = field(default_factory=list)
     fileList: list[dict] = field(default_factory=list)
     agent_name: str | None = None

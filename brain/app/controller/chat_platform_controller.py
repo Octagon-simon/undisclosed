@@ -1221,6 +1221,8 @@ async def chat_steps_playback(task_id: str, delay_time: float = Query(0.0)):
                         # Execution Summary snapshot, replayed so the panel
                         # rebuilds the summary from history (not just live runs).
                         "activities": msg.get("activities"),
+                        # Verification receipts travel with the summary.
+                        "testRuns": msg.get("testRuns"),
                     }
                 }
                 

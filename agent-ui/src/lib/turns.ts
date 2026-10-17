@@ -26,6 +26,8 @@ export type TurnMessage = {
   reasoning?: string | null;
   /** Execution Summary rows for the turn, so the summary survives a reload. */
   activities?: unknown[] | null;
+  /** End-of-turn test receipts, parsed before the raw tool I/O is dropped. */
+  testRuns?: unknown[] | null;
   attaches?: any[];
   fileList?: any[];
   agent_name?: string | null;

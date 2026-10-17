@@ -18,6 +18,10 @@ import {
   PlanCard,
   type PlanStep,
 } from '@/components/ChatBox/MessageItem/PlanCard';
+import {
+  TestRunCard,
+  type TestRunCardProps,
+} from '@/components/ChatBox/MessageItem/TestRunCard';
 import { ThinkingBlock } from '@/components/ChatBox/MessageItem/ThinkingBlock';
 import { UserMessageCard } from '@/components/ChatBox/MessageItem/UserMessageCard';
 import type { ActivityItem, ChangedFile } from '@/lib/activityClassifier';
@@ -36,6 +40,7 @@ import { TaskStatus } from '@/types/constants';
  *   Section 3  user turn + reply   -> `UserMessageCard` + `AgentMessageCard`
  *   Section 4  thought process     -> `ThinkingBlock`
  *   Section 5  execution summary   -> `ExecutionSummary`
+ *   Section 5b test receipt        -> `TestRunCard` (only when tests ran)
  *   Section 6  changed files       -> `FilesChanged`
  *   Section 7  composer            -> `BottomBox` (owns the picker panels)
  *
@@ -79,6 +84,8 @@ export interface PanelFullProps {
   running?: boolean;
   /** Inline agent progress / plan card (Section 4b). Omit to hide the card. */
   planSteps?: PlanStep[];
+  /** End-of-turn test receipt (Section 5b). Omit when the turn ran no tests. */
+  testRun?: TestRunCardProps;
   files: ChangedFile[];
   riskSummary?: ReactNode;
 
@@ -103,6 +110,7 @@ function PanelFull({
   activities,
   running,
   planSteps,
+  testRun,
   files,
   riskSummary,
   composerValue,
@@ -154,6 +162,11 @@ function PanelFull({
             // Live "Working for Xs" pill only makes sense while running.
             startedAt={running ? Date.now() - 53_000 : undefined}
           />
+
+          {/* Section 5b - the verification receipt. Lives outside the
+              Execution Summary so folding the activity log never hides the
+              test result. */}
+          {testRun ? <TestRunCard {...testRun} /> : null}
 
           {/* Section 3 (reply) - after the work summaries, per the live order. */}
           <AgentMessageCard
@@ -349,6 +362,24 @@ const RUNNING_PLAN: PlanStep[] = [
   },
 ];
 
+/** The captured run's nine tests, in file order. */
+const TEST_RUN: TestRunCardProps = {
+  command: '.venv/bin/python -m pytest test_app.py',
+  tests: [
+    { name: 'test_shout', status: 'passed' },
+    { name: 'test_slugify_lowercases', status: 'passed' },
+    { name: 'test_slugify_replaces_spaces_with_hyphens', status: 'passed' },
+    { name: 'test_slugify_strips_punctuation', status: 'passed' },
+    { name: 'test_slugify_collapses_whitespace_runs', status: 'passed' },
+    { name: 'test_slugify_trims_leading_and_trailing_hyphens', status: 'passed' },
+    { name: 'test_slugify_mixed_punctuation', status: 'passed' },
+    { name: 'test_slugify_normalizes_underscores', status: 'passed' },
+    { name: 'test_slugify_empty_string', status: 'passed' },
+  ],
+  duration: '0.01s',
+  provenance: 'PYTEST OUTPUT FROM THE CAPTURED RUN',
+};
+
 /** The full panel: live turn, work summaries, changed files, composer. */
 export const Conversation: Story = {
   args: {
@@ -360,6 +391,7 @@ export const Conversation: Story = {
     duration: 'Worked for 53s',
     stepCount: 4,
     activities: ACTIVITIES,
+    testRun: TEST_RUN,
     files: FILES,
     riskSummary: (
       <span className="inline-flex items-center gap-1.5">
