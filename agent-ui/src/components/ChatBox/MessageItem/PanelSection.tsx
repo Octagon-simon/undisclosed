@@ -31,6 +31,13 @@ export interface PanelSectionProps {
   title?: ReactNode;
   /** Right end of the title row: stats, badges, chevron, etc. */
   meta?: ReactNode;
+  /**
+   * Native hover tooltip and accessible name for the title row, e.g.
+   * `Execution summary: 8 searches, 3 files read`. Without it the row's
+   * accessible name is only its visible text, which is why a screen-reader
+   * user hears "9/12" with no idea that the card is a plan.
+   */
+  tooltip?: string;
   /** When set, the title row becomes a toggle button (`aria-expanded` is wired). */
   onToggle?: () => void;
   /** Disclosure state passed to `aria-expanded` when `onToggle` is set. */
@@ -66,6 +73,7 @@ export function PanelSection({
   icon,
   title,
   meta,
+  tooltip,
   onToggle,
   expanded,
   active = false,
@@ -147,32 +155,35 @@ export function PanelSection({
           active ? 'rounded-[7px]' : 'rounded-lg'
         )}
       >
-      {hasTitle ? (
-        onToggle ? (
-          <button
-            type="button"
-            onClick={onToggle}
-            aria-expanded={expanded}
-            className={cn(
-              'flex w-full flex-wrap items-center gap-x-2 gap-y-1 text-left outline-none',
-              titleClassName
-            )}
-          >
-            {left}
-            {right}
-          </button>
-        ) : (
-          <div
-            className={cn(
-              'flex flex-wrap items-center gap-x-2 gap-y-1',
-              titleClassName
-            )}
-          >
-            {left}
-            {right}
-          </div>
-        )
-      ) : null}
+        {hasTitle ? (
+          onToggle ? (
+            <button
+              type="button"
+              onClick={onToggle}
+              aria-expanded={expanded}
+              aria-label={tooltip}
+              title={tooltip}
+              className={cn(
+                'flex w-full flex-wrap items-center gap-x-2 gap-y-1 text-left outline-none',
+                titleClassName
+              )}
+            >
+              {left}
+              {right}
+            </button>
+          ) : (
+            <div
+              title={tooltip}
+              className={cn(
+                'flex flex-wrap items-center gap-x-2 gap-y-1',
+                titleClassName
+              )}
+            >
+              {left}
+              {right}
+            </div>
+          )
+        ) : null}
         {children}
       </div>
     </section>

@@ -182,8 +182,15 @@ export function ExecutionSummary({
 
   if (!metrics.length) return null;
 
+  // Hover text names the section and what it holds; the bare counts in the
+  // header do not tell a newcomer that this box is the turn's work log.
+  const summaryTooltip = `Execution summary: ${metrics
+    .map((metric) => `${metric.count} ${metric.label}`)
+    .join(', ')}`;
+
   return (
     <PanelSection
+      tooltip={summaryTooltip}
       icon={
         <Zap
           className="h-4 w-4 text-ds-text-warning-default-default"

@@ -333,7 +333,10 @@ export function FilesChanged({
       )}
     >
       {/* Title row: totals on the left. (Review/Keep/Revert hidden for now.) */}
-      <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+      <div
+        title={`Changed files: ${fileLabel}, +${additions} -${deletions}`}
+        className="flex flex-wrap items-center justify-between gap-2 px-3 py-2"
+      >
         <div className="flex items-center gap-2">
           <FileText
             className="h-4 w-4 text-ds-text-neutral-subtle-default"

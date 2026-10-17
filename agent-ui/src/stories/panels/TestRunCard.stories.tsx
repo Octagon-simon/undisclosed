@@ -91,12 +91,14 @@ export const Running: Story = {
   args: {
     command: COMMAND,
     tests: [
-      ...CAPTURED_TESTS.slice(0, 4).map(
-        (t): TestCase => ({ ...t, status: 'passed' })
-      ),
-      ...CAPTURED_TESTS.slice(4).map(
-        (t): TestCase => ({ ...t, status: 'pending' })
-      ),
+      ...CAPTURED_TESTS.slice(0, 4).map((t): TestCase => ({
+        ...t,
+        status: 'passed',
+      })),
+      ...CAPTURED_TESTS.slice(4).map((t): TestCase => ({
+        ...t,
+        status: 'pending',
+      })),
     ],
     running: true,
     animate: true,
@@ -146,6 +148,29 @@ export const Collapsed: Story = {
     duration: '0.01s',
     provenance: 'PYTEST OUTPUT FROM THE CAPTURED RUN',
     defaultOpen: false,
+  },
+};
+
+/**
+ * The real-world long command (a scoped vitest run with coverage). The header
+ * truncates it, `title` shows the full string on hover, and the copy button is
+ * the way to take it elsewhere without retyping.
+ */
+export const LongCommand: Story = {
+  args: {
+    command:
+      "cd packages/admin && npx vitest run src/components/CountBadge/__tests__/index.test.tsx --coverage --coverage.include='src/components/CountBadge/**' 2>&1 | tail -20",
+    tests: [
+      { name: 'renders the count', status: 'passed' },
+      { name: 'hides at zero', status: 'passed' },
+      { name: 'hides below zero', status: 'passed' },
+      { name: 'caps above max', status: 'passed' },
+      { name: 'keeps the exact max', status: 'passed' },
+      { name: 'accepts a custom max', status: 'passed' },
+      { name: 'labels the badge by default', status: 'passed' },
+      { name: 'accepts a custom label', status: 'passed' },
+    ],
+    duration: '0.71s',
   },
 };
 

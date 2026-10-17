@@ -82,6 +82,11 @@ export function ThinkingBlock({
 
   return (
     <PanelSection
+      tooltip={
+        running
+          ? 'Thought process: the agent is reasoning about the next step'
+          : `Thought process: the agent's reasoning${duration ? ` (${duration})` : ''}`
+      }
       icon={
         <Brain
           className="h-4 w-4 text-ds-text-information-default-default"

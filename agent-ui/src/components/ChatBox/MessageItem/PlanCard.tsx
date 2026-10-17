@@ -157,8 +157,16 @@ export function PlanCard({
       ? `Step ${activeIndex + 1} of ${total}`
       : `${done}/${total}`;
 
+  const planTooltip =
+    running && activeIndex >= 0
+      ? `Agent working: step ${activeIndex + 1} of ${total}`
+      : `Plan: ${done} of ${total} step${total === 1 ? '' : 's'} done${
+          failed ? `, ${failed} failed` : ''
+        }`;
+
   return (
     <PanelSection
+      tooltip={planTooltip}
       icon={
         running ? (
           <PulseDot />

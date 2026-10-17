@@ -90,3 +90,6 @@ brain/*.spec
 brag-output-2026-10-11-065557/
 demo-live/
 capture.mov
+
+# local screen-recording frames (source is videos/undisclosed-demo/assets/capture.mp4)
+capture-2026-10-17/
