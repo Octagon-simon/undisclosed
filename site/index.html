@@ -53,11 +53,6 @@
       try { localStorage.setItem(KEY, v); } catch (e) {}
     }
 
-    function optedOut() {
-      var dnt = navigator.doNotTrack || window.doNotTrack;
-      return dnt === "1" || dnt === "yes" || navigator.globalPrivacyControl === true;
-    }
-
     function queue() {
       window.dataLayer = window.dataLayer || [];
       window.gtag = window.gtag || function () { window.dataLayer.push(arguments); };
@@ -134,8 +129,7 @@
     window.undisclosedAnalytics = api;
 
     //returning visitor who already allowed analytics: start before first paint
-    if (VALID && stored() === "granted" && !optedOut()) load();
-    else if (VALID && stored() === "granted" && optedOut()) choice = "denied";
+    if (VALID && stored() === "granted") load();
   })();
 </script>
 
@@ -1238,11 +1232,6 @@
     var a = window.undisclosedAnalytics;
     if (!a) return;
 
-    function dntSignal() {
-      var dnt = navigator.doNotTrack || window.doNotTrack;
-      return dnt === "1" || dnt === "yes" || navigator.globalPrivacyControl === true;
-    }
-
     function sectionOf(el) {
       var s = el.closest("section[id], header, footer");
       if (!s) return "page";
@@ -1376,7 +1365,7 @@
     }, { passive: true });
 
     //consent bar: ask once, then reopen from the footer
-    a.open = function (message, locked) {
+    a.open = function () {
       if (!a.enabled) return;
       var existing = document.querySelector(".consent");
       if (existing) {
@@ -1398,36 +1387,27 @@
 
       var text = document.createElement("p");
       text.className = "consent-text";
-      text.textContent = message || (a.state() === "granted"
+      text.textContent = a.state() === "granted"
         ? "Analytics is on for this browser. It counts visits and which sections get read, and sets Google's _ga cookies. No code, prompts, keys or personal data."
-        : "Google Analytics counts visits and which sections get read, and sets its _ga cookies. No code, prompts, keys or personal data. Off unless you allow it.");
+        : "Google Analytics counts visits and which sections get read, and sets its _ga cookies. No code, prompts, keys or personal data. Off unless you allow it.";
 
       var actions = document.createElement("div");
       actions.className = "consent-actions";
 
-      if (locked) {
-        var close = document.createElement("button");
-        close.type = "button";
-        close.className = "btn btn-ghost btn-sm";
-        close.textContent = "Close";
-        close.addEventListener("click", function () { a.close(); });
-        actions.appendChild(close);
-      } else {
-        var allow = document.createElement("button");
-        allow.type = "button";
-        allow.className = "btn btn-primary btn-sm";
-        allow.textContent = a.state() === "granted" ? "Keep on" : "Allow analytics";
-        allow.addEventListener("click", function () { a.decide("granted"); });
+      var allow = document.createElement("button");
+      allow.type = "button";
+      allow.className = "btn btn-primary btn-sm";
+      allow.textContent = a.state() === "granted" ? "Keep on" : "Allow analytics";
+      allow.addEventListener("click", function () { a.decide("granted"); });
 
-        var deny = document.createElement("button");
-        deny.type = "button";
-        deny.className = "btn btn-ghost btn-sm";
-        deny.textContent = a.state() === "granted" ? "Turn off" : "No thanks";
-        deny.addEventListener("click", function () { a.decide("denied"); });
+      var deny = document.createElement("button");
+      deny.type = "button";
+      deny.className = "btn btn-ghost btn-sm";
+      deny.textContent = a.state() === "granted" ? "Turn off" : "No thanks";
+      deny.addEventListener("click", function () { a.decide("denied"); });
 
-        actions.appendChild(allow);
-        actions.appendChild(deny);
-      }
+      actions.appendChild(allow);
+      actions.appendChild(deny);
 
       inner.appendChild(title);
       inner.appendChild(text);
@@ -1442,18 +1422,14 @@
     if (settings) {
       settings.addEventListener("click", function (e) {
         e.preventDefault();
-        if (dntSignal()) {
-          a.open("Your browser is sending a Do Not Track or Global Privacy Control signal, so analytics stays off.", true);
-        } else {
-          a.open();
-        }
+        a.open();
         var first = document.querySelector(".consent .btn");
         if (first) first.focus();
       });
     }
 
     //first visit: ask once, after the page has settled
-    if (a.enabled && a.state() === null && !dntSignal()) {
+    if (a.enabled && a.state() === null) {
       setTimeout(function () { a.open(); }, 700);
     }
   })();

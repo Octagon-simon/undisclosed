@@ -28,9 +28,10 @@ container (`GTM-`) will not load. Use the GA4 data stream ID.
   "Built with Undisclosed" badge on mobile.
 - Footer link **Analytics settings** reopens it. Turning analytics off stops
   all future collection on this browser. It does not delete hits already sent.
-- `navigator.doNotTrack === "1"` or `navigator.globalPrivacyControl === true`
-  keeps analytics off and suppresses the bar. The footer link then explains
-  why.
+- The bar is shown to every first-time visitor, including browsers sending
+  `Do Not Track` or `Global Privacy Control`. The visitor decides; nothing is
+  measured unless they press **Allow analytics**, and either choice is
+  remembered.
 - GA4 is configured with `anonymize_ip`, `allow_google_signals: false` and
   `allow_ad_personalization_signals: false`. Only `analytics_storage` is
   granted; ads storage stays denied.
