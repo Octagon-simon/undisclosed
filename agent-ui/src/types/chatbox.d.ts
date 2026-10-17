@@ -121,6 +121,8 @@ declare global {
     summary?: string;
     agent_name?: string;
     attaches?: File[];
+    /** Code references sent with a user turn from the editor ("Send to Agent"). */
+    selections?: Array<{ path: string; startLine: number; endLine: number }>;
     /** For APPROVAL_OUTCOME messages: the resolved decision, drives info vs danger styling. */
     decision?: 'approved' | 'denied' | 'timeout' | string;
     /** Reasoning model's thoughts for an END message — shown in a collapsible

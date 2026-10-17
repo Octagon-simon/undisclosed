@@ -23,6 +23,7 @@ import { toast } from 'sonner';
 import { Button } from '../../ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '../../ui/popover';
 import { UserMessageRichContent } from './UserMessageRichContent';
+import { SelectionPill } from '../SelectionPill';
 
 const COPIED_RESET_MS = 2000;
 
@@ -48,6 +49,8 @@ interface UserMessageCardProps {
   content: string;
   className?: string;
   attaches?: File[];
+  /** Code references sent with this turn (editor "Send to Agent"). */
+  selections?: Array<{ path: string; startLine: number; endLine: number }>;
   /** Wall-clock time the turn was sent (ISO string). Renders at the right end
    *  of the turn header; the header shows just "User" when it is absent. */
   timestamp?: string;
@@ -66,6 +69,7 @@ export function UserMessageCard({
   content,
   className,
   attaches,
+  selections,
   timestamp,
 }: UserMessageCardProps) {
   const host = useHost();
@@ -304,6 +308,18 @@ export function UserMessageCard({
                 </>
               );
             })()}
+          </div>
+        )}
+        {selections && selections.length > 0 && (
+          <div className="mb-2 flex w-full flex-wrap items-start gap-1.5">
+            {selections.map((selection) => (
+              <SelectionPill
+                key={`${selection.path}:${selection.startLine}:${selection.endLine}`}
+                path={selection.path}
+                startLine={selection.startLine}
+                endLine={selection.endLine}
+              />
+            ))}
           </div>
         )}
         <div className="relative w-full">

@@ -1197,7 +1197,8 @@ async def chat_steps_playback(task_id: str, delay_time: float = Query(0.0)):
                 "step": "confirmed",
                 "data": {
                     "question": question,
-                    "attaches": [a["filePath"] for a in attaches]
+                    "attaches": [a["filePath"] for a in attaches],
+                    "selections": user_msg.get("selections") or [],
                 }
             }
             yield sse_json("confirmed", confirmed_payload)

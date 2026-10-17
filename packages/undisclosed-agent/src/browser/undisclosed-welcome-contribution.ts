@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Simon Ugorji
 //
-// Shows the branded welcome widget in the main area when there is NO open
-// workspace, and closes it once a folder is opened. Keeps the editor from being
-// a plain black void before a workspace is selected.
+// Keeps the branded welcome in the main area whenever no editor is open, and
+// drops it as soon as a real widget (an editor, settings, …) takes that area.
 
 import { inject, injectable } from '@theia/core/shared/inversify';
 import {
@@ -23,37 +22,75 @@ export class UndisclosedWelcomeContribution
   @inject(WidgetManager) protected readonly widgetManager!: WidgetManager;
   @inject(ApplicationShell) protected readonly shell!: ApplicationShell;
 
+  protected refreshQueued = false;
+
   onStart(): void {
-    // React to the workspace opening/closing at runtime.
-    this.workspaceService.onWorkspaceChanged(() => void this.refresh());
-    this.workspaceService.onWorkspaceLocationChanged(() => void this.refresh());
+    const refresh = (): void => this.scheduleRefresh();
+    // Workspace changes swap the copy (open-folder buttons vs. editing hints).
+    this.workspaceService.onWorkspaceChanged(refresh);
+    this.workspaceService.onWorkspaceLocationChanged(refresh);
+    // Opening the first editor or closing the last one changes what belongs in
+    // the main area. `onDidInitializeLayout` only fires on a fresh layout, so
+    // widget add/remove is what keeps a restored layout correct too.
+    this.shell.onDidAddWidget(refresh);
+    this.shell.onDidRemoveWidget(refresh);
   }
 
-  // `onDidInitializeLayout` fires on EVERY boot — both when Theia creates a
-  // fresh default layout and when it restores a saved one. `initializeLayout`
-  // only fires on a fresh layout, so on a plain reload (saved layout restored)
-  // it never runs and the welcome never appears. Hook the one that always fires.
   onDidInitializeLayout(): void {
-    void this.refresh();
+    this.scheduleRefresh();
+  }
+
+  /**
+   * Defer the layout mutation out of the shell's add/remove signal (closing or
+   * adding a widget while that signal is still running is re-entrant), and
+   * collapse a burst of restored editors into one refresh.
+   */
+  protected scheduleRefresh(): void {
+    if (this.refreshQueued) {
+      return;
+    }
+    this.refreshQueued = true;
+    setTimeout(() => {
+      this.refreshQueued = false;
+      void this.refresh();
+    }, 0);
+  }
+
+  /** Main-area content other than our own welcome widget. */
+  protected hasMainContent(): boolean {
+    return Array.from(this.shell.mainPanel.widgets()).some(
+      (widget) => widget.id !== UndisclosedWelcomeWidget.ID
+    );
   }
 
   protected async refresh(): Promise<void> {
-    if (this.workspaceService.opened) {
-      // A folder is open — the editor has real content; drop the welcome.
-      const existing = this.widgetManager.tryGetWidget(
-        UndisclosedWelcomeWidget.ID
-      );
+    const existing = this.widgetManager.tryGetWidget(
+      UndisclosedWelcomeWidget.ID
+    );
+    if (this.hasMainContent()) {
       existing?.close();
       return;
     }
-    // No workspace — show the welcome in the main area (don't steal focus from
-    // the agent panel on first boot; activate only so it's the visible tab).
-    const widget = await this.widgetManager.getOrCreateWidget(
-      UndisclosedWelcomeWidget.ID
-    );
+    const widget =
+      existing ??
+      (await this.widgetManager.getOrCreateWidget(
+        UndisclosedWelcomeWidget.ID
+      ));
+    // Another widget may have claimed the area while the factory resolved.
+    if (this.hasMainContent()) {
+      widget.close();
+      return;
+    }
+    let added = false;
     if (!widget.isAttached) {
       this.shell.addWidget(widget, { area: 'main' });
+      added = true;
     }
-    this.shell.activateWidget(widget.id);
+    widget.update();
+    // Only claim focus when the welcome just took over the empty area; other
+    // widgets being added/removed (e.g. the agent panel) must not steal it.
+    if (added) {
+      this.shell.activateWidget(widget.id);
+    }
   }
 }

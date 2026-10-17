@@ -13,6 +13,10 @@
 // limitations under the License.
 // ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
 
+import {
+  SelectionPill,
+  type CodeSelectionRef,
+} from '@/components/ChatBox/SelectionPill';
 import { Button } from '@/components/ui/button';
 import {
   Popover,
@@ -65,6 +69,10 @@ export interface InputboxProps {
   isRunning?: boolean;
   /** Stop the active task (wired to the composer's Stop button). */
   onStop?: () => void;
+  /** Editor selection attached to this message, shown as a pill above the input. */
+  selection?: CodeSelectionRef | null;
+  /** Dismiss the attached selection pill. */
+  onRemoveSelection?: () => void;
   /** Array of file attachments */
   files?: FileAttachment[];
   /** Callback when files are modified */
@@ -153,6 +161,8 @@ export const Inputbox = ({
   onSend,
   isRunning = false,
   onStop,
+  selection,
+  onRemoveSelection,
   files = [],
   onFilesChange,
   onAddFile,
@@ -210,8 +220,9 @@ export const Inputbox = ({
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
   }, [value, textareaRef]);
 
-  // Determine if we're in the "Input" state (has content or files)
-  const hasContent = value.trim().length > 0 || files.length > 0;
+  // Determine if we're in the "Input" state (has content, files, or a selection)
+  const hasContent =
+    value.trim().length > 0 || files.length > 0 || !!selection;
 
   const handleTextChange = useCallback(
     (newValue: string, _cursorPos?: number) => {
@@ -221,7 +232,7 @@ export const Inputbox = ({
   );
 
   const handleSend = () => {
-    if (value.trim().length > 0 && !disabled) {
+    if ((value.trim().length > 0 || !!selection) && !disabled) {
       onSend?.();
     } else if (value.trim().length === 0) {
       toast.error(t('chat.message-cannot-be-empty'), {
@@ -361,6 +372,17 @@ export const Inputbox = ({
           <div className="text-sm font-semibold">
             {t('chat.drop-files-to-attach')}
           </div>
+        </div>
+      )}
+      {/* Layer 2a: editor selection reference from "Send to Agent" */}
+      {selection && (
+        <div className="mb-2 flex w-full flex-wrap items-start gap-1.5">
+          <SelectionPill
+            path={selection.path}
+            startLine={selection.startLine}
+            endLine={selection.endLine}
+            onRemove={onRemoveSelection}
+          />
         </div>
       )}
       {/* Layer 2: File attachments (only show if has files) */}
@@ -658,7 +680,7 @@ export const Inputbox = ({
               buttonRadius="full"
               variant="primary"
               onClick={handleSend}
-              disabled={disabled || value.trim().length === 0}
+              disabled={disabled || (value.trim().length === 0 && !selection)}
               aria-label={t('chat.input-send-message', {
                 defaultValue: 'Send message',
               })}

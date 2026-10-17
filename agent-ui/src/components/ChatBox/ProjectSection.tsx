@@ -205,6 +205,8 @@ export const ProjectSection = React.forwardRef<
                 patch.reasoning = m.reasoning;
               if (m.createdAt && !existing.createdAt)
                 patch.createdAt = m.createdAt;
+              if (m.selections?.length && !existing.selections?.length)
+                patch.selections = m.selections;
               if (Object.keys(patch).length) {
                 merged[existingIdx] = { ...existing, ...patch };
                 changed = true;

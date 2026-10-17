@@ -24,6 +24,10 @@
 import AgentPanelHistory from '@/components/CodeAgentWorkspace/AgentPanelHistory';
 import AgentUsageStats from '@/components/CodeAgentWorkspace/AgentUsageStats';
 import { useEmbedNav } from '@/agent-embed/embedNav';
+import {
+  useComposerDraft,
+  type ComposerSelection,
+} from '@/agent-embed/composerDraft';
 import { useProjectStore } from '@/store/projectStore';
 import { useAuthStore, type GovernanceMode } from '@/store/authStore';
 import { ArrowLeft, Bot } from 'lucide-react';
@@ -94,6 +98,10 @@ function ManagedScreen({
 /** Imperative surface the host title bar drives the panel through. */
 export interface AgentPanelApi {
   newConversation(): void;
+  /** Seed the composer with text (opening the conversation view) and focus it. */
+  setComposerText(text: string): void;
+  /** Attach an editor selection to the composer as a removable pill. */
+  setComposerSelection(selection: ComposerSelection): void;
   toggleHistory(): void;
   showConversation(): void;
   isHistoryOpen(): boolean;
@@ -165,6 +173,9 @@ const AgentEmbedPanel = forwardRef<AgentPanelApi>((_props, ref) => {
     // and its plan bleeds into the "new" one. The project is scoped to the
     // active space (folder) and the backend persists it on the first message.
     setBody('conversation');
+    const composer = useComposerDraft.getState();
+    composer.clearDraft();
+    composer.clearSelection();
     useProjectStore.getState().createProject(t('layout.new-project'));
   }, [t]);
 
@@ -172,6 +183,18 @@ const AgentEmbedPanel = forwardRef<AgentPanelApi>((_props, ref) => {
     ref,
     (): AgentPanelApi => ({
       newConversation,
+      setComposerText: (text) => {
+        setBody('conversation');
+        const composer = useComposerDraft.getState();
+        composer.setDraft(text);
+        composer.requestFocus();
+      },
+      setComposerSelection: (selection) => {
+        setBody('conversation');
+        const composer = useComposerDraft.getState();
+        composer.setSelection(selection);
+        composer.requestFocus();
+      },
       toggleHistory: () =>
         setBody((m) => (m === 'history' ? 'conversation' : 'history')),
       showConversation: () => setBody('conversation'),

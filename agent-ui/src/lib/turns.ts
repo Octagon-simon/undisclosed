@@ -29,6 +29,8 @@ export type TurnMessage = {
   /** End-of-turn test receipts, parsed before the raw tool I/O is dropped. */
   testRuns?: unknown[] | null;
   attaches?: any[];
+  /** Code references sent with the turn, so pills survive a reload. */
+  selections?: Array<{ path: string; startLine: number; endLine: number }>;
   fileList?: any[];
   agent_name?: string | null;
   createdAt?: string | null;

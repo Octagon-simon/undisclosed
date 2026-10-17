@@ -801,6 +801,12 @@ export interface StartTaskOptions {
    * recover a session whose SSE stream died before a follow-up is enqueued.
    */
   resume?: boolean;
+  /** Text shown in the user's turn when it differs from the prompt sent to the
+   *  brain (e.g. a code-selection reference instead of the fenced code). */
+  displayContent?: string;
+  /** Code references shown as pills on the user's turn (the prompt itself
+   *  carries the path + lines for the agent). */
+  selections?: Array<{ path: string; startLine: number; endLine: number }>;
 }
 
 export interface AddMessagesOptions {
@@ -1831,8 +1837,9 @@ const chatStore = (initial?: Partial<ChatStore>) =>
             targetChatStore.getState().addMessages(newTaskId, {
               id: generateUniqueId(),
               role: 'user',
-              content: messageContent,
+              content: startOptions.displayContent ?? messageContent,
               attaches: messageAttaches || [],
+              selections: startOptions.selections,
             });
             targetChatStore.getState().setHasMessages(newTaskId, true);
           }
@@ -2655,6 +2662,23 @@ const chatStore = (initial?: Partial<ChatStore>) =>
                   source: 'upload',
                 }) as unknown as File
             );
+            // Code-selection pills ride along on the confirmed event during
+            // replay/reload, where the optimistic user turn no longer exists.
+            const confirmedSelections = Array.isArray(
+              (agentMessages.data as { selections?: unknown })?.selections
+            )
+              ? ((agentMessages.data as {
+                  selections?: Array<{
+                    path: string;
+                    startLine: number;
+                    endLine: number;
+                  }>;
+                }).selections as Array<{
+                  path: string;
+                  startLine: number;
+                  endLine: number;
+                }>)
+              : undefined;
             const shouldCreateNewChat =
               project_id && (question || messageContent);
 
@@ -2829,6 +2853,10 @@ const chatStore = (initial?: Partial<ChatStore>) =>
                   role: 'user',
                   content: userMessageContent,
                   attaches: attachesForNewMessage,
+                  selections:
+                    confirmedSelections?.length
+                      ? confirmedSelections
+                      : lastMessage?.selections,
                 };
                 if (newChatStore === previousVanillaStore) {
                   newChatStore.getState().addMessages(newTaskId, placementMessage, {
@@ -2955,6 +2983,20 @@ const chatStore = (initial?: Partial<ChatStore>) =>
                     currentTaskId,
                     firstUserMsg.id,
                     { ...firstUserMsg, attaches: rebuiltFromConfirmed }
+                  );
+                }
+              }
+              if (confirmedSelections?.length) {
+                const firstUserMsg = previousChatStore.tasks[
+                  currentTaskId
+                ]?.messages.find(
+                  (m) => m.role === 'user' && !m.selections?.length
+                );
+                if (firstUserMsg) {
+                  previousChatStore.updateMessage(
+                    currentTaskId,
+                    firstUserMsg.id,
+                    { ...firstUserMsg, selections: confirmedSelections }
                   );
                 }
               }
@@ -5468,6 +5510,7 @@ const chatStore = (initial?: Partial<ChatStore>) =>
                     content: String((message as any)?.content ?? ''),
                     createdAt: new Date().toISOString(),
                     attaches: (message as any)?.attaches || [],
+                    selections: (message as any)?.selections || [],
                     fileList: (message as any)?.fileList || [],
                     agent_name: (message as any)?.agent_name || null,
                   },

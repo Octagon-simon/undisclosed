@@ -20,8 +20,12 @@ import {
   MenuModelRegistry,
   MenuPath,
 } from '@theia/core/lib/common';
-import { EditorWidget } from '@theia/editor/lib/browser';
-import { UndisclosedAgentWidget } from './undisclosed-agent-widget';
+import { EditorManager, EditorWidget } from '@theia/editor/lib/browser';
+import { WorkspaceService } from '@theia/workspace/lib/browser';
+import {
+  UndisclosedAgentWidget,
+  type UndisclosedSelectionReference,
+} from './undisclosed-agent-widget';
 import {
   GOVERNANCE_ITEM_ID,
   renderGovernanceMenuButton,
@@ -33,6 +37,12 @@ const INTRODUCED_KEY = 'undisclosed-agent.introduced';
 /** Editor title-bar action: open the agent panel when it's closed (like Lacuna's
  * "Generate Tests"). Only shown on editors while the panel isn't visible. */
 const OPEN_AGENT: Command = { id: 'undisclosed-agent.open', label: 'Open Agent' };
+export const UNDISCLOSED_SEND_SELECTION_COMMAND_ID =
+  'undisclosed-agent.send-selection';
+const SEND_TO_AGENT: Command = {
+  id: UNDISCLOSED_SEND_SELECTION_COMMAND_ID,
+  label: 'Send to Agent',
+};
 const NEW: Command = { id: 'undisclosed-agent.new-conversation', label: 'New Conversation' };
 const HISTORY: Command = { id: 'undisclosed-agent.history', label: 'History' };
 const CLOSE: Command = { id: 'undisclosed-agent.close', label: 'Close Panel' };
@@ -81,6 +91,12 @@ export class UndisclosedAgentContribution
   @inject(ContextMenuRenderer)
   protected readonly contextMenuRenderer!: ContextMenuRenderer;
 
+  @inject(EditorManager)
+  protected readonly editorManager!: EditorManager;
+
+  @inject(WorkspaceService)
+  protected readonly workspaceService!: WorkspaceService;
+
   /** Fired when the agent panel opens/closes/(un)collapses, so the editor
    * toolbar re-renders and the "Chat with Agent" button shows/hides LIVE
    * (otherwise it only refreshed when you next clicked the editor). */
@@ -100,6 +116,49 @@ export class UndisclosedAgentContribution
   protected isAgentPanelVisible(): boolean {
     const widget = this.tryGetWidget();
     return !!(widget && widget.isVisible);
+  }
+
+  protected activeTextEditor() {
+    return (
+      this.editorManager.activeEditor ?? this.editorManager.currentEditor
+    )?.editor;
+  }
+
+  protected hasEditorSelection(): boolean {
+    const editor = this.activeTextEditor();
+    if (!editor) return false;
+    const { start, end } = editor.selection;
+    return start.line !== end.line || start.character !== end.character;
+  }
+
+  /** Selection reference to hand to the agent composer. */
+  protected async collectSelection(): Promise<
+    UndisclosedSelectionReference | undefined
+  > {
+    const editor = this.activeTextEditor();
+    if (!editor) return undefined;
+    const selection = editor.selection;
+    if (
+      selection.start.line === selection.end.line &&
+      selection.start.character === selection.end.character
+    ) {
+      return undefined;
+    }
+    let path = editor.uri.path.toString();
+    try {
+      const roots = await this.workspaceService.roots;
+      const relative = roots[0]?.resource.relative(editor.uri);
+      if (relative) {
+        path = relative.toString();
+      }
+    } catch {
+      // keep the absolute path
+    }
+    return {
+      path,
+      startLine: Math.min(selection.start.line, selection.end.line) + 1,
+      endLine: Math.max(selection.start.line, selection.end.line) + 1,
+    };
   }
 
   /**
@@ -135,6 +194,15 @@ export class UndisclosedAgentContribution
       // Open + focus the panel. (The AbstractViewContribution toggle command
       // would CLOSE it if already open; this one only ever opens.)
       execute: () => this.openView({ activate: true, reveal: true }),
+    });
+    commands.registerCommand(SEND_TO_AGENT, {
+      isVisible: () => this.hasEditorSelection(),
+      execute: async () => {
+        const selection = await this.collectSelection();
+        if (!selection) return;
+        await this.openView({ activate: true, reveal: true });
+        this.tryGetWidget()?.setComposerSelection(selection);
+      },
     });
     commands.registerCommand(NEW, {
       isVisible: (w) => !!asAgent(w),

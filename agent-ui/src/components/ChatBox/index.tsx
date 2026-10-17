@@ -28,6 +28,10 @@ import { requestEmbedScreen } from '@/agent-embed/embedNav';
 import { useComposerDraft } from '@/agent-embed/composerDraft';
 import { generateUniqueId, SITE_URL } from '@/lib';
 import {
+  buildSelectionPrompt,
+  selectionLabel,
+} from '@/lib/selectionPrompt';
+import {
   isProjectAchieved,
   setProjectAchievedState,
 } from '@/lib/projectAchievement';
@@ -224,6 +228,9 @@ export default function ChatBox(): JSX.Element {
   // Consume a one-shot composer prefill from the welcome/empty state (embed).
   const composerDraft = useComposerDraft((s) => s.draft);
   const clearComposerDraft = useComposerDraft((s) => s.clearDraft);
+  const composerSelection = useComposerDraft((s) => s.selection);
+  const clearComposerSelection = useComposerDraft((s) => s.clearSelection);
+  const composerFocusRequestId = useComposerDraft((s) => s.focusRequestId);
   useEffect(() => {
     if (composerDraft != null) {
       setMessage(composerDraft);
@@ -395,12 +402,14 @@ export default function ChatBox(): JSX.Element {
     }
   }, [modelType]);
   useEffect(() => {
-    if (workspaceChatFocusRequestId === 0) return;
+    if (workspaceChatFocusRequestId === 0 && composerFocusRequestId === 0) {
+      return;
+    }
     const focusTimer = window.setTimeout(() => {
       textareaRef.current?.focus();
     }, 180);
     return () => clearTimeout(focusTimer);
-  }, [workspaceChatFocusRequestId]);
+  }, [workspaceChatFocusRequestId, composerFocusRequestId]);
 
   useEffect(() => {
     proxyFetchGet('/api/v1/configs').catch((err) =>
@@ -865,7 +874,7 @@ export default function ChatBox(): JSX.Element {
     executionId?: string
   ) => {
     const _taskId = taskId || chatStore.activeTaskId;
-    if (message.trim() === '' && !messageStr) return;
+    if (message.trim() === '' && !messageStr && !composerSelection) return;
 
     if (!hasModel) {
       if (isCloudUsageLimited) {
@@ -892,8 +901,20 @@ export default function ChatBox(): JSX.Element {
     const shouldResumeProject = isProjectAchieved(targetProjectMeta?.metadata);
 
     const rawMessageContent = messageStr || message;
+    const sentSelections =
+      !messageStr && composerSelection ? [{ ...composerSelection }] : undefined;
     let tempMessageContent = rawMessageContent;
-    const displayContent = tempMessageContent;
+    const displayContent = rawMessageContent;
+    // The brain gets the path + line range; the transcript shows the same
+    // reference as a pill (rendered from `sentSelections`).
+    if (!messageStr && composerSelection) {
+      const instruction =
+        rawMessageContent.trim().length > 0
+          ? rawMessageContent
+          : 'Read those lines.';
+      tempMessageContent =
+        buildSelectionPrompt(composerSelection) + instruction;
+    }
 
     if (executionId && targetProjectId) {
       const project = projectStore.getProjectById(targetProjectId);
@@ -978,6 +999,7 @@ export default function ChatBox(): JSX.Element {
             [],
         });
         setMessage('');
+        clearComposerSelection();
 
         // Scroll to bottom after adding user message
         setTimeout(() => {
@@ -1073,6 +1095,7 @@ export default function ChatBox(): JSX.Element {
             hasErrorMessage
           ) {
             setMessage('');
+            clearComposerSelection();
             // Pass the message content to startTask instead of adding it to current chatStore
             const attachesToSend =
               JSON.parse(JSON.stringify(chatStore.tasks[_taskId]?.attaches)) ||
@@ -1088,7 +1111,8 @@ export default function ChatBox(): JSX.Element {
                 attachesToSend,
                 executionId,
                 targetProjectId,
-                effectiveSessionMode
+                effectiveSessionMode,
+                { displayContent, selections: sentSelections }
               );
               chatStore.setAttaches(_taskId, []);
               // If activeTaskId changed (new task created), clear its draft too
@@ -1232,20 +1256,28 @@ export default function ChatBox(): JSX.Element {
                 role: 'user',
                 content: displayContent,
                 attaches: attachesForThisTurn,
+                selections: sentSelections,
               });
             } else {
               // Display-only queue entry (no executionId, so the background
               // processor ignores it — the direct POST above does the send).
               // Keyed by nextTaskId so we can drop it when its turn starts.
+              // The queue row is plain text, so spell the reference out there.
+              const queuedContent = composerSelection
+                ? [selectionLabel(composerSelection), displayContent]
+                    .filter((part) => part.trim().length > 0)
+                    .join('\n')
+                : displayContent;
               projectStore.addQueuedMessage(
                 targetProjectId,
-                displayContent,
+                queuedContent,
                 [],
                 nextTaskId
               );
             }
             chatStore.setAttaches(_taskId, []);
             setMessage('');
+            clearComposerSelection();
           }
         } else {
           setTimeout(() => {
@@ -1257,6 +1289,7 @@ export default function ChatBox(): JSX.Element {
             JSON.parse(JSON.stringify(chatStore.tasks[_taskId]?.attaches)) ||
             [];
           setMessage('');
+          clearComposerSelection();
           try {
             ensureActiveProjectMode();
             await chatStore.startTask(
@@ -1268,7 +1301,8 @@ export default function ChatBox(): JSX.Element {
               attachesToSend,
               executionId,
               targetProjectId,
-              effectiveSessionMode
+              effectiveSessionMode,
+              { displayContent, selections: sentSelections }
             );
             chatStore.setHasWaitComfirm(_taskId as string, true);
             chatStore.setAttaches(_taskId, []);
@@ -1665,6 +1699,8 @@ export default function ChatBox(): JSX.Element {
                     onSend: handleSend,
                     isRunning: isTaskBusy,
                     onStop: handleSkip,
+                    selection: composerSelection,
+                    onRemoveSelection: clearComposerSelection,
                     files:
                       chatStore.tasks[chatStore.activeTaskId]?.attaches?.map(
                         (f) => ({
@@ -1748,6 +1784,8 @@ export default function ChatBox(): JSX.Element {
                   onSend: handleSend,
                   isRunning: isTaskBusy,
                   onStop: handleSkip,
+                  selection: composerSelection,
+                  onRemoveSelection: clearComposerSelection,
                   files:
                     chatStore.tasks[chatStore.activeTaskId]?.attaches?.map(
                       (f) => ({

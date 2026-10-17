@@ -584,6 +584,7 @@ export const UserQueryGroup: React.FC<UserQueryGroupProps> = ({
             id={queryGroup.userMessage.id}
             content={queryGroup.userMessage.content}
             attaches={queryGroup.userMessage.attaches}
+            selections={queryGroup.userMessage.selections}
             timestamp={queryGroup.userMessage.createdAt}
           />
         </motion.div>

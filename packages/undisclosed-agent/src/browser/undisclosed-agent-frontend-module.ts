@@ -17,6 +17,7 @@ import { SidePanelHandler } from '@theia/core/lib/browser/shell/side-panel-handl
 import { UndisclosedSidePanelHandler } from './undisclosed-side-panel-handler';
 import { UndisclosedAgentWidget } from './undisclosed-agent-widget';
 import { UndisclosedAgentContribution } from './undisclosed-agent-contribution';
+import { UndisclosedSelectionActionContribution } from './selection-action-contribution';
 import { UndisclosedAgentLayoutContribution } from './undisclosed-agent-layout-contribution';
 import { GitExtrasContribution } from './git-extras-contribution';
 import { GitCommitGuardContribution } from './git-commit-guard-contribution';
@@ -67,6 +68,12 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
   bindViewContribution(bind, UndisclosedAgentContribution);
   bind(FrontendApplicationContribution).toService(UndisclosedAgentContribution);
   bind(TabBarToolbarContribution).toService(UndisclosedAgentContribution);
+
+  // Floating "Send to Agent" action anchored to the editor selection.
+  bind(UndisclosedSelectionActionContribution).toSelf().inSingletonScope();
+  bind(FrontendApplicationContribution).toService(
+    UndisclosedSelectionActionContribution
+  );
   bind(UndisclosedAgentLayoutContribution).toSelf().inSingletonScope();
   bind(FrontendApplicationContribution).toService(UndisclosedAgentLayoutContribution);
   // Also a TabBarToolbarContribution + CommandContribution: it adds the bottom

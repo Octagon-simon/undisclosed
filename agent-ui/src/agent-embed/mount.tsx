@@ -29,6 +29,7 @@
  */
 
 import AgentEmbedPanel, { type AgentPanelApi } from './AgentEmbedPanel';
+import type { ComposerSelection } from './composerDraft';
 import { ThemeProvider } from '@/components/Layout/ThemeProvider';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -258,6 +259,42 @@ export function mountAgentPanel(
 
   const queryClient = new QueryClient();
   const apiRef = createRef<AgentPanelApi>();
+  // The panel ref is populated after React's first render; a composer prefill
+  // requested in that window waits here instead of being dropped.
+  let pendingComposerText: string | undefined;
+  let composerTextAttempts = 0;
+  let pendingComposerSelection: ComposerSelection | undefined;
+  let composerSelectionAttempts = 0;
+  const flushComposerText = (): void => {
+    if (pendingComposerText === undefined) return;
+    const api = apiRef.current;
+    if (!api) {
+      if (composerTextAttempts < 40) {
+        composerTextAttempts += 1;
+        window.setTimeout(flushComposerText, 50);
+      }
+      return;
+    }
+    const text = pendingComposerText;
+    pendingComposerText = undefined;
+    composerTextAttempts = 0;
+    api.setComposerText(text);
+  };
+  const flushComposerSelection = (): void => {
+    if (pendingComposerSelection === undefined) return;
+    const api = apiRef.current;
+    if (!api) {
+      if (composerSelectionAttempts < 40) {
+        composerSelectionAttempts += 1;
+        window.setTimeout(flushComposerSelection, 50);
+      }
+      return;
+    }
+    const selection = pendingComposerSelection;
+    pendingComposerSelection = undefined;
+    composerSelectionAttempts = 0;
+    api.setComposerSelection(selection);
+  };
   const root: Root = createRoot(element);
   root.render(
     <StrictMode>
@@ -309,6 +346,16 @@ export function mountAgentPanel(
       void runBootstrap();
     },
     newConversation: () => apiRef.current?.newConversation(),
+    setComposerText: (text) => {
+      pendingComposerText = text;
+      composerTextAttempts = 0;
+      flushComposerText();
+    },
+    setComposerSelection: (selection) => {
+      pendingComposerSelection = selection;
+      composerSelectionAttempts = 0;
+      flushComposerSelection();
+    },
     toggleHistory: () => apiRef.current?.toggleHistory(),
     showConversation: () => apiRef.current?.showConversation(),
     isHistoryOpen: () => apiRef.current?.isHistoryOpen() ?? false,
