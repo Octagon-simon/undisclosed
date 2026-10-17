@@ -1,0 +1,14 @@
+Undisclosed
+Copyright 2025-2026 Simon Ugorji
+
+This product includes software developed by Eigent.ai (https://eigent.ai),
+used under the Apache License, Version 2.0. Portions Copyright 2025-2026
+Eigent.ai. All rights reserved.
+
+The product is built on Eclipse Theia (https://theia-ide.org/), consumed as a
+published npm dependency and licensed under the Eclipse Public License 2.0 or
+the GNU General Public License, version 2.0, with the Classpath Exception.
+
+Third-party libraries, bundled VS Code extensions, skills and model runtime
+packages remain under their own licenses. See the dependency manifests and the
+LICENSE files shipped with those components for details.

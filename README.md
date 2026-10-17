@@ -309,5 +309,9 @@ target to `:5001`).
 
 ## License
 
-Apache-2.0. Portions © Eigent.ai (preserved per Apache-2.0); the on-device editor
-shell, packaging, and new features © Simon Ugorji. See per-file headers.
+Apache-2.0. The full text is in [LICENSE](LICENSE), with required attributions in
+[NOTICE](NOTICE).
+
+Portions © Eigent.ai, used under Apache-2.0. The on-device editor shell, packaging
+and new features © Simon Ugorji. Eclipse Theia, bundled VS Code extensions, skills
+and other dependencies remain under their own licenses.
