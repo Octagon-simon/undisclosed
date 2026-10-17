@@ -250,6 +250,23 @@ jobs:
 
 Cut a release by tagging: `git tag v0.1.0 && git push origin v0.1.0`.
 
+### Pre-release (beta) builds
+
+To ship a beta off a branch (e.g. `upgrade/theia-1.76`) **without touching the
+stable release**, cut a pre-release tag instead. The workflow publishes any tag
+with a semver pre-release suffix (`v*-beta.*`, `-rc.*`, …) as a GitHub
+**pre-release**, which keeps `main`'s release as "latest":
+
+```bash
+npm run release:beta          # first run: 0.0.9 -> 0.1.0-beta.0
+npm run release:beta          # next run:  0.1.0-beta.0 -> 0.1.0-beta.1
+# or, explicitly:
+npm run release -- minor beta  # 0.0.9 -> 0.1.0-beta.0
+npm run release -- prerelease beta
+```
+
+The bump is committed on the **current branch** only, so `main` is untouched.
+
 ---
 
 ## 4. Caveats / decisions still open

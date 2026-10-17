@@ -23,16 +23,12 @@ import {
   DialogFooter,
   DialogHeader,
 } from '@/components/ui/dialog';
-import {
-  useTriggerCacheInvalidation,
-  useUserTriggerCountQuery,
-} from '@/hooks/queries/useTriggerQueries';
+import { useTriggerCacheInvalidation } from '@/hooks/queries/useTriggerQueries';
 import useChatStoreAdapter from '@/hooks/useChatStoreAdapter';
 import {
   proxyActivateTrigger,
   proxyDeactivateTrigger,
   proxyDeleteTrigger,
-  proxyFetchProjectTriggers,
 } from '@/service/triggerApi';
 import { ActivityType, useActivityLogStore } from '@/store/activityLogStore';
 import { usePageTabStore } from '@/store/pageTabStore';
@@ -76,6 +72,11 @@ export type OverviewProps = {
   onSelectedTriggerIdChange: (id: number | null) => void;
   isExecutionLogsOpen: boolean;
   onExecutionLogsOpenChange: (open: boolean) => void;
+  /**
+   * Re-fetch the active project's triggers. Owned by TriggerPanel so the header
+   * refresh button and this list share one project-scoped fetch.
+   */
+  onRefresh?: () => void | Promise<void>;
 };
 
 export default function Overview({
@@ -84,6 +85,7 @@ export default function Overview({
   onSelectedTriggerIdChange,
   isExecutionLogsOpen,
   onExecutionLogsOpenChange,
+  onRefresh,
 }: OverviewProps) {
   const { t } = useTranslation();
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -94,41 +96,18 @@ export default function Overview({
   const { setHasTriggers } = usePageTabStore();
 
   // Use trigger store
-  const {
-    triggers,
-    deleteTrigger,
-    duplicateTrigger,
-    updateTrigger,
-    addTrigger,
-    setTriggers,
-  } = useTriggerStore();
+  const { triggers, deleteTrigger, duplicateTrigger, updateTrigger } =
+    useTriggerStore();
 
   // Get projectStore for the active project's task
   const { projectStore } = useChatStoreAdapter();
 
   const { addLog } = useActivityLogStore();
 
-  // User trigger count query (cached, across all projects)
-  const { data: userTriggerCount = 0 } = useUserTriggerCountQuery();
+  // Invalidate the global (across-projects) trigger count shown elsewhere
+  // (Home hub / sidebar). The list itself is fetched by TriggerPanel, scoped to
+  // the active project — this component never issues a cross-project fetch.
   const { invalidateUserTriggerCount } = useTriggerCacheInvalidation();
-
-  // Fetch triggers from API on mount
-  useEffect(() => {
-    const fetchTriggers = async () => {
-      try {
-        const response = await proxyFetchProjectTriggers(
-          projectStore.activeProjectId
-        );
-
-        setTriggers(response.items || []);
-      } catch (error) {
-        console.error('Failed to fetch triggers:', error);
-        toast.error(t('triggers.failed-to-load'));
-      }
-    };
-
-    fetchTriggers();
-  }, [projectStore.activeProjectId]);
 
   // Update hasTriggers based on the trigger list
   useEffect(() => {
@@ -166,6 +145,9 @@ export default function Overview({
         triggerId: trigger.id,
         triggerName: trigger.name,
       });
+
+      // Re-sync with the server so the list reflects this project's true state.
+      void onRefresh?.();
     } catch (error: any) {
       console.error('Failed to update trigger status:', error);
 
@@ -237,6 +219,9 @@ export default function Overview({
 
       // Invalidate user trigger count cache after deletion
       invalidateUserTriggerCount();
+
+      // Re-sync the (project-scoped) list from the server.
+      void onRefresh?.();
     } catch (error) {
       console.error('Failed to delete trigger:', error);
       toast.error(t('triggers.failed-to-delete'));

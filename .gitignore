@@ -8,6 +8,7 @@ lib/
 src-gen/
 .browser_modules/
 gen-webpack*.js
+gen-esbuild*.mjs
 .theia/
 plugins/
 *.log
@@ -52,6 +53,7 @@ apps/desktop/dist/
 apps/desktop/dist-fresh/
 apps/desktop/.theia/
 apps/desktop/gen-webpack*.js
+apps/desktop/gen-esbuild*.mjs
 brain/dist/
 brain/build/
 brain/*.spec
@@ -72,3 +74,35 @@ brain/*.spec
 
 # Offline cache for the Simple Icons fetch script (regenerable, not shipped).
 .cache/file-icons/
+
+# Marketing landing page (site/): a self-contained, deployable page. Re-include
+# it despite the blanket `*.png` / `*.md` rules above so its files are not
+# silently dropped from the repo. It is NOT part of the app build (see
+# apps/desktop/electron-builder.yml).
+!site/
+!site/**
+
+# Bundled example agent skills (resources/example-skills/): ship with the app and
+# are synced into each user's skill store. Re-include the whole tree, not just
+# `SKILL.md`: the blanket `*.md`, `*.png`, and `lib/` rules above would otherwise
+# silently drop skills' asset files (PNG textures) and `lib/` script dirs.
+!resources/example-skills/**
+brag-output-2026-10-11-065557/
+demo-live/
+capture.mov
+
+# local screen-recording frames (source is videos/undisclosed-demo/assets/capture.mp4)
+capture-2026-10-17/
+
+# Demo video production: compositions, storyboards, renders and per-version
+# comparison pages. 230+ MB of working files; only the final cuts ship, in
+# docs/media/ (README) and site/ (landing page).
+videos/
+
+# One-off local artifacts from screen capture and OCR passes.
+*.tiff
+.tmp-ocr.*
+
+# The `!site/**` exception above re-includes everything under site/, including
+# editor auto-backups. Keep those out of the deployable tree.
+site/**/*.bak

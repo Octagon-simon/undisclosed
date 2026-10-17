@@ -37,6 +37,7 @@ from app.controller import (
     skill_controller,
     task_controller,
     tool_controller,
+    trigger_controller,
     workspace_controller,
 )
 
@@ -204,6 +205,41 @@ def register_routers(app: FastAPI, prefix: str = "") -> None:
     except Exception:
         logger.warning(
             "Failed to register spaces router; local Spaces/Projects API unavailable",
+            exc_info=True,
+        )
+
+    # Register local Automations (triggers) router under /api/v1 - the REST
+    # surface `service/triggerApi.ts` calls. Upstream this lived in the cloud
+    # `eigent/server`; the standalone fork needs it locally or every
+    # `/api/v1/trigger/*` call 404s from the Automations screen.
+    try:
+        app.include_router(
+            trigger_controller.router,
+            prefix=prefix + "/api/v1",
+            tags=["triggers"],
+            dependencies=[Depends(get_brain_auth_context)],
+        )
+        # The execution subscription WS authenticates from its `subscribe`
+        # frame (a browser WS can't send an Authorization header), so it is
+        # registered without the brain-auth dependency, like BrowserStream.
+        app.include_router(
+            trigger_controller.ws_router,
+            prefix=prefix + "/api/v1",
+            tags=["triggers-ws"],
+        )
+        # Inbound webhooks are called by external services (Slack, generic
+        # webhook sources) that can't send the Brain auth header, so they are
+        # mounted WITHOUT the auth dependency — the opaque token is the
+        # credential. Without this the `webhook_url` we hand out 404s.
+        app.include_router(
+            trigger_controller.webhook_router,
+            prefix=prefix + "/api/v1",
+            tags=["triggers-webhook"],
+        )
+        logger.info("Registered triggers router under /api/v1")
+    except Exception:
+        logger.warning(
+            "Failed to register triggers router; Automations API unavailable",
             exc_info=True,
         )
 

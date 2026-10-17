@@ -1,4 +1,5 @@
 // ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+// Portions Copyright 2026 Simon Ugorji. All Rights Reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -12,6 +13,8 @@
 // limitations under the License.
 // ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
 
+import type { ActivityItem } from '@/lib/activityClassifier';
+import type { TestRunSnapshot } from '@/lib/testRunParser';
 import type {
   AgentMessageStatusType,
   AgentStatusType,
@@ -118,11 +121,24 @@ declare global {
     summary?: string;
     agent_name?: string;
     attaches?: File[];
+    /** Code references sent with a user turn from the editor ("Send to Agent"). */
+    selections?: Array<{ path: string; startLine: number; endLine: number }>;
     /** For APPROVAL_OUTCOME messages: the resolved decision, drives info vs danger styling. */
     decision?: 'approved' | 'denied' | 'timeout' | string;
     /** Reasoning model's thoughts for an END message — shown in a collapsible
      *  "thinking" block (only present for reasoning models when enabled). */
     reasoning?: string;
+    /** Execution Summary rows for the turn, persisted with the END message so
+     *  the summary re-renders after a reload. Live turns derive the same data
+     *  from `taskAssigning`; this is the reload fallback. */
+    activities?: ActivityItem[];
+    /** Verification receipts for the turn, persisted with the END message so
+     *  the test card survives a reload (raw tool output is not persisted). */
+    testRuns?: TestRunSnapshot[];
+    /** Wall-clock time the message entered the conversation (ISO 8601). Drives
+     *  the timestamp in the user-turn header; absent when the source it was
+     *  rebuilt from (some history/replay paths) doesn't carry one. */
+    createdAt?: string;
   }
 
   interface AgentMessage {
@@ -167,6 +183,8 @@ declare global {
       current_length?: number;
       max_length?: number;
       text?: string;
+      /** Verification receipts replayed with an END event. */
+      testRuns?: TestRunSnapshot[];
     };
     status?: AgentMessageStatusType;
   }

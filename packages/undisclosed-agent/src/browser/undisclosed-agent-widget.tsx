@@ -27,6 +27,13 @@ interface ActiveEditorInfo {
   selection?: { startLine: number; endLine: number } | null;
 }
 
+/** A code selection sent from the editor into the agent composer. */
+export interface UndisclosedSelectionReference {
+  path: string;
+  startLine: number;
+  endLine: number;
+}
+
 export type GovernanceMode = 'ask' | 'auto';
 
 /** Imperative handle the bundle returns; the title-bar toolbar drives it. */
@@ -37,11 +44,17 @@ export interface AgentPanelHandle {
    *  "No active workspace folder". */
   setWorkspaceRoot(root?: string): void;
   newConversation(): void;
+  /** Put text into the panel's composer (conversation view) and focus it. */
+  setComposerText(text: string): void;
+  /** Attach an editor selection to the composer as a removable pill. */
+  setComposerSelection(selection: UndisclosedSelectionReference): void;
   toggleHistory(): void;
   showConversation(): void;
   isHistoryOpen(): boolean;
   showStats(): void;
   showMemory(): void;
+  /** Show the Automations (triggers) screen. */
+  showTriggers(): void;
   showModels(): void;
   showSettings(): void;
   showBrowser(): void;
@@ -199,6 +212,9 @@ export class UndisclosedAgentWidget extends BaseWidget {
 
   protected host!: HTMLDivElement;
   protected handle?: AgentPanelHandle;
+  /** Composer text requested before the bundle finished mounting. */
+  protected pendingComposerText?: string;
+  protected pendingComposerSelection?: UndisclosedSelectionReference;
 
   /** Snapshot the file/selection open in the editor for the agent's context. */
   private activeEditorInfo(): ActiveEditorInfo | null {
@@ -305,6 +321,21 @@ export class UndisclosedAgentWidget extends BaseWidget {
   newConversation(): void {
     this.handle?.newConversation();
   }
+  setComposerText(text: string): void {
+    if (this.handle) {
+      this.handle.setComposerText(text);
+    } else {
+      // The panel opens asynchronously; hold the text until mount() finishes.
+      this.pendingComposerText = text;
+    }
+  }
+  setComposerSelection(selection: UndisclosedSelectionReference): void {
+    if (this.handle) {
+      this.handle.setComposerSelection(selection);
+    } else {
+      this.pendingComposerSelection = selection;
+    }
+  }
   toggleHistory(): void {
     this.handle?.toggleHistory();
   }
@@ -325,6 +356,9 @@ export class UndisclosedAgentWidget extends BaseWidget {
   }
   showMemory(): void {
     this.handle?.showMemory();
+  }
+  showTriggers(): void {
+    this.handle?.showTriggers();
   }
   showModels(): void {
     this.handle?.showModels();
@@ -418,6 +452,8 @@ export class UndisclosedAgentWidget extends BaseWidget {
   protected override onCloseRequest(msg: Message): void {
     this.handle?.unmount();
     this.handle = undefined;
+    this.pendingComposerText = undefined;
+    this.pendingComposerSelection = undefined;
     super.onCloseRequest(msg);
   }
 
@@ -471,6 +507,16 @@ export class UndisclosedAgentWidget extends BaseWidget {
           },
         },
       });
+      if (this.pendingComposerText !== undefined) {
+        const pending = this.pendingComposerText;
+        this.pendingComposerText = undefined;
+        this.handle.setComposerText(pending);
+      }
+      if (this.pendingComposerSelection !== undefined) {
+        const pending = this.pendingComposerSelection;
+        this.pendingComposerSelection = undefined;
+        this.handle.setComposerSelection(pending);
+      }
     } catch (err) {
       this.host.textContent = `Failed to load the Undisclosed agent: ${
         (err as Error).message

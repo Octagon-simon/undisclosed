@@ -29,6 +29,7 @@ import { WorkspaceRecentSessions } from '@/components/Workspace/WorkspaceRecentS
 import useChatStoreAdapter from '@/hooks/useChatStoreAdapter';
 import { useModelConfigCheck } from '@/hooks/useModelConfigCheck';
 import { useHost } from '@/host';
+import { WORKFORCE_MODE_ENABLED } from '@/lib/featureFlags';
 import { resolveProjectNavLeadPresentation } from '@/lib/sessionNavLead';
 import { isLegacySpace, isLocalWorkspaceSpace } from '@/lib/spaceLabel';
 import { createSyncedProjectInSpace } from '@/lib/spaceProject';
@@ -198,10 +199,13 @@ export default function Workspace({
   const [draftSessionMode, setDraftSessionMode] = useState<SessionModeType>(
     SessionMode.SINGLE_AGENT
   );
-  const effectiveSessionMode = controlledSessionMode ?? draftSessionMode;
+  const effectiveSessionMode = WORKFORCE_MODE_ENABLED
+    ? controlledSessionMode ?? draftSessionMode
+    : SessionMode.SINGLE_AGENT;
 
   const setActiveProjectMode = useCallback(
     (mode: SessionModeType) => {
+      if (!WORKFORCE_MODE_ENABLED && mode !== SessionMode.SINGLE_AGENT) return;
       if (onSessionModeChange) {
         onSessionModeChange(mode);
         return;

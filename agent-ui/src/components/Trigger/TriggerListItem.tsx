@@ -22,19 +22,23 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { TooltipSimple } from '@/components/ui/tooltip';
 import { formatDateTime } from '@/lib/utils';
+import { resolveWebhookUrl } from '@/service/triggerApi';
 import { Trigger, TriggerStatus, TriggerType } from '@/types';
 import {
   AlarmClockIcon,
   AlertTriangle,
   Clock,
+  Copy,
   Edit,
   MessageSquare,
   MoreHorizontal,
+  PlugZapIcon,
   Trash2,
   WebhookIcon,
   Zap,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { toast } from 'sonner';
 
 type TriggerListItemProps = {
   trigger: Trigger;
@@ -60,6 +64,19 @@ export const TriggerListItem: React.FC<TriggerListItemProps> = ({
   const needsAuth =
     trigger.status === TriggerStatus.PendingAuth &&
     trigger.config?.authentication_required;
+  // Resolve once to an absolute URL (undefined when the trigger has none), so
+  // the value stays narrowed inside the async clipboard handler below.
+  const webhookUrl = trigger.webhook_url
+    ? resolveWebhookUrl(trigger.webhook_url)
+    : null;
+  // Slack triggers are driven by Socket Mode (an outbound connection the brain
+  // opens to Slack), NOT by the inbound `/api/v1/webhook/...` URL the backend
+  // still stores on them. Showing that URL on a Slack row reads as "paste this
+  // into Slack", which is impossible (it is localhost) and confusing, so Slack
+  // rows advertise Socket Mode + the bound channel instead.
+  const isSlack = trigger.trigger_type === TriggerType.Slack;
+  const channelId =
+    (trigger.config?.channel_id as string | undefined)?.trim() || null;
 
   const getTriggerTypeIcon = () => {
     switch (trigger.trigger_type) {
@@ -127,6 +144,46 @@ export const TriggerListItem: React.FC<TriggerListItemProps> = ({
             trigger.description ||
             t('triggers.no-task-prompt')}
         </div>
+        {isSlack ? (
+          <div className="mt-1 flex items-center gap-1.5">
+            <span className="inline-flex items-center gap-1 rounded-full border border-ds-border-status-completed-default-default bg-ds-bg-status-completed-subtle-default px-2 py-0.5 text-[11px] font-medium text-ds-text-status-completed-strong-default">
+              <PlugZapIcon className="h-3 w-3" />
+              {t('triggers.socket-mode', { defaultValue: 'Socket Mode' })}
+            </span>
+            {channelId && (
+              <span className="truncate font-mono text-[11px] text-ds-text-neutral-subtle-default">
+                {channelId}
+              </span>
+            )}
+          </div>
+        ) : webhookUrl ? (
+          <div className="mt-1 flex items-center gap-1.5">
+            <a
+              href={webhookUrl}
+              target="_blank"
+              rel="noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="truncate font-mono text-[11px] text-ds-text-neutral-subtle-default underline decoration-dotted underline-offset-2 transition-colors hover:text-ds-text-brand-default-hover"
+            >
+              {webhookUrl}
+            </a>
+            <Button
+              variant="ghost"
+              size="xs"
+              buttonContent="icon-only"
+              aria-label={t('triggers.copy')}
+              onClick={(e) => {
+                e.stopPropagation();
+                navigator.clipboard
+                  .writeText(webhookUrl)
+                  .then(() => toast.success(t('triggers.webhook-url-copied')))
+                  .catch(() => toast.error(t('triggers.failed-to-copy')));
+              }}
+            >
+              <Copy className="h-3 w-3" />
+            </Button>
+          </div>
+        ) : null}
       </div>
 
       {/* 3. Trigger Type */}

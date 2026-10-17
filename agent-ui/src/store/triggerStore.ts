@@ -30,6 +30,12 @@ export interface WebSocketEvent {
   projectId: string | null;
   /** Target Space ID for the project, when supplied by the backend event. */
   spaceId?: string | null;
+  /**
+   * Root path of the trigger's folder-space, when supplied by the backend
+   * event. Lets a window decide ownership by comparing it to its own open
+   * folder even when its space store isn't hydrated.
+   */
+  spaceRoot?: string | null;
   /** Input data from webhook request or scheduled context */
   inputData: Record<string, any>;
 }

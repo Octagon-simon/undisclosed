@@ -108,6 +108,12 @@ class Chat(BaseModel):
     # from the host bridge so the agent has live "what am I looking at" context
     # without shelling out. See the frontend active-editor store.
     active_editor: dict[str, Any] | None = None
+    # Internal: re-open the streaming consumer for an already-started Project
+    # WITHOUT enqueueing the initial turn. Set by the client when it is
+    # re-attaching to a session whose SSE stream died (brain restart, idle
+    # drop) so the follow-up that rides the same queue is not run twice.
+    # Not user-facing; defaults to the normal "start a new turn" behavior.
+    resume: bool = False
 
     @field_validator("model_type")
     @classmethod

@@ -948,38 +948,41 @@ class ListenChatAgent(ChatAgent):
         # remove activate/deactivate from @listen_toolkit, only send here
         has_listen_decorator = getattr(tool.func, "__listen_toolkit__", False)
 
-        try:
-            task_lock = get_task_lock(self.api_task_id)
+        task_lock = get_task_lock(self.api_task_id)
 
-            toolkit_name = (
-                tool._toolkit_name
-                if hasattr(tool, "_toolkit_name")
-                else "mcp_toolkit"
-            )
-            logger.debug(
-                f"Agent {self.agent_name} executing tool: "
-                f"{func_name} from toolkit: {toolkit_name} "
-                f"with args: {json.dumps(args, ensure_ascii=False)}"
-            )
+        toolkit_name = (
+            tool._toolkit_name
+            if hasattr(tool, "_toolkit_name")
+            else "mcp_toolkit"
+        )
+        logger.debug(
+            f"Agent {self.agent_name} executing tool: "
+            f"{func_name} from toolkit: {toolkit_name} "
+            f"with args: {json.dumps(args, ensure_ascii=False)}"
+        )
 
-            # Only send activate event if tool is
-            # NOT wrapped by @listen_toolkit
-            if not has_listen_decorator:
-                _schedule_async_task(
-                    task_lock.put_queue(
-                        ActionActivateToolkitData(
-                            data={
-                                "agent_name": self.agent_name,
-                                "process_task_id": self.process_task_id,
-                                "toolkit_name": toolkit_name,
-                                "method_name": func_name,
-                                "message": json.dumps(
-                                    args, ensure_ascii=False
-                                ),
-                            },
-                        )
+        # Only send activate event if tool is
+        # NOT wrapped by @listen_toolkit
+        if not has_listen_decorator:
+            _schedule_async_task(
+                task_lock.put_queue(
+                    ActionActivateToolkitData(
+                        data={
+                            "agent_name": self.agent_name,
+                            "process_task_id": self.process_task_id,
+                            "toolkit_name": toolkit_name,
+                            "method_name": func_name,
+                            "message": json.dumps(
+                                args, ensure_ascii=False
+                            ),
+                        },
                     )
                 )
+            )
+
+        result: Any = None
+        mask_flag = False
+        try:
             # Set process_task context for all tool executions
             with set_process_task(self.process_task_id):
                 raw_result = tool(**args)
@@ -994,36 +997,6 @@ class ListenChatAgent(ChatAgent):
             else:
                 result = raw_result
                 mask_flag = False
-            # Prepare result message with truncation
-            if isinstance(result, str):
-                result_msg = result
-            else:
-                result_str = repr(result)
-                MAX_RESULT_LENGTH = 500
-                if len(result_str) > MAX_RESULT_LENGTH:
-                    result_msg = result_str[:MAX_RESULT_LENGTH] + (
-                        f"... (truncated, total length: "
-                        f"{len(result_str)} chars)"
-                    )
-                else:
-                    result_msg = result_str
-
-            # Only send deactivate event if tool is
-            # NOT wrapped by @listen_toolkit
-            if not has_listen_decorator:
-                _schedule_async_task(
-                    task_lock.put_queue(
-                        ActionDeactivateToolkitData(
-                            data={
-                                "agent_name": self.agent_name,
-                                "process_task_id": self.process_task_id,
-                                "toolkit_name": toolkit_name,
-                                "method_name": func_name,
-                                "message": result_msg,
-                            },
-                        )
-                    )
-                )
         except Exception as e:
             # Capture the error message to prevent framework crash
             error_msg = f"Error executing tool '{func_name}': {e!s}"
@@ -1031,6 +1004,42 @@ class ListenChatAgent(ChatAgent):
             mask_flag = False
             logger.error(
                 f"Tool execution failed for {func_name}: {e}", exc_info=True
+            )
+
+        # Prepare result message with truncation. Built in BOTH the success and
+        # error paths so the row's Response is never left blank.
+        if isinstance(result, str):
+            result_msg = result
+        else:
+            result_str = repr(result)
+            MAX_RESULT_LENGTH = 500
+            if len(result_str) > MAX_RESULT_LENGTH:
+                result_msg = result_str[:MAX_RESULT_LENGTH] + (
+                    f"... (truncated, total length: "
+                    f"{len(result_str)} chars)"
+                )
+            else:
+                result_msg = result_str
+
+        # ALWAYS send the deactivate event whenever we sent the activate one,
+        # including on error. The old code emitted it only after a successful
+        # call, so an unwrapped (non-@listen_toolkit) tool that raised left its
+        # ACTIVATE row stuck on "still working" forever with a blank Response
+        # (the frontend pairs DEACTIVATE -> done; a missing one never closes).
+        # The async path (`_aexecute_tool`) already guarantees this; match it.
+        if not has_listen_decorator:
+            _schedule_async_task(
+                task_lock.put_queue(
+                    ActionDeactivateToolkitData(
+                        data={
+                            "agent_name": self.agent_name,
+                            "process_task_id": self.process_task_id,
+                            "toolkit_name": toolkit_name,
+                            "method_name": func_name,
+                            "message": result_msg,
+                        },
+                    )
+                )
             )
 
         return self._record_tool_calling(

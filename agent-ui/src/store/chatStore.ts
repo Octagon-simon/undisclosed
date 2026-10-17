@@ -53,7 +53,22 @@ import {
   toRemoteSubAgentRuntimeConfig,
 } from '@/lib/remoteSubAgent';
 import { isLocalWorkspaceSpace } from '@/lib/spaceLabel';
+import {
+  collectTaskActivities,
+  toPersistedActivities,
+  type ActivityItem,
+} from '@/lib/activityClassifier';
+import {
+  latestTestRun,
+  type TestRunSnapshot,
+} from '@/lib/testRunParser';
 import { getOpenFolderRoot } from '@/lib/openFolder';
+import { normalizeUserTurnContent } from '@/lib/dedupeUserTurns';
+import {
+  isReemittedUserTurn,
+  placedUserTurns,
+  resolveSourceUserTurnId,
+} from '@/lib/userTurnPlacement';
 import { deriveAttachFileName } from '@/lib/attachmentUrl';
 import { proxyUpdateTriggerExecution } from '@/service/triggerApi';
 import { ExecutionStatus } from '@/types';
@@ -438,6 +453,13 @@ interface Task {
   // Trigger execution ID for tracking trigger task completion
   executionId?: string;
   nextExecutionId?: string;
+  /**
+   * Stable id for THIS follow-up's user turn, minted in ChatBox.handleSend and
+   * reused wherever the turn is (re)placed. It lets `confirmed`/`wait_confirm`
+   * recognise an already-placed turn and skip a second copy instead of
+   * rendering the same user bubble twice.
+   */
+  nextUserId?: string;
   /** Unix ms timestamp when this task was created — used for TurnTabs ordering. */
   createdAt: number;
 }
@@ -773,6 +795,32 @@ export interface StartTaskOptions {
   preserveTaskId?: boolean;
   skipHistoryCreate?: boolean;
   historyId?: string | number | null;
+  /**
+   * Re-open the live consumer for an existing Project WITHOUT starting a new
+   * turn (no new chat store, no user message, no initial enqueue). Used to
+   * recover a session whose SSE stream died before a follow-up is enqueued.
+   */
+  resume?: boolean;
+  /** Text shown in the user's turn when it differs from the prompt sent to the
+   *  brain (e.g. a code-selection reference instead of the fenced code). */
+  displayContent?: string;
+  /** Code references shown as pills on the user's turn (the prompt itself
+   *  carries the path + lines for the agent). */
+  selections?: Array<{ path: string; startLine: number; endLine: number }>;
+}
+
+export interface AddMessagesOptions {
+  /**
+   * Remove a user turn from THIS store in the same update as the append. Used
+   * when a follow-up is migrated out of its optimistic task and into the
+   * `confirmed` task: doing the remove and the add in one `set()` leaves a late
+   * notice / acknowledgement / `end` (or a re-emitted `confirmed`) no gap to
+   * observe, so it can't re-place a second copy.
+   */
+  removeSource?: {
+    taskId: string;
+    messageId: string;
+  };
 }
 
 export interface ChatStore {
@@ -816,7 +864,11 @@ export interface ChatStore {
     taskId: string,
     type?: string
   ) => void;
-  addMessages: (taskId: string, messages: Message) => void;
+  addMessages: (
+    taskId: string,
+    messages: Message,
+    options?: AddMessagesOptions
+  ) => void;
   setMessages: (taskId: string, messages: Message[]) => void;
   updateMessage: (taskId: string, messageId: string, message: Message) => void;
   removeMessage: (taskId: string, messageId: string) => void;
@@ -891,6 +943,7 @@ export interface ChatStore {
   setAcknowledgement: (taskId: string, text: string) => void;
   clearAcknowledgement: (taskId: string) => void;
   setNextTaskId: (taskId: string | null) => void;
+  setNextUserId: (taskId: string, nextUserId: string | undefined) => void;
   setStreamingDecomposeText: (taskId: string, text: string) => void;
   clearStreamingDecomposeText: (taskId: string) => void;
   setExecutionId: (taskId: string, executionId: string | undefined) => void;
@@ -911,11 +964,50 @@ const autoConfirmTimers: Record<string, ReturnType<typeof setTimeout>> = {};
 const AUTO_CONFIRM_TIMEOUT_MS = 30000;
 
 // Track active SSE connections for proper cleanup. `live` distinguishes
-// real Brain runs from history/share playback streams.
+// real Brain runs from history/share playback streams. `projectId` lets us ask
+// "does this Project still have a live consumer?" (a session's long-lived
+// stream is opened once and reused across follow-up turns that each get a new
+// task id, so task-id lookups are not enough). `lastEventAt` feeds the liveness
+// watchdog that reaps a silently-dropped (half-open) stream.
 const activeSSEControllers: Record<
   string,
-  { controller: AbortController; live: boolean }
+  {
+    controller: AbortController;
+    live: boolean;
+    projectId?: string;
+    lastEventAt: number;
+  }
 > = {};
+
+// If a live stream delivers nothing (not even a heartbeat) for this long, treat
+// it as dead: drop the controller so the next follow-up re-attaches. Heartbeats
+// are ~20s, so this tolerates several missed ticks plus a slow first event
+// without ever false-positiving on a healthy-but-quiet session.
+const SSE_STALE_TIMEOUT_MS = 90_000;
+let sseLivenessTimer: ReturnType<typeof setInterval> | null = null;
+
+function ensureSseLivenessWatchdog(): void {
+  if (sseLivenessTimer) return;
+  sseLivenessTimer = setInterval(() => {
+    const now = Date.now();
+    for (const [taskId, entry] of Object.entries(activeSSEControllers)) {
+      if (!entry.live) continue;
+      const silentForMs = now - entry.lastEventAt;
+      if (silentForMs <= SSE_STALE_TIMEOUT_MS) continue;
+      console.warn(
+        `[sse] Live stream for task ${taskId} (project ${entry.projectId}) was silent for ${Math.round(silentForMs / 1000)}s; marking it dead so the next follow-up can re-attach`
+      );
+      try {
+        entry.controller.abort();
+      } catch {
+        // Ignore abort errors while reaping a dead stream.
+      }
+      delete activeSSEControllers[taskId];
+    }
+  }, 15_000);
+  // Never keep a Node/jsdom process alive just for the watchdog.
+  (sseLivenessTimer as unknown as { unref?: () => void })?.unref?.();
+}
 
 const FINAL_OUTPUT_FILE_PATH_REGEX =
   /(?<![A-Za-z0-9:\\/])(?:[A-Za-z]:)?[\\/][^\s`"'<>|*]+?\.[A-Za-z0-9]{1,12}(?=$|[\s`"'<>|*),;:\]}])/g;
@@ -1553,6 +1645,10 @@ const chatStore = (initial?: Partial<ChatStore>) =>
                 // assistant turn so the usage overview reports a real total
                 // (backend keeps the max across turns).
                 const turnTokens = get().tasks[taskId]?.tokens || 0;
+                // Persist the peak single-request size alongside the turn so the
+                // context-window gauge survives a reload (backend keeps the max).
+                const turnLastRequestTokens =
+                  get().tasks[taskId]?.lastRequestTokens || 0;
                 enqueueTurnPost(
                   chatId,
                   queryId,
@@ -1562,13 +1658,16 @@ const chatStore = (initial?: Partial<ChatStore>) =>
                     step,
                     content: String(content ?? ''),
                     reasoning: (message as any)?.reasoning ?? null,
+                    activities: (message as any)?.activities ?? null,
+                    testRuns: (message as any)?.testRuns ?? null,
                     agent_name: (message as any)?.agent_name || null,
                     attaches: (message as any)?.attaches || [],
                     fileList: (message as any)?.fileList || [],
                     createdAt: new Date().toISOString(),
                   },
                   undefined,
-                  turnTokens
+                  turnTokens,
+                  turnLastRequestTokens
                 );
               })().catch((e) =>
                 console.warn('Failed to enqueue assistant turn update persist:', e)
@@ -1667,6 +1766,11 @@ const chatStore = (initial?: Partial<ChatStore>) =>
         throw new Error('No active Project selected.');
       }
       const startOptions = options || {};
+      // A resume re-attaches a live consumer to an existing Project without
+      // starting a new turn (no new chat store, no user message, no enqueue).
+      // Used when a follow-up is sent after the session stream died (brain
+      // restart, idle drop) so the improve POST has a live consumer to drain it.
+      const isResume = !!startOptions.resume && isLiveTask;
       const project =
         isLiveTask && project_id
           ? projectStore.getProjectById(project_id)
@@ -1676,9 +1780,10 @@ const chatStore = (initial?: Partial<ChatStore>) =>
       }
       const sessionModeForRequest =
         sessionMode || project?.mode || SessionMode.SINGLE_AGENT;
-      // Track genuine, user-facing task starts (skip replay/share playback).
+      // Track genuine, user-facing task starts (skip replay/share playback and
+      // resumes, which are not a new task submission).
       // Powers the "time to first task" lifecycle event.
-      if (isLiveTask) {
+      if (isLiveTask && !isResume) {
         const submitWorkers = getWorkerList();
         const submitHasMcp = submitWorkers.some(
           (w) => (w.workerInfo?.mcp_tools?.length ?? 0) > 0
@@ -1706,7 +1811,7 @@ const chatStore = (initial?: Partial<ChatStore>) =>
       /**
        * Replay creates its own chatStore for each task with replayProject
        */
-      if (project_id && type !== 'replay') {
+      if (project_id && type !== 'replay' && !isResume) {
         console.log('Creating a new Chat Instance for current project on end');
         const newChatResult = projectStore.appendInitChatStore(
           project_id,
@@ -1732,8 +1837,9 @@ const chatStore = (initial?: Partial<ChatStore>) =>
             targetChatStore.getState().addMessages(newTaskId, {
               id: generateUniqueId(),
               role: 'user',
-              content: messageContent,
+              content: startOptions.displayContent ?? messageContent,
               attaches: messageAttaches || [],
+              selections: startOptions.selections,
             });
             targetChatStore.getState().setHasMessages(newTaskId, true);
           }
@@ -1855,7 +1961,16 @@ const chatStore = (initial?: Partial<ChatStore>) =>
             ? projectStore.getHistoryId(project_id)
             : null;
       let snapshots: any = [];
-      let skipFirstConfirm = true;
+      // A normal first startTask creates the turn's chat store up front, so the
+      // FIRST `confirmed` on the stream must reuse it (skipFirstConfirm=true).
+      // A resume is different: it attaches to an ALREADY-started Project and
+      // enqueues no initial turn, so the first `confirmed` it sees belongs to
+      // the follow-up turn. Treat that confirm as a follow-up (false) so it opens
+      // a FRESH task/store for the new turn. Otherwise the follow-up runs inside
+      // the previous (finished) task and inherits its plan card + execution
+      // summary — the "carried over" content that only gets replaced when the
+      // agent emits its own.
+      let skipFirstConfirm = !isResume;
       let playbackFirstStepTimeMs: number | null = null;
       let playbackLastStepTimeMs: number | null = null;
 
@@ -2300,7 +2415,12 @@ const chatStore = (initial?: Partial<ChatStore>) =>
       activeSSEControllers[newTaskId] = {
         controller: abortController,
         live: isLiveTask,
+        projectId: isLiveTask ? (project_id ?? undefined) : undefined,
+        lastEventAt: Date.now(),
       };
+      if (isLiveTask) {
+        ensureSseLivenessWatchdog();
+      }
 
       // Getter functions that use the locked references instead of dynamic ones
       const getCurrentChatStore = () => {
@@ -2329,9 +2449,15 @@ const chatStore = (initial?: Partial<ChatStore>) =>
             run_id: newTaskId,
             space_root_path: spaceRootPath,
             workdir_mode: project?.workdirMode || undefined,
-            question:
-              messageContent ||
-              targetChatStore.getState().getLastUserMessage()?.content,
+            // A resume sends no question: it only re-opens the consumer for an
+            // already-started Project. The follow-up turn is enqueued by the
+            // improve POST that follows, so sending the last user message here
+            // would run the previous turn again.
+            question: isResume
+              ? ''
+              : messageContent ||
+                targetChatStore.getState().getLastUserMessage()?.content,
+            resume: isResume,
             model_platform: apiModel.model_platform,
             email,
             user_id: getAuthStore().user_id,
@@ -2377,6 +2503,17 @@ const chatStore = (initial?: Partial<ChatStore>) =>
           }
         : undefined;
 
+      // For a resume we must not enqueue the follow-up until the brain has
+      // actually created/attached the consumer (so the improve POST finds a
+      // live task lock). `onopen` fires once response headers arrive, which the
+      // brain has already sent after building the lock; resolve there.
+      let resolveResumeOpen: (() => void) | null = null;
+      const resumeOpenPromise = isResume
+        ? new Promise<void>((resolve) => {
+            resolveResumeOpen = resolve;
+          })
+        : null;
+
       const ssePromise = sseTransport({
         url: api,
         method: !type ? 'POST' : 'GET',
@@ -2388,6 +2525,11 @@ const chatStore = (initial?: Partial<ChatStore>) =>
             ? { Authorization: `Bearer ${token}` }
             : undefined,
         async onmessage(event: any) {
+          // Any traffic (data or heartbeat) proves the stream is alive; the
+          // watchdog reaps only streams that go fully silent.
+          const _sseEntry = activeSSEControllers[newTaskId];
+          if (_sseEntry) _sseEntry.lastEventAt = Date.now();
+
           let agentMessages: AgentMessage;
 
           try {
@@ -2520,6 +2662,23 @@ const chatStore = (initial?: Partial<ChatStore>) =>
                   source: 'upload',
                 }) as unknown as File
             );
+            // Code-selection pills ride along on the confirmed event during
+            // replay/reload, where the optimistic user turn no longer exists.
+            const confirmedSelections = Array.isArray(
+              (agentMessages.data as { selections?: unknown })?.selections
+            )
+              ? ((agentMessages.data as {
+                  selections?: Array<{
+                    path: string;
+                    startLine: number;
+                    endLine: number;
+                  }>;
+                }).selections as Array<{
+                  path: string;
+                  startLine: number;
+                  endLine: number;
+                }>)
+              : undefined;
             const shouldCreateNewChat =
               project_id && (question || messageContent);
 
@@ -2531,6 +2690,121 @@ const chatStore = (initial?: Partial<ChatStore>) =>
                * as it has been skipped earlier in startTask.
                */
               const nextTaskId = previousChatStore.nextTaskId || undefined;
+              const sourceMessages =
+                previousChatStore.tasks[currentTaskId]?.messages || [];
+              const lastMessage = sourceMessages.at(-1);
+
+              // Every `confirmed` that reaches this block is a NON-first
+              // confirm (the block is guarded by `!skipFirstConfirm`), i.e. a
+              // follow-up / subsequent turn. For those the SSE `question` is
+              // the Brain's echo of THIS turn's prompt and is authoritative;
+              // the closure `messageContent` is the ORIGINAL startTask prompt
+              // and is stale for every turn after the first (which goes to the
+              // else branch, not here).
+              //
+              // This used to be gated on `previousChatStore.nextTaskId`, but a
+              // mid-run steer that the Brain DEFERS loses that pointer by the
+              // time its deferred `confirmed` arrives (it reads null). That
+              // false negative flipped the resolver to the stale ORIGINAL
+              // prompt — rendering the wrong user bubble for the steered turn
+              // AND leaving its queued pill (keyed by the real prompt text)
+              // unmatched, so the pill stuck forever. Treat every confirm in
+              // this block as a follow-up so `question` wins.
+              const isFollowUpConfirm = true;
+
+              // Attaches for the new turn's user message. Prefer what the user
+              // actually attached THIS turn (lastMessage). On a follow-up with
+              // no new attachment, this must be empty -- NOT a fallback to
+              // `messageAttaches`, which is the closure-captured attaches from
+              // the ORIGINAL startTask (the long-lived SSE consumer never
+              // re-runs). Falling back there re-attaches the first turn's image
+              // to every subsequent turn, so the image "bleeds" back into the
+              // chatbox and the agent keeps re-describing it. Only the very
+              // first confirm (not a follow-up) should seed from messageAttaches.
+              // On a LIVE turn lastMessage already carries richer attach
+              // objects, so it wins; rebuiltFromConfirmed is the
+              // replay/reload source (lastMessage was reconstructed empty).
+              const attachesForNewMessage =
+                lastMessage?.role === 'user' && lastMessage?.attaches?.length
+                  ? lastMessage.attaches
+                  : rebuiltFromConfirmed.length
+                    ? rebuiltFromConfirmed
+                    : isFollowUpConfirm
+                      ? []
+                      : [
+                          ...(previousChatStore.tasks[currentTaskId]
+                            ?.attaches || []),
+                          ...(messageAttaches || []),
+                        ];
+
+              // Three candidate sources for the user prompt body.
+              //   1. lastMessage.content -- the prompt ChatBox.handleSend
+              //      just added to the previous chatStore. This is what
+              //      the user actually typed *this turn* and is therefore
+              //      authoritative for both startTask and improve flows.
+              //   2. question -- the SSE CONFIRMED event's question field.
+              //      This is the current improve/follow-up prompt.
+              //   3. messageContent -- the closure-captured arg passed to
+              //      the original startTask call. It is accurate for the
+              //      first run but stale for improve turns because the SSE
+              //      consumer remains alive across the whole Project.
+              //
+              // So the fallback order depends on the lifecycle:
+              // - first startTask confirmed: messageContent before question
+              // - follow-up confirmed: question before stale messageContent
+              const userMessageContent = resolveConfirmedUserMessageContent({
+                lastMessageContent:
+                  lastMessage?.role === 'user' ? lastMessage.content : undefined,
+                messageContent,
+                question,
+                isFollowUpConfirm,
+              });
+
+              // The stable id of THIS turn. Prefer `nextUserId`, minted by
+              // ChatBox.handleSend and recorded on the source task, so the
+              // identity survives even when the optimistic bubble is no longer
+              // the last message. Fall back to the trailing user message's id
+              // and leave it `undefined` only when there is no source user turn
+              // to carry over (pure replay) — that is the sole case the guard
+              // below consults the task's text.
+              const sourceTurnId =
+                previousChatStore.tasks[currentTaskId]?.nextUserId ||
+                (lastMessage?.role === 'user' && lastMessage?.id
+                  ? lastMessage.id
+                  : undefined);
+
+              // Option D, guard 1: an in-memory, ID-keyed re-emit guard. A
+              // re-emitted `confirmed` (a re-attached stream replaying the
+              // confirm, or a double delivery) for a turn whose id we have
+              // ALREADY placed must not spin up another task. This replaces the
+              // old text-keyed guard, which could hide a legitimate repeat of
+              // the same text (a re-sent "retry"/"continue" gets a fresh id, so
+              // it is correctly treated as a NEW turn and still placed).
+              if (
+                isReemittedUserTurn({
+                  resolvedTurnId: sourceTurnId,
+                  resolvedContent: userMessageContent,
+                  currentMessages: sourceMessages,
+                  registry: placedUserTurns,
+                })
+              ) {
+                skipFirstConfirm = false;
+                return;
+              }
+
+              const carriedUserId = sourceTurnId || generateUniqueId();
+              // The SOURCE copy of this turn to remove, if any. Searching by
+              // the stable id (rather than only checking `.at(-1)`) is the core
+              // fix: a notice / acknowledgement / the previous turn's `end`
+              // landing after the optimistic add used to leave the user bubble
+              // here AND in the new task — the duplicated turn.
+              const sourceTurnIdToRemove = resolveSourceUserTurnId(
+                sourceMessages,
+                carriedUserId,
+                userMessageContent
+              );
+
+              const previousVanillaStore = lockedChatStore;
               const newChatResult = projectStore.appendInitChatStore(
                 project_id || projectStore.activeProjectId!,
                 nextTaskId
@@ -2561,103 +2835,50 @@ const chatStore = (initial?: Partial<ChatStore>) =>
                   newChatStore.getState().setType(newTaskId, 'replay');
                 }
 
-                // Every `confirmed` that reaches this block is a NON-first
-                // confirm (the block is guarded by `!skipFirstConfirm`), i.e. a
-                // follow-up / subsequent turn. For those the SSE `question` is
-                // the Brain's echo of THIS turn's prompt and is authoritative;
-                // the closure `messageContent` is the ORIGINAL startTask prompt
-                // and is stale for every turn after the first (which goes to the
-                // else branch, not here).
-                //
-                // This used to be gated on `previousChatStore.nextTaskId`, but a
-                // mid-run steer that the Brain DEFERS loses that pointer by the
-                // time its deferred `confirmed` arrives (it reads null). That
-                // false negative flipped the resolver to the stale ORIGINAL
-                // prompt — rendering the wrong user bubble for the steered turn
-                // AND leaving its queued pill (keyed by the real prompt text)
-                // unmatched, so the pill stuck forever. Treat every confirm in
-                // this block as a follow-up so `question` wins.
-                const isFollowUpConfirm = true;
-                const lastMessage =
-                  previousChatStore.tasks[currentTaskId]?.messages.at(-1);
-                if (lastMessage?.role === 'user' && lastMessage?.id) {
-                  previousChatStore.removeMessage(
-                    currentTaskId,
-                    lastMessage.id
-                  );
-                }
-
-                // Attaches for the new turn's user message. Prefer what the user
-                // actually attached THIS turn (lastMessage). On a follow-up with
-                // no new attachment, this must be empty -- NOT a fallback to
-                // `messageAttaches`, which is the closure-captured attaches from
-                // the ORIGINAL startTask (the long-lived SSE consumer never
-                // re-runs). Falling back there re-attaches the first turn's image
-                // to every subsequent turn, so the image "bleeds" back into the
-                // chatbox and the agent keeps re-describing it. Only the very
-                // first confirm (not a follow-up) should seed from messageAttaches.
-                // On a LIVE turn lastMessage already carries richer attach
-                // objects, so it wins; rebuiltFromConfirmed is the
-                // replay/reload source (lastMessage was reconstructed empty).
-                const attachesForNewMessage =
-                  lastMessage?.role === 'user' && lastMessage?.attaches?.length
-                    ? lastMessage.attaches
-                    : rebuiltFromConfirmed.length
-                      ? rebuiltFromConfirmed
-                      : isFollowUpConfirm
-                        ? []
-                        : [
-                            ...(previousChatStore.tasks[currentTaskId]
-                              ?.attaches || []),
-                            ...(messageAttaches || []),
-                          ];
-
-                // Three candidate sources for the user prompt body.
-                //   1. lastMessage.content -- the prompt ChatBox.handleSend
-                //      just added to the previous chatStore. This is what
-                //      the user actually typed *this turn* and is therefore
-                //      authoritative for both startTask and improve flows.
-                //   2. question -- the SSE CONFIRMED event's question field.
-                //      This is the current improve/follow-up prompt.
-                //   3. messageContent -- the closure-captured arg passed to
-                //      the original startTask call. It is accurate for the
-                //      first run but stale for improve turns because the SSE
-                //      consumer remains alive across the whole Project.
-                //
-                // So the fallback order depends on the lifecycle:
-                // - first startTask confirmed: messageContent before question
-                // - follow-up confirmed: question before stale messageContent
-                const userMessageContent = resolveConfirmedUserMessageContent({
-                  lastMessageContent:
-                    lastMessage?.role === 'user'
-                      ? lastMessage.content
-                      : undefined,
-                  messageContent,
-                  question,
-                  isFollowUpConfirm,
-                });
-                // Reuse the ORIGINAL user message id when this confirm is just
-                // moving the live message from the previous chat store into the
-                // new one (it was removed above). Minting a fresh id here made
-                // the same question persist as TWO turns (the removed original
-                // + this copy), which showed up as a duplicated/"stacked" user
-                // bubble on reload. Keeping the id stable means the turn upserts
-                // to a single record. Only mint a new id when there is no
-                // original user message to carry over (e.g. pure replay).
-                const carriedUserId =
-                  lastMessage?.role === 'user' && lastMessage?.id
-                    ? lastMessage.id
-                    : generateUniqueId();
                 // Fresh turn: clear any stale live reasoning from a prior
                 // stalled/stopped turn so this thinking block starts clean.
                 newChatStore.getState().clearLiveReasoning(newTaskId);
                 newChatStore.getState().clearAcknowledgement(newTaskId);
-                newChatStore.getState().addMessages(newTaskId, {
+
+                // Option D, guard 2: place the turn into its final task. When
+                // both tasks live in the SAME chat store (the common case —
+                // appendInitChatStore reuses the project's primary store), fold
+                // the source-copy removal and the destination append into one
+                // `set()`, so a late notice/ack/end (or a re-emitted confirm)
+                // never observes the turn stranded in both tasks. When a fresh
+                // chat store was minted the two tasks are in different stores,
+                // so fall back to an explicit remove followed by the add.
+                const placementMessage: Message = {
                   id: carriedUserId,
                   role: 'user',
                   content: userMessageContent,
                   attaches: attachesForNewMessage,
-                });
+                  selections:
+                    confirmedSelections?.length
+                      ? confirmedSelections
+                      : lastMessage?.selections,
+                };
+                if (newChatStore === previousVanillaStore) {
+                  newChatStore.getState().addMessages(newTaskId, placementMessage, {
+                    removeSource: sourceTurnIdToRemove
+                      ? {
+                          taskId: currentTaskId,
+                          messageId: sourceTurnIdToRemove,
+                        }
+                      : undefined,
+                  });
+                } else {
+                  if (sourceTurnIdToRemove) {
+                    previousChatStore.removeMessage(
+                      currentTaskId,
+                      sourceTurnIdToRemove
+                    );
+                  }
+                  newChatStore.getState().addMessages(newTaskId, placementMessage);
+                }
+                // Record the placement so a later re-emit of this turn is
+                // recognised by the id guard above.
+                placedUserTurns.markPlaced(carriedUserId);
                 // This queued follow-up's turn has started and it's now in the
                 // stream — drop its pending QueuedBox pill (display-only entries
                 // have no executionId), matched by content.
@@ -2762,6 +2983,20 @@ const chatStore = (initial?: Partial<ChatStore>) =>
                     currentTaskId,
                     firstUserMsg.id,
                     { ...firstUserMsg, attaches: rebuiltFromConfirmed }
+                  );
+                }
+              }
+              if (confirmedSelections?.length) {
+                const firstUserMsg = previousChatStore.tasks[
+                  currentTaskId
+                ]?.messages.find(
+                  (m) => m.role === 'user' && !m.selections?.length
+                );
+                if (firstUserMsg) {
+                  previousChatStore.updateMessage(
+                    currentTaskId,
+                    firstUserMsg.id,
+                    { ...firstUserMsg, selections: confirmedSelections }
                   );
                 }
               }
@@ -3115,23 +3350,62 @@ const chatStore = (initial?: Partial<ChatStore>) =>
               question &&
               !(currentChatStore.tasks[currentTaskId].messages.length === 1)
             ) {
-              //Replace the optimistic update if existent.
-              const lastMessage =
-                currentChatStore.tasks[currentTaskId]?.messages.at(-1);
-              if (
-                lastMessage?.role === 'user' &&
-                lastMessage.id &&
-                lastMessage.content === question
-              ) {
-                currentChatStore.removeMessage(currentTaskId, lastMessage.id);
+              // Replace the optimistic update if it exists. Prefer the stable
+              // turn id (recorded as `nextUserId` by ChatBox.handleSend) over
+              // an exact-string match: the optimistic bubble and the SSE
+              // `question` can differ by whitespace/formatting, and the old
+              // `content === question` guard then left BOTH bubbles in place
+              // (the duplicated turn). Fall back to the last message only when
+              // it is the user turn with matching (normalised) text.
+              const waitMessages =
+                currentChatStore.tasks[currentTaskId]?.messages || [];
+              const stableTurnId =
+                currentChatStore.tasks[currentTaskId]?.nextUserId;
+              // Option D, guard 1: a re-emitted `wait_confirm` for a turn whose
+              // id we have already placed must not re-add the user bubble.
+              // Keyed on the stable id, so a genuine new turn (fresh id) still
+              // places. `undefined` stableTurnId means replay — fall through to
+              // the existing replace-or-append behaviour.
+              if (!(stableTurnId && placedUserTurns.isPlaced(stableTurnId))) {
+                const existingById = stableTurnId
+                  ? waitMessages.find(
+                      (m) => m.role === 'user' && m.id === stableTurnId
+                    )
+                  : undefined;
+                const waitLast = waitMessages.at(-1);
+                const removeId = existingById
+                  ? existingById.id
+                  : waitLast?.role === 'user' &&
+                      waitLast.id &&
+                      normalizeUserTurnContent(waitLast.content) ===
+                        normalizeUserTurnContent(question)
+                    ? waitLast.id
+                    : undefined;
+                const placedTurnId = stableTurnId || generateUniqueId();
+                const userMessage: Message = {
+                  id: placedTurnId,
+                  role: 'user',
+                  content: question as string,
+                  step: AgentStep.WAIT_CONFIRM,
+                  isConfirm: false,
+                };
+                // Remove the optimistic copy and add the confirmed copy in ONE
+                // update so a re-emitted wait_confirm can't leave the bubble in
+                // two places (Option D, guard 2).
+                addMessages(
+                  currentTaskId,
+                  userMessage,
+                  removeId
+                    ? {
+                        removeSource: {
+                          taskId: currentTaskId,
+                          messageId: removeId,
+                        },
+                      }
+                    : undefined
+                );
+                placedUserTurns.markPlaced(placedTurnId);
               }
-              addMessages(currentTaskId, {
-                id: generateUniqueId(),
-                role: 'user',
-                content: question as string,
-                step: AgentStep.WAIT_CONFIRM,
-                isConfirm: false,
-              });
             }
             addMessages(currentTaskId, {
               id: generateUniqueId(),
@@ -3854,6 +4128,18 @@ const chatStore = (initial?: Partial<ChatStore>) =>
                 (task: TaskInfo) => task.id === resolvedProcessTaskId
               )
             );
+            // Fallback: if task ID not found, try finding by agent type — this
+            // mirrors the ACTIVATE_TOOLKIT path exactly. Without it a DEACTIVATE
+            // could resolve to no agent (assigneeAgentIndex === -1) and never be
+            // appended to the log, even though its ACTIVATE had been — leaving
+            // that tool row stuck on "still working" forever with a blank
+            // Response, since the trace only flips a row to done when it sees
+            // the matching DEACTIVATE.
+            if (assigneeAgentIndex === -1 && agentMessages.data.agent_name) {
+              assigneeAgentIndex = taskAssigning!.findIndex(
+                (agent: Agent) => agent.type === agentMessages.data.agent_name
+              );
+            }
             if (
               assigneeAgentIndex === -1 &&
               (isSingleAgentEventName(agentMessages.data.agent_name) ||
@@ -4294,6 +4580,30 @@ const chatStore = (initial?: Partial<ChatStore>) =>
             const liveReasoning = tasks[currentTaskId]?.liveReasoning;
             const finalReasoning = endReasoning || liveReasoning || undefined;
             if (liveReasoning) clearLiveReasoning(currentTaskId);
+            // A REPLAY end event carries the Execution Summary snapshot that was
+            // persisted with the turn (see the playback endpoint); a LIVE end
+            // event doesn't, so derive it from the run's tool log instead. Either
+            // way the END message ends up carrying `activities`, which is what
+            // the summary renders from after a reload.
+            const endActivities =
+              typeof endData === 'object' &&
+              endData !== null &&
+              Array.isArray((endData as { activities?: unknown }).activities)
+                ? (endData as { activities: ActivityItem[] }).activities
+                : undefined;
+            // Verification receipt. Derived BEFORE the activity rows are
+            // persisted, because `toPersistedActivity` drops the raw tool
+            // output the parser needs. A replay payload may carry the snapshot
+            // already; otherwise read it off the live shell activity now.
+            const endTestRuns = Array.isArray(
+              (endData as { testRuns?: unknown } | null)?.testRuns
+            )
+              ? ((endData as { testRuns: TestRunSnapshot[] }).testRuns ?? [])
+              : undefined;
+            const liveActivitiesForEnd = endActivities
+              ? []
+              : collectTaskActivities(tasks[currentTaskId]?.taskAssigning);
+            const liveTestRun = latestTestRun(liveActivitiesForEnd);
             const endMessageId = generateUniqueId();
             const endUiMessage: Message = {
               id: endMessageId,
@@ -4303,6 +4613,9 @@ const chatStore = (initial?: Partial<ChatStore>) =>
               isConfirm: false,
               fileList: [],
               reasoning: finalReasoning,
+              activities:
+                endActivities ?? toPersistedActivities(liveActivitiesForEnd),
+              testRuns: endTestRuns ?? (liveTestRun ? [liveTestRun] : undefined),
             };
 
             addMessages(currentTaskId, endUiMessage);
@@ -4819,6 +5132,10 @@ const chatStore = (initial?: Partial<ChatStore>) =>
           console.log('open', respond);
           const { setAttaches, activeTaskId } = get();
           setAttaches(activeTaskId as string, []);
+          if (resolveResumeOpen) {
+            resolveResumeOpen();
+            resolveResumeOpen = null;
+          }
           return;
         },
 
@@ -4856,6 +5173,35 @@ const chatStore = (initial?: Partial<ChatStore>) =>
             err?.message?.includes('ERR_NETWORK_CHANGED') ||
             err?.message?.includes('ERR_INTERNET_DISCONNECTED');
           if (isConnectionError) {
+            if (isLiveTask) {
+              // A live stream is the ONLY consumer of the turn queue, so a
+              // silent retry is dangerous: fetchEventSource re-POSTs /chat with
+              // the original body, which re-runs the first turn, and it keeps
+              // the session marked "live" so a follow-up never re-attaches.
+              // Mark the session dead (drop the controller, clear the stuck
+              // "thinking" flag) and stop the retry — the next follow-up opens a
+              // fresh resume stream that attaches WITHOUT re-running a turn.
+              console.warn(
+                '[fetchEventSource] Live stream connection error; marking session dead so the next follow-up can re-attach'
+              );
+              try {
+                if (activeSSEControllers[newTaskId]) {
+                  delete activeSSEControllers[newTaskId];
+                }
+              } catch (cleanupError) {
+                console.warn(
+                  'Error cleaning up AbortController on live stream drop:',
+                  cleanupError
+                );
+              }
+              const dropStore = getCurrentChatStore();
+              const dropTaskId = getCurrentTaskId();
+              const dropTask = dropStore.tasks[dropTaskId];
+              if (dropTask?.isPending) {
+                dropStore.setIsPending(dropTaskId, false);
+              }
+              throw err;
+            }
             console.warn(
               '[fetchEventSource] Connection error detected, will retry automatically...'
             );
@@ -4908,6 +5254,18 @@ const chatStore = (initial?: Partial<ChatStore>) =>
             if (currentTask && currentTask.status !== ChatTaskStatus.FINISHED) {
               currentStore.setStatus(currentTaskId, ChatTaskStatus.FINISHED);
             }
+          } else if (isLiveTask) {
+            // A live session stream only closes on error/timeout/abort — the
+            // brain keeps it open across turns. Stop lying that the task is
+            // still thinking, but do NOT mark it FINISHED: the task lock (and
+            // its conversation context) may still be alive on the brain, and the
+            // next follow-up will re-attach to it.
+            const currentStore = getCurrentChatStore();
+            const currentTaskId = getCurrentTaskId();
+            const currentTask = currentStore.tasks[currentTaskId];
+            if (currentTask?.isPending) {
+              currentStore.setIsPending(currentTaskId, false);
+            }
           }
           // Abort to resolve fetchEventSource promise (for replay/load - allows awaiting completion)
           try {
@@ -4931,6 +5289,17 @@ const chatStore = (initial?: Partial<ChatStore>) =>
           }
         },
       });
+      if (isResume && resumeOpenPromise) {
+        // Wait until the attach stream is established (headers received, so the
+        // brain has built/attached the task lock) before letting the caller
+        // enqueue the follow-up. Bounded so a hung open can never block the send
+        // forever; if it times out the improve POST still fires and its own
+        // error handling surfaces any real failure.
+        await Promise.race([
+          resumeOpenPromise,
+          new Promise<void>((resolve) => setTimeout(resolve, 8000)),
+        ]);
+      }
       if (type === 'replay') {
         try {
           await ssePromise;
@@ -4943,6 +5312,11 @@ const chatStore = (initial?: Partial<ChatStore>) =>
           console.error(`SSE stream failed for task ${newTaskId}:`, err);
           throw err; // Let loadProjectFromHistory handle it
         }
+      } else {
+        // Live streams are fire-and-forget: `onerror` already reacts (the next
+        // follow-up re-attaches), so swallow the rejection we deliberately throw
+        // when stopping a dead stream to avoid an unhandled promise rejection.
+        ssePromise.catch(() => {});
       }
     },
 
@@ -5041,17 +5415,46 @@ const chatStore = (initial?: Partial<ChatStore>) =>
         };
       });
     },
-    addMessages(taskId, message) {
-      set((state) => ({
-        ...state,
-        tasks: {
-          ...state.tasks,
-          [taskId]: {
-            ...state.tasks[taskId],
-            messages: [...state.tasks[taskId].messages, message],
+    addMessages(taskId, message, options) {
+      // Stamp the wall-clock time on user turns so the turn header can render
+      // "when" it was sent (Phase 4). Persistence already writes its own
+      // createdAt; this keeps the in-memory copy in sync so LIVE turns show a
+      // timestamp too, mirroring the reference design. Agent messages (and
+      // hydrated/replayed messages, which arrive via setMessages) are left
+      // untouched, and an existing createdAt is preserved.
+      const storedMessage =
+        message?.role === 'user' && !(message as Message)?.createdAt
+          ? { ...message, createdAt: new Date().toISOString() }
+          : message;
+      set((state) => {
+        let tasks = state.tasks;
+        // Option D, guard 2: fold the source-copy removal into the same update
+        // as the destination append when the caller asks for it. A late event
+        // then never observes the turn present in neither (or both) tasks.
+        const source = options?.removeSource;
+        if (source && state.tasks[source.taskId]) {
+          const sourceTask = state.tasks[source.taskId];
+          tasks = {
+            ...tasks,
+            [source.taskId]: {
+              ...sourceTask,
+              messages: sourceTask.messages.filter(
+                (existing) => existing.id !== source.messageId
+              ),
+            },
+          };
+        }
+        return {
+          ...state,
+          tasks: {
+            ...tasks,
+            [taskId]: {
+              ...state.tasks[taskId],
+              messages: [...state.tasks[taskId].messages, storedMessage],
+            },
           },
-        },
-      }));
+        };
+      });
       try {
         // Persist turns so a reload can reconstruct the conversation. Both the
         // user query AND the assistant reply(ies) are persisted through the
@@ -5107,6 +5510,7 @@ const chatStore = (initial?: Partial<ChatStore>) =>
                     content: String((message as any)?.content ?? ''),
                     createdAt: new Date().toISOString(),
                     attaches: (message as any)?.attaches || [],
+                    selections: (message as any)?.selections || [],
                     fileList: (message as any)?.fileList || [],
                     agent_name: (message as any)?.agent_name || null,
                   },
@@ -5134,6 +5538,10 @@ const chatStore = (initial?: Partial<ChatStore>) =>
                 // assistant turn so the usage overview reports a real total
                 // (backend keeps the max across turns).
                 const turnTokens = get().tasks[taskId]?.tokens || 0;
+                // Persist the peak single-request size alongside the turn so the
+                // context-window gauge survives a reload (backend keeps the max).
+                const turnLastRequestTokens =
+                  get().tasks[taskId]?.lastRequestTokens || 0;
                 enqueueTurnPost(
                   chatId,
                   queryId,
@@ -5143,13 +5551,16 @@ const chatStore = (initial?: Partial<ChatStore>) =>
                     step,
                     content: String(content ?? ''),
                     reasoning: (message as any)?.reasoning ?? null,
+                    activities: (message as any)?.activities ?? null,
+                    testRuns: (message as any)?.testRuns ?? null,
                     agent_name: (message as any)?.agent_name || null,
                     attaches: (message as any)?.attaches || [],
                     fileList: (message as any)?.fileList || [],
                     createdAt: new Date().toISOString(),
                   },
                   undefined,
-                  turnTokens
+                  turnTokens,
+                  turnLastRequestTokens
                 );
               })().catch((e) =>
                 console.warn('Failed to enqueue assistant turn persist:', e)
@@ -6056,6 +6467,21 @@ const chatStore = (initial?: Partial<ChatStore>) =>
         nextTaskId: taskId,
       }));
     },
+    setNextUserId: (taskId, nextUserId) => {
+      set((state) => {
+        if (!state.tasks[taskId]) return state;
+        return {
+          ...state,
+          tasks: {
+            ...state.tasks,
+            [taskId]: {
+              ...state.tasks[taskId],
+              nextUserId,
+            },
+          },
+        };
+      });
+    },
     setStreamingDecomposeText: (taskId, text) => {
       set((state) => {
         if (!state.tasks[taskId]) return state;
@@ -6174,6 +6600,23 @@ export const getToolStore = () => chatStore().getState();
 /** Returns true if any task has an active SSE connection. */
 export function hasActiveSSEConnection(taskIds: string[]): boolean {
   return taskIds.some((taskId) => !!activeSSEControllers[taskId]);
+}
+
+/**
+ * True when the given Project still has a *live* Brain stream registered.
+ * Keyed by Project, not task id: a session's long-lived stream is opened once
+ * and reused across follow-up turns that each get a fresh task id, so a task-id
+ * lookup would miss a stream that is very much alive. A follow-up must open a
+ * resume stream when this returns false, or it enqueues work into a queue no
+ * consumer is draining (the "agent stopped responding" bug).
+ */
+export function hasLiveSessionStream(
+  projectId: string | null | undefined
+): boolean {
+  if (!projectId) return false;
+  return Object.values(activeSSEControllers).some(
+    (connection) => connection.live && connection.projectId === projectId
+  );
 }
 
 /**

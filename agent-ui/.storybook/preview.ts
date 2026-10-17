@@ -4,6 +4,10 @@ import { withThemeByDataAttribute } from '@storybook/addon-themes';
 import type { Preview } from '@storybook/react-vite';
 // Global styles: design tokens + Tailwind base/components/utilities.
 import '../src/style/index.css';
+// Initialize i18next with the app's resources so `Trans`/`useTranslation`
+// render real copy in stories (the panel's "Worked for / Working for" pills,
+// Execution Summary, etc.) instead of empty fallbacks.
+import '../src/i18n';
 
 import {
   applyThemeContractV2,

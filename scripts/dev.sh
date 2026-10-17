@@ -28,17 +28,17 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOG="$ROOT/.theia-server.log"
 BRAIN_SH="$ROOT/scripts/brain.sh"
 
-# Pin Node 20 (Theia's native builds break on newer Node). Prefer the nvm-
-# installed v20 if present, else fall back to whatever `node` is on PATH.
-NODE20="$HOME/.nvm/versions/node/v20.20.2/bin"
+# Pin Node 24 (Theia 1.76 requires >=24). Prefer the newest nvm-installed v24
+# if present, else fall back to whatever `node` is on PATH.
+NODE24_BIN="$(ls -d "$HOME"/.nvm/versions/node/v24.*/bin 2>/dev/null | sort -V | tail -1)"
 
 # Point the editor's /api proxy at eigent-theia's OWN local brain (:5001)
 # instead of the old external eigent backend (default :3001). This is what makes
 # eigent-theia self-sufficient — no eigent/server Docker stack needed.
 export UNDISCLOSED_PROXY_TARGET="${UNDISCLOSED_PROXY_TARGET:-http://localhost:5001}"
 
-if [ -d "$NODE20" ]; then
-  export PATH="$NODE20:$PATH"
+if [ -n "$NODE24_BIN" ] && [ -d "$NODE24_BIN" ]; then
+  export PATH="$NODE24_BIN:$PATH"
 fi
 
 cd "$ROOT"

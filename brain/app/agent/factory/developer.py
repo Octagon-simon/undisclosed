@@ -32,6 +32,7 @@ from app.agent.toolkit.code_execution_toolkit import CodeExecutionToolkit
 from app.agent.toolkit.diff_toolkit import DiffToolkit
 from app.agent.toolkit.github_toolkit import GithubToolkit
 from app.agent.toolkit.human_toolkit import HumanToolkit
+from app.agent.toolkit.mongodb_toolkit import MongoDBToolkit
 
 # TODO: Remove NoteTakingToolkit and use TerminalToolkit instead
 from app.agent.toolkit.note_taking_toolkit import NoteTakingToolkit
@@ -40,6 +41,7 @@ from app.agent.toolkit.search_toolkit import SearchToolkit
 from app.agent.toolkit.skill_toolkit import SkillToolkit
 from app.agent.toolkit.terminal_toolkit import TerminalToolkit
 from app.agent.toolkit.test_runner_toolkit import TestRunnerToolkit
+from app.agent.toolkit.code_review_toolkit import CodeReviewToolkit
 from app.agent.toolkit.web_deploy_toolkit import WebDeployToolkit
 from app.agent.utils import NOW_STR
 from app.hands.interface import IHands
@@ -115,6 +117,13 @@ async def developer_agent(
             working_directory=working_directory,
         )
     )
+    code_review_toolkit = message_integration.register_toolkits(
+        CodeReviewToolkit(
+            options.project_id,
+            Agents.developer_agent,
+            working_directory=working_directory,
+        )
+    )
     code_execution_toolkit = message_integration.register_toolkits(
         CodeExecutionToolkit(options.project_id)
     )
@@ -125,6 +134,13 @@ async def developer_agent(
         github_tools = message_integration.register_functions(github_tools)
     else:
         github_tools = []
+    # MongoDB read-only query tools; only available when a connection string is
+    # configured (returns [] otherwise), so this stays a no-op without MONGO_URL.
+    mongo_tools = MongoDBToolkit.get_can_use_tools(options.project_id)
+    if mongo_tools:
+        mongo_tools = message_integration.register_functions(mongo_tools)
+    else:
+        mongo_tools = []
 
     tools = [
         *HumanToolkit.get_can_use_tools(
@@ -137,8 +153,10 @@ async def developer_agent(
         *search_tools,
         *diff_toolkit.get_tools(),
         *test_runner_toolkit.get_tools(),
+        *code_review_toolkit.get_tools(),
         *code_execution_toolkit.get_tools(),
         *github_tools,
+        *mongo_tools,
     ]
     tool_names = [
         HumanToolkit.toolkit_name(),
@@ -148,12 +166,15 @@ async def developer_agent(
         SkillToolkit.toolkit_name(),
         DiffToolkit.toolkit_name(),
         TestRunnerToolkit.toolkit_name(),
+        CodeReviewToolkit.toolkit_name(),
         CodeExecutionToolkit.toolkit_name(),
     ]
     if search_tools:
         tool_names.append(SearchToolkit.toolkit_name())
     if github_tools:
         tool_names.append(GithubToolkit.toolkit_name())
+    if mongo_tools:
+        tool_names.append(MongoDBToolkit.toolkit_name())
     if hands is None or hands.can_execute_terminal():
         terminal_toolkit = TerminalToolkit(
             options.project_id,

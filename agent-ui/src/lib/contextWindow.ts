@@ -200,14 +200,15 @@ export function resolveContextWindow(
 const CHARS_PER_TOKEN = 4;
 
 /**
- * Estimate the live context size from the loaded conversation, for when the
- * authoritative `lastRequestTokens` (reported by the Brain's request_usage event)
- * isn't available — most importantly when a LONG conversation is REOPENED after a
- * reload / brain restart: `lastRequestTokens` isn't persisted, so it resets to 0
- * and the gauge would read empty even though the context is already large. This
- * approximates the next request's input from the task's messages + tool I/O so
- * the banner can warn immediately, before another big turn is spent. Superseded
- * by the exact `lastRequestTokens` as soon as the next turn runs.
+ * Estimate the live context size from the loaded conversation, as a LAST-RESORT
+ * fallback for when the authoritative `lastRequestTokens` (reported by the
+ * Brain's request_usage event) isn't available. It is now persisted per turn and
+ * re-seeded on hydration (`ProjectSection`), so a reopened conversation keeps the
+ * real gauge it had before the reload; this estimate only kicks in for turns
+ * persisted before that field existed, or a turn that has not run a model request
+ * yet. It approximates the next request's input from the task's messages + tool
+ * I/O so the banner can still warn immediately, before another big turn is spent.
+ * Superseded by the exact `lastRequestTokens` as soon as the next turn runs.
  */
 export function estimateContextTokens(task: unknown): number {
   const t = task as {

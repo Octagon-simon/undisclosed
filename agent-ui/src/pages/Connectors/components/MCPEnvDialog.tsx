@@ -38,6 +38,14 @@ interface MCPEnvDialogProps {
   activeMcp?: any;
 }
 
+/**
+ * Emphasis for the Connect button once every required field is filled: a brighter
+ * fill plus a brand-tinted ring + shadow "glow", so the now-active button reads
+ * as clickable instead of looking like the disabled state.
+ */
+const CONNECT_READY_CLASS =
+  'brightness-110 ring-2 ring-ds-ring-brand-default-focus ring-offset-0 shadow-lg shadow-ds-ring-brand-default-focus transition-all duration-200';
+
 export async function google_check(apiKey: string, searchEngineId: string) {
   const query = 'hello'; // rand word
   const url = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${searchEngineId}&q=${encodeURIComponent(
@@ -110,6 +118,9 @@ export const MCPEnvDialog: FC<MCPEnvDialogProps> = ({
   const [envValues, setEnvValues] = useState<{ [key: string]: EnvValue }>({});
   const [showKeys, setShowKeys] = useState<{ [key: string]: boolean }>({});
   const [isValidating, setIsValidating] = useState<boolean>(false);
+  // Fields the user has already interacted with — we only surface "required"
+  // validation on touched fields, not the moment the dialog opens.
+  const [touched, setTouched] = useState<{ [key: string]: boolean }>({});
   const { t } = useTranslation();
   useEffect(() => {
     initializeEnvValues(activeMcp);
@@ -150,18 +161,38 @@ export const MCPEnvDialog: FC<MCPEnvDialogProps> = ({
     return parts.length > 4 ? parts[4] : homePage;
   };
   const updateEnvValue = (key: string, value: string) => {
-    setEnvValues((prev) => ({
-      ...prev,
-      [key]: {
-        value,
-        required: prev[key]?.required || true,
-        tip: prev[key]?.tip || '',
-      },
-    }));
+    setEnvValues((prev) => {
+      const field = prev[key] ?? { value: '', required: true, tip: '' };
+      // Live-validate only after the field has been touched, so a required field
+      // does not flash an error the instant the dialog opens empty.
+      const error =
+        touched[key] && field.required && !value.trim()
+          ? `${getTitleContent(key)} is required`
+          : '';
+      return { ...prev, [key]: { ...field, value, error } };
+    });
+  };
+
+  // On blur, mark the field touched and re-check it, so leaving a required field
+  // empty immediately explains why Connect is still disabled.
+  const handleFieldBlur = (key: string) => {
+    setTouched((prev) => ({ ...prev, [key]: true }));
+    setEnvValues((prev) => {
+      const field = prev[key];
+      if (!field) {
+        return prev;
+      }
+      const error =
+        field.required && !(field.value ?? '').trim()
+          ? `${getTitleContent(key)} is required`
+          : '';
+      return { ...prev, [key]: { ...field, error } };
+    });
   };
   const handleCloseMcpEnvSetting = () => {
     setEnvValues({});
     setShowKeys({});
+    setTouched({});
     onClose();
   };
 
@@ -274,6 +305,16 @@ export const MCPEnvDialog: FC<MCPEnvDialogProps> = ({
       setIsValidating(false);
     }
   };
+
+  // Readiness drives both the disabled state and the "ready" glow: every
+  // required field must be filled and no field may carry a validation error.
+  const missingRequired = Object.keys(envValues).filter(
+    (key) => envValues[key]?.required && !(envValues[key]?.value ?? '').trim()
+  );
+  const hasFieldError = Object.values(envValues).some((field) => !!field?.error);
+  const isReady = missingRequired.length === 0 && !hasFieldError;
+  const canSubmit = isReady && !isValidating;
+
   return (
     <Dialog
       open={showEnvConfig}
@@ -340,6 +381,11 @@ export const MCPEnvDialog: FC<MCPEnvDialogProps> = ({
             <div className="gap-md flex flex-col">
               {Object.keys(activeMcp?.install_command?.env || {}).map((key) => {
                 const getNoteContent = () => {
+                  // When the field is invalid, show the validation message in
+                  // place of the tip so the reason is visible next to the input.
+                  if (envValues[key]?.error) {
+                    return envValues[key].error as string;
+                  }
                   let noteContent = envValues[key]?.tip || '';
 
                   if (key === 'SEARCH_ENGINE_ID') {
@@ -364,6 +410,7 @@ export const MCPEnvDialog: FC<MCPEnvDialogProps> = ({
                     type={showKeys[key] ? 'text' : 'password'}
                     placeholder={`Enter ${getTitleContent(key)}`}
                     value={envValues[key]?.value || ''}
+                    onBlur={() => handleFieldBlur(key)}
                     backIcon={
                       showKeys[key] ? (
                         <Eye className="h-5 w-5" />
@@ -392,9 +439,19 @@ export const MCPEnvDialog: FC<MCPEnvDialogProps> = ({
             }
             onConfirm={handleConfigureMcpEnvSetting}
             confirmButtonVariant="primary"
-            // Optional: consumers of DialogFooter may support disabled prop
-            {...(isValidating ? ({ confirmButtonDisabled: true } as any) : {})}
-          />
+            // Disabled until every required field has a value (and no field is in
+            // an error state); the glow marks the now-ready active state.
+            confirmButtonDisabled={!canSubmit}
+            confirmButtonClassName={isReady ? CONNECT_READY_CLASS : undefined}
+          >
+            {missingRequired.length > 0 ? (
+              <span className="mr-auto text-body-xs text-ds-text-neutral-muted-default">
+                {`Fill in ${missingRequired.length} required field${
+                  missingRequired.length > 1 ? 's' : ''
+                } to connect.`}
+              </span>
+            ) : null}
+          </DialogFooter>
         </DialogContent>
       </form>
     </Dialog>

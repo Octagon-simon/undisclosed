@@ -49,9 +49,13 @@ fi
 echo "==> Freezing brain → dist/undisclosed-brain…"
 # --collect-all pulls in CAMEL + our app package data. Add --hidden-import as
 # the build surfaces missing modules (toolkits, playwright, etc.).
+# --collect-all github bundles PyGithub, which the GitHub toolkit imports
+# lazily (camel's @dependencies_required('github')), so static analysis misses
+# it and the frozen sidecar would crash when GITHUB_ACCESS_TOKEN is set.
 "$PY" -m PyInstaller --noconfirm --onefile --name undisclosed-brain \
   --collect-all camel \
   --collect-all app \
+  --collect-all github \
   main.py
 
 echo "==> Done: $(ls -lh dist/undisclosed-brain* 2>/dev/null | awk '{print $5, $NF}')"

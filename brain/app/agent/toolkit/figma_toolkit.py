@@ -260,7 +260,12 @@ class FigmaToolkit(BaseToolkit, AbstractToolkit):
         return header + ":\n" + "\n".join(summaries)
 
     def get_tools(self) -> list[FunctionTool]:
-        return [FunctionTool(self.figma_read)]
+        # kwargs_tolerant drops stray kwargs (name/signature preserved via
+        # @wraps) so figma_read stays callable from any harness. Imported
+        # lazily to avoid a module-load cycle (app.agent <-> listen helpers).
+        from app.utils.listen.toolkit_listen import kwargs_tolerant
+
+        return [FunctionTool(kwargs_tolerant(self.figma_read))]
 
     @classmethod
     def toolkit_name(cls) -> str:

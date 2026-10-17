@@ -16,18 +16,40 @@
  * One-shot composer prefill. The welcome/empty state (rendered outside ChatBox)
  * can seed the composer text via this store; ChatBox consumes it into its local
  * `message` state and clears it. Harmless in the desktop app (nothing sets it).
+ *
+ * `selection` carries a code reference from the editor ("Send to Agent") so the
+ * composer can show it as a pill until the message is sent.
  */
 
 import { create } from 'zustand';
+
+export interface ComposerSelection {
+  /** Workspace-relative path. */
+  path: string;
+  /** 1-based first line, always <= endLine. */
+  startLine: number;
+  endLine: number;
+}
 
 interface ComposerDraftState {
   draft: string | null;
   setDraft: (text: string) => void;
   clearDraft: () => void;
+  selection: ComposerSelection | null;
+  setSelection: (selection: ComposerSelection | null) => void;
+  clearSelection: () => void;
+  focusRequestId: number;
+  requestFocus: () => void;
 }
 
 export const useComposerDraft = create<ComposerDraftState>((set) => ({
   draft: null,
   setDraft: (text) => set({ draft: text }),
   clearDraft: () => set({ draft: null }),
+  selection: null,
+  setSelection: (selection) => set({ selection }),
+  clearSelection: () => set({ selection: null }),
+  focusRequestId: 0,
+  requestFocus: () =>
+    set((state) => ({ focusRequestId: state.focusRequestId + 1 })),
 }));

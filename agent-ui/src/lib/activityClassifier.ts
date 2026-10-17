@@ -31,6 +31,7 @@ import type {
   TimelineItem,
   ToolItem,
 } from '@/components/ChatBox/MessageItem/workLogTimeline';
+import { AgentStep } from '@/types/constants';
 
 export type ActivityCategory =
   | 'search'
@@ -893,6 +894,15 @@ export function isActivityTraceEnabled(): boolean {
 export interface ChangedFile {
   path: string;
   diff?: { added: number; removed: number };
+  /**
+   * The raw unified patch for this edit, when the tool carried one (apply_patch
+   * / diff toolkit). Used as an immediate inline-diff source so the Changed
+   * Files row expands without waiting on the backend `git diff` fetch — and so
+   * Storybook (no backend) can render a real diff. Live rows still prefer the
+   * fetched patch, which also covers write/untracked files the classifier has no
+   * patch text for.
+   */
+  patch?: string;
 }
 
 /**
@@ -901,31 +911,206 @@ export interface ChangedFile {
  * call, and keeps the edit-category ones (write_to_file / apply_patch /
  * shell_write_content_to_file) deduped by path, carrying the last known diff.
  */
-export function extractChangedFiles(
-  agents: Array<{ log?: Array<{ data?: Record<string, unknown> }> }> | undefined
-): ChangedFile[] {
-  const byPath = new Map<string, ChangedFile>();
+/** The shape of a task's `taskAssigning` entries this module reads from. */
+type AgentLogs = Array<{
+  log?: Array<{
+    step?: string;
+    data?: Record<string, unknown>;
+  }>;
+}>;
+
+/**
+ * Steps that mean "this agent's turn is over": no DEACTIVATE for its tools can
+ * arrive after one of these. Used to settle orphaned running rows (see
+ * `pairAgentToolCalls`).
+ */
+const TERMINAL_AGENT_STEPS: ReadonlySet<string> = new Set([
+  AgentStep.DEACTIVATE_AGENT,
+  AgentStep.AGENT_END,
+  AgentStep.AGENT_SUMMARY_END,
+  AgentStep.END,
+  AgentStep.FAILED,
+]);
+
+/**
+ * Fold an agent's raw chronological log into paired tool calls. The backend
+ * pushes BOTH the request (`ACTIVATE_TOOLKIT`, `data.message` holds the args)
+ * and the response (`DEACTIVATE_TOOLKIT`, `data.message` holds the result) as
+ * separate entries; treating each as its own tool call produced two rows per
+ * action and left every row's Response blank. Pair them by `toolkit::method`
+ * exactly like `buildAgentBlocks` does in `TaskWorkLogAccordion`, so the
+ * request lands in `input` and the response in `output`.
+ */
+function pairAgentToolCalls(agents: AgentLogs | undefined): ToolItem[] {
+  const tools: ToolItem[] = [];
+  const pending = new Map<string, ToolItem[]>();
   let n = 0;
+
   for (const agent of agents ?? []) {
-    for (const entry of agent?.log ?? []) {
+    const log = agent?.log ?? [];
+    const firstToolIndex = tools.length;
+    let agentFinished = false;
+
+    for (const entry of log) {
+      const step = entry?.step;
+      if (step && TERMINAL_AGENT_STEPS.has(step)) agentFinished = true;
       const data = entry?.data ?? {};
-      const message = (data as { message?: unknown }).message;
-      const item = classifyToolItem({
-        kind: 'tool',
-        id: `cf-${n++}`,
-        toolkitName: String((data as { toolkit_name?: unknown }).toolkit_name ?? 'Tool'),
-        method: String((data as { method_name?: unknown }).method_name ?? ''),
-        input: typeof message === 'string' ? message : '',
-        output: '',
-        status: 'success',
-      } as unknown as ToolItem);
-      if (item.category === 'edit' && item.filePath) {
-        const prev = byPath.get(item.filePath);
-        byPath.set(item.filePath, {
-          path: item.filePath,
-          diff: item.diff ?? prev?.diff,
-        });
+      const toolkitName = String(
+        (data as { toolkit_name?: unknown }).toolkit_name ?? 'Tool'
+      );
+      const method = String(
+        (data as { method_name?: unknown }).method_name ?? ''
+      );
+      const rawMessage = (data as { message?: unknown }).message;
+      const text = typeof rawMessage === 'string' ? rawMessage : '';
+      const key = `${toolkitName}::${method}`;
+
+      // The DEACTIVATE half carries the tool's response; fold it into the
+      // ACTIVATE row it pairs with instead of emitting a second, empty row.
+      if (step === AgentStep.DEACTIVATE_TOOLKIT) {
+        const stack = pending.get(key);
+        let target = stack?.[stack.length - 1];
+        if (!target || target.status !== 'running') {
+          // No keyed match. The backend does not always echo the same
+          // `toolkit_name`/`method_name` on the DEACTIVATE (it can be renamed,
+          // emptied, or normalized away), so the strict `toolkit::method` key
+          // misses and the ACTIVATE row would shimmer "still working" forever
+          // with an empty Response. An agent issues its tools in order, so fall
+          // back to the most recent still-running row from THIS agent — that is
+          // the call this response belongs to.
+          target = undefined;
+          for (let i = tools.length - 1; i >= firstToolIndex; i--) {
+            if (tools[i].status === 'running') {
+              target = tools[i];
+              break;
+            }
+          }
+        }
+        if (target) {
+          target.status = 'done';
+          target.output = [target.output, text]
+            .filter(Boolean)
+            .join('\n\n')
+            .trim();
+          target.detail = [target.detail, text]
+            .filter(Boolean)
+            .join('\n\n')
+            .trim();
+        }
+        continue;
       }
+
+      if (step !== AgentStep.ACTIVATE_TOOLKIT) continue;
+      if (!method && !text) continue;
+      // Workforce/session setup is not user-visible activity (matches the
+      // work log, which routes these to its synthetic "Preparing agents" block).
+      if (PREPARATION_METHOD_NAMES.has(method.trim().toLowerCase())) continue;
+
+      const tool: ToolItem = {
+        kind: 'tool',
+        id: `log-${n++}`,
+        rowTitle: `${toolkitName} · ${method}`,
+        toolkitName,
+        method,
+        detail: text,
+        input: text,
+        output: '',
+        status: 'running',
+      };
+      tools.push(tool);
+      const stack = pending.get(key);
+      if (stack) stack.push(tool);
+      else pending.set(key, [tool]);
+    }
+
+    // A finished agent cannot have a tool still "running": its DEACTIVATE was
+    // either never emitted (e.g. an unwrapped, non-@listen_toolkit tool that
+    // raised) or dropped in transit. Settle those orphaned rows so they stop
+    // shimmering "still working" forever with a blank Response.
+    if (agentFinished) {
+      for (let i = firstToolIndex; i < tools.length; i++) {
+        if (tools[i].status === 'running') tools[i].status = 'done';
+      }
+    }
+  }
+
+  return tools;
+}
+
+/**
+ * Walk every logged tool call an agent made and classify it. This is the shared
+ * source for both the end-of-task summaries (changed files + execution summary):
+ * the backend's raw log entries become `ActivityItem`s without a new event
+ * stream. Private — call the two named collectors below.
+ */
+function classifyAgentLogs(agents: AgentLogs | undefined): ActivityItem[] {
+  return pairAgentToolCalls(agents).map((tool) => classifyToolItem(tool));
+}
+
+/**
+ * Every classified activity a task performed, in log order. Feeds the Execution
+ * Summary (`executionMetricsFromActivities`) — counts per category, no new
+ * backend work.
+ */
+export function collectTaskActivities(
+  agents: AgentLogs | undefined,
+  opts?: { settle?: boolean }
+): ActivityItem[] {
+  const items = classifyAgentLogs(agents);
+  if (!opts?.settle) return items;
+  // The backend never writes its terminal step (`DEACTIVATE_AGENT`) into
+  // `taskAssigning[].log` — the store only pushes ACTIVATE/DEACTIVATE_TOOLKIT
+  // entries there — so the in-log orphan settle in `pairAgentToolCalls` cannot
+  // fire on its own. When the owning task is no longer live, force every row to
+  // finished: any that is still "running" is an orphan (its DEACTIVATE was
+  // dropped in transit) and must stop shimmering "still working". Same
+  // task-level normalization the work log uses (`TaskWorkLogAccordion`).
+  return items.map((item) => (item.running ? { ...item, running: false } : item));
+}
+
+/**
+ * Trim an `ActivityItem` to the fields worth persisting alongside a turn.
+ *
+ * Keeps everything the summary row renders (verb/object/file link/badge/diff)
+ * but drops the raw tool request/response, which can be entire files: a turn
+ * file must stay small, and a restored row is read-only anyway (no expandable
+ * detail, so `input`/`output` would only bloat the file). `running` is forced
+ * false because a persisted turn is, by definition, no longer running.
+ */
+export function toPersistedActivity(item: ActivityItem): ActivityItem {
+  return {
+    id: item.id,
+    category: item.category,
+    verb: item.verb,
+    object: item.object,
+    badge: item.badge,
+    running: false,
+    filePath: item.filePath,
+    diff: item.diff,
+    input: '',
+    output: '',
+  };
+}
+
+/** Map `toPersistedActivity` over a task's classified activities, returning
+ *  `undefined` for an empty list so callers can omit the field entirely. */
+export function toPersistedActivities(
+  items: ActivityItem[]
+): ActivityItem[] | undefined {
+  return items.length ? items.map(toPersistedActivity) : undefined;
+}
+
+export function extractChangedFiles(agents: AgentLogs | undefined): ChangedFile[] {
+  const byPath = new Map<string, ChangedFile>();
+  for (const item of classifyAgentLogs(agents)) {
+    if (item.category === 'edit' && item.filePath) {
+      const prev = byPath.get(item.filePath);
+      const patch = extractParam(item.input, ['patch', 'diff']) || undefined;
+      byPath.set(item.filePath, {
+        path: item.filePath,
+        diff: item.diff ?? prev?.diff,
+        patch: patch ?? prev?.patch,
+      });
     }
   }
   return [...byPath.values()];

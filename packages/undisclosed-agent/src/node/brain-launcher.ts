@@ -193,8 +193,26 @@ export class BrainLauncher implements BackendApplicationContribution {
     console.log(`[brain-launcher] starting brain: ${bin} on :${port}`);
 
     const logFd = this.openBrainLogFd();
+    // In a packaged app the frozen brain cannot resolve the bundled example
+    // skills from its own location (PyInstaller extracts the app into a temp
+    // dir, so <module>/../../example-skills is meaningless). Point it at the
+    // electron-builder extraResources copy explicitly. Dev resolves the repo's
+    // resources/example-skills on its own, so this is a no-op there.
+    const resourcesPath = (
+      process as NodeJS.Process & { resourcesPath?: string }
+    ).resourcesPath;
+    const bundledExampleSkills = resourcesPath
+      ? path.join(resourcesPath, 'example-skills')
+      : undefined;
+    const brainEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      UNDISCLOSED_BRAIN_PORT: port,
+    };
+    if (bundledExampleSkills && fs.existsSync(bundledExampleSkills)) {
+      brainEnv.UNDISCLOSED_EXAMPLE_SKILLS_DIR = bundledExampleSkills;
+    }
     const proc = spawn(bin, [], {
-      env: { ...process.env, UNDISCLOSED_BRAIN_PORT: port },
+      env: brainEnv,
       // Capture the brain's own stdout/stderr to a file. In a packaged app
       // `inherit` goes to the unified log, so a brain that wedges or dies after
       // a sleep leaves nothing to diagnose. Fall back to inherit if the file

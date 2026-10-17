@@ -11,8 +11,8 @@
     }
   ],
   "dependencies": {
-    "@theia/core": "1.60.0",
-    "@theia/vsx-registry": "1.60.0"
+    "@theia/core": "1.76.0",
+    "@theia/vsx-registry": "1.76.0"
   },
   "devDependencies": {
     "typescript": "~5.4.5"

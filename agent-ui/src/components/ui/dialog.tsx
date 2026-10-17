@@ -23,6 +23,43 @@ import { Button } from '@/components/ui/button';
 import { TooltipSimple } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 
+/**
+ * Radix portals to `<body>` by default. In the Theia agent-embed the panel is
+ * mounted inside `.undisclosed-agent-root`, and the embed stylesheet scopes its
+ * element resets (preflight, `* { font-family }`) under that class while leaving
+ * utility classes global (see `vite.config.agent-embed.ts`). A default `<body>`
+ * portal therefore lands OUTSIDE those resets and under the host editor's own
+ * high-z-index chrome, so a dialog opened from the embedded panel rendered with
+ * the host's element styling instead of the panel's — the "not of this world"
+ * create-trigger modal.
+ *
+ * Route portals into a body-level container that re-applies the scoped root
+ * class and sits above the host chrome. Outside the embed (the standalone app)
+ * there is no `.undisclosed-agent-root`, so this returns `undefined` and Radix
+ * keeps its default `<body>` portal.
+ */
+const EMBED_ROOT_CLASS = 'undisclosed-agent-root';
+const EMBED_PORTAL_ROOT_ID = 'undisclosed-agent-embed-portal';
+
+function resolveDialogPortalContainer(): HTMLElement | undefined {
+  if (typeof document === 'undefined') return undefined;
+  if (!document.querySelector(`.${EMBED_ROOT_CLASS}`)) return undefined;
+  let container = document.getElementById(EMBED_PORTAL_ROOT_ID);
+  if (!container) {
+    container = document.createElement('div');
+    container.id = EMBED_PORTAL_ROOT_ID;
+    container.className = EMBED_ROOT_CLASS;
+    // Above the host's editor chrome, but click-through while empty so the host
+    // stays interactive between dialogs (the overlay/content opt back in).
+    container.style.position = 'fixed';
+    container.style.inset = '0';
+    container.style.zIndex = '2147483000';
+    container.style.pointerEvents = 'none';
+    document.body.appendChild(container);
+  }
+  return container;
+}
+
 const Dialog = DialogPrimitive.Root;
 
 const DialogTrigger = DialogPrimitive.Trigger;
@@ -38,7 +75,7 @@ const DialogOverlay = React.forwardRef<
   <DialogPrimitive.Overlay
     ref={ref}
     className={cn(
-      'inset-0 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed z-50 bg-transparent',
+      'inset-0 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 pointer-events-auto fixed z-50 bg-transparent',
       className
     )}
     {...props}
@@ -105,7 +142,7 @@ const DialogContent = React.forwardRef<
     },
     ref
   ) => (
-    <DialogPortal>
+    <DialogPortal container={resolveDialogPortalContainer()}>
       <DialogOverlay
         className={cn(
           overlayVariant === 'light' && 'bg-dialog-overlay-light',
@@ -118,6 +155,7 @@ const DialogContent = React.forwardRef<
         ref={ref}
         className={cn(
           dialogContentVariants({ size }),
+          'pointer-events-auto',
           overlayVariant !== 'default' && 'z-[51]',
           className
         )}
@@ -259,6 +297,8 @@ interface DialogFooterProps extends React.HTMLAttributes<HTMLDivElement> {
     | 'warning';
   confirmButtonDisabled?: boolean;
   cancelButtonDisabled?: boolean;
+  /** Extra classes for the confirm button (e.g. a glow when the form is ready). */
+  confirmButtonClassName?: string;
 }
 
 const DialogFooter = React.forwardRef<HTMLDivElement, DialogFooterProps>(
@@ -275,6 +315,7 @@ const DialogFooter = React.forwardRef<HTMLDivElement, DialogFooterProps>(
       cancelButtonVariant = 'outline',
       confirmButtonDisabled = false,
       cancelButtonDisabled = false,
+      confirmButtonClassName,
       children,
       ...props
     },
@@ -363,6 +404,7 @@ const DialogFooter = React.forwardRef<HTMLDivElement, DialogFooterProps>(
             size="sm"
             onClick={onConfirm}
             disabled={confirmButtonDisabled}
+            className={confirmButtonClassName}
           >
             {confirmButtonText}
           </Button>

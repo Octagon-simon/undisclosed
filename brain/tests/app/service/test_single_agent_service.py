@@ -202,3 +202,100 @@ class TestActionToSse:
         payload = json.loads(frame.removeprefix("data: ").strip())
         assert payload["step"] == "approval_resolved"
         assert payload["data"]["decision"] == "timeout"
+
+
+class TestAnnounceAndStopRecovery:
+    """The turn loop must nudge a model that ends its turn on an intent-only
+    preamble instead of doing the work / reporting results.
+
+    Regression for the "4 in 8" stall: the low-temp model emits
+    "I'll check … Let me start by …", the turn ends, and the user has to send
+    "ok?" to resume. Two failure shapes are covered — zero-tool-call preamble,
+    and (the one the old guard MISSED) a turn that ran tools but whose trailing
+    segment was empty, so the last pre-tool-call preamble was resurrected as the
+    final answer.
+    """
+
+    def test_detects_zero_tool_announce(self):
+        from app.service.single_agent_service import _should_auto_continue
+
+        stalled = (
+            "I'll check the current branch state and what test coverage exists "
+            "for each changed file."
+        )
+        assert _should_auto_continue(
+            stalled,
+            "some tests are missing from your changes. kindly check",
+            tool_called=False,
+            answer_from_fallback=False,
+        )
+
+    def test_detects_announce_after_tools_with_fallback_answer(self):
+        from app.service.single_agent_service import _should_auto_continue
+
+        # The exact stalled answer seen in .brain.log: tools ran (3 rounds) but
+        # the trailing segment was empty, so this preamble was the "answer".
+        stalled = (
+            "I'll investigate which tests are missing. Let me start by checking "
+            "the current state of the branch and what changed."
+        )
+        assert _should_auto_continue(
+            stalled,
+            "some tests are missing from your changes. kindly check",
+            tool_called=True,
+            answer_from_fallback=True,
+        )
+
+    def test_does_not_nudge_real_closing_answer_after_tools(self):
+        from app.service.single_agent_service import _should_auto_continue
+
+        # Tools ran and the model DID write a trailing message — never nudge,
+        # even if it happens to contain "I'll".
+        real = "Added 3 tests. I'll push once you approve."
+        assert not _should_auto_continue(
+            real,
+            "add tests for the new files",
+            tool_called=True,
+            answer_from_fallback=False,
+        )
+
+    def test_does_not_nudge_chat_or_long_answers(self):
+        from app.service.single_agent_service import _should_auto_continue
+
+        # Chit-chat is never nudged.
+        assert not _should_auto_continue(
+            "I'll do that!",
+            "hi",
+            tool_called=False,
+            answer_from_fallback=False,
+        )
+        # A substantive answer isn't an announce-and-stop.
+        long_answer = "Let me walk through the findings. " + ("x" * 500)
+        assert not _should_auto_continue(
+            long_answer,
+            "explain the bug",
+            tool_called=False,
+            answer_from_fallback=False,
+        )
+
+    def test_empty_content_never_nudges(self):
+        from app.service.single_agent_service import _should_auto_continue
+
+        assert not _should_auto_continue(
+            "", "do the thing", tool_called=False, answer_from_fallback=True
+        )
+
+    def test_real_answer_is_kept_when_fallback_but_substantive(self):
+        from app.service.single_agent_service import (
+            _looks_like_announce_and_stop,
+        )
+
+        # A model that writes its answer just before a final tool call: the
+        # fallback resurrects it, but it is NOT narration, so no nudge.
+        answer = (
+            "## Summary\n"
+            "I fixed the receipt `+` sign and added coverage for "
+            "TransactionsTable, RecentTransactions, and useTransactionDetail."
+        )
+        assert not _looks_like_announce_and_stop(answer, "fix the tests")
+

@@ -749,6 +749,159 @@ code {
   }
 }
 
+/* PanelSection "working" ring.
+ *
+ * A soft MULTI-COLOUR comet travels CLOCKWISE around the section while the
+ * agent is still working: top-left -> top-right -> bottom-right -> bottom-left,
+ * looping until the turn ends. The head leads, the tail fades back into the
+ * ring, and the band runs through the shared palette (blue -> green -> the rest
+ * of `--colors-*`), so it reads as a calm "round the block" light that changes
+ * hue as it goes, not a flat single-colour stroke.
+ *
+ * The conic gradient's `from` angle is driven by a registered custom property
+ * (`--panel-border-angle`) so only the gradient angle animates, with no giant
+ * rotating element, and the comet stays pinned to the box's perimeter. The
+ * layer this class paints on is clipped to the 1.5px padded shell `PanelSection`
+ * adds while `active`, so the comet shows as a thin ring stroke.
+ *
+ * `+ 315deg` puts the head at the box's TOP-LEFT when the animation starts.
+ * Colours are palette tokens (`--colors-*`), not literal hex, so the ring
+ * re-themes with the app. */
+@property --panel-border-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+
+.panel-border-comet {
+  /* Band stops. Defaults are the original "Ocean" palette; the `--v*` variant
+   * classes below swap these five so each live section can wear a different
+   * combination. PanelSection picks one at random per section. */
+  --comet-c1: var(--colors-blue-300);
+  --comet-c2: var(--colors-emerald-300);
+  --comet-c3: var(--colors-fuchsia-300);
+  --comet-c4: var(--colors-orange-300);
+  --comet-c5: var(--colors-yellow-300);
+  background: conic-gradient(
+    from calc(var(--panel-border-angle) + 315deg),
+    transparent 0deg,
+    transparent 140deg,
+    color-mix(in srgb, var(--comet-c1) 45%, transparent) 205deg,
+    var(--comet-c1) 248deg,
+    var(--comet-c2) 288deg,
+    var(--comet-c3) 320deg,
+    var(--comet-c4) 343deg,
+    var(--comet-c5) 358deg,
+    transparent 360deg
+  );
+  opacity: 0.9;
+  animation: panel-border-comet 7.5s linear infinite;
+}
+
+/* Ring colour combinations. Each sets the five comet stops (head first, tail
+ * last). PanelSection adds one at random, `.panel-border-comet--v1` through
+ * `--v12`, so the working ring is a different palette run to run. Everything
+ * else (sweep, timing, reduced motion) is shared from the base class above. */
+.panel-border-comet--v1 {
+  --comet-c1: var(--colors-blue-300);
+  --comet-c2: var(--colors-emerald-300);
+  --comet-c3: var(--colors-fuchsia-300);
+  --comet-c4: var(--colors-orange-300);
+  --comet-c5: var(--colors-yellow-300);
+}
+.panel-border-comet--v2 {
+  --comet-c1: var(--colors-emerald-300);
+  --comet-c2: var(--colors-sky-300);
+  --comet-c3: var(--colors-indigo-300);
+  --comet-c4: var(--colors-purple-300);
+  --comet-c5: var(--colors-fuchsia-300);
+}
+.panel-border-comet--v3 {
+  --comet-c1: var(--colors-amber-300);
+  --comet-c2: var(--colors-orange-300);
+  --comet-c3: var(--colors-red-300);
+  --comet-c4: var(--colors-fuchsia-300);
+  --comet-c5: var(--colors-purple-300);
+}
+.panel-border-comet--v4 {
+  --comet-c1: var(--colors-fuchsia-300);
+  --comet-c2: var(--colors-purple-300);
+  --comet-c3: var(--colors-indigo-300);
+  --comet-c4: var(--colors-sky-300);
+  --comet-c5: var(--colors-emerald-300);
+}
+.panel-border-comet--v5 {
+  --comet-c1: var(--colors-green-300);
+  --comet-c2: var(--colors-emerald-300);
+  --comet-c3: var(--colors-yellow-300);
+  --comet-c4: var(--colors-amber-300);
+  --comet-c5: var(--colors-orange-300);
+}
+.panel-border-comet--v6 {
+  --comet-c1: var(--colors-sky-300);
+  --comet-c2: var(--colors-blue-300);
+  --comet-c3: var(--colors-indigo-300);
+  --comet-c4: var(--colors-purple-300);
+  --comet-c5: var(--colors-fuchsia-300);
+}
+.panel-border-comet--v7 {
+  --comet-c1: var(--colors-yellow-300);
+  --comet-c2: var(--colors-amber-300);
+  --comet-c3: var(--colors-orange-300);
+  --comet-c4: var(--colors-red-300);
+  --comet-c5: var(--colors-fuchsia-300);
+}
+.panel-border-comet--v8 {
+  --comet-c1: var(--colors-neon-300);
+  --comet-c2: var(--colors-fuchsia-300);
+  --comet-c3: var(--colors-sky-300);
+  --comet-c4: var(--colors-emerald-300);
+  --comet-c5: var(--colors-yellow-300);
+}
+.panel-border-comet--v9 {
+  --comet-c1: var(--colors-purple-300);
+  --comet-c2: var(--colors-fuchsia-300);
+  --comet-c3: var(--colors-red-300);
+  --comet-c4: var(--colors-orange-300);
+  --comet-c5: var(--colors-amber-300);
+}
+.panel-border-comet--v10 {
+  --comet-c1: var(--colors-sky-300);
+  --comet-c2: var(--colors-emerald-300);
+  --comet-c3: var(--colors-green-300);
+  --comet-c4: var(--colors-yellow-300);
+  --comet-c5: var(--colors-amber-300);
+}
+.panel-border-comet--v11 {
+  --comet-c1: var(--colors-indigo-300);
+  --comet-c2: var(--colors-purple-300);
+  --comet-c3: var(--colors-neon-300);
+  --comet-c4: var(--colors-fuchsia-300);
+  --comet-c5: var(--colors-sky-300);
+}
+.panel-border-comet--v12 {
+  --comet-c1: var(--colors-yellow-300);
+  --comet-c2: var(--colors-green-300);
+  --comet-c3: var(--colors-emerald-300);
+  --comet-c4: var(--colors-sky-300);
+  --comet-c5: var(--colors-blue-300);
+}
+
+@keyframes panel-border-comet {
+  to {
+    --panel-border-angle: 360deg;
+  }
+}
+
+/* Paused comet: while the agent is BLOCKED on a human question
+ * (`ask_human_via_gui` in flight) the turn is paused, so FREEZE the ring at its
+ * current angle instead of letting it keep sweeping. `animation-play-state`
+ * holds the running animation exactly where it is (no jump back to the start),
+ * so when the answer lands the comet resumes from the same spot. */
+.panel-border-comet--paused {
+  animation-play-state: paused;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-spin,
   .animate-pulse,
@@ -787,5 +940,10 @@ code {
     opacity: 1;
     color: var(--ds-text-neutral-default-default);
     background: none;
+  }
+
+  /* Hold the comet still (head at top-left) instead of sweeping the ring. */
+  .panel-border-comet {
+    animation: none;
   }
 }

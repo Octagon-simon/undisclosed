@@ -10,11 +10,12 @@ import {
 } from '@theia/core/lib/common';
 import {
   FrontendApplicationContribution,
-  PreferenceScope,
-  PreferenceService,
   StatusBar,
   StatusBarAlignment,
 } from '@theia/core/lib/browser';
+// Theia 1.76 moved the preferences API out of lib/browser; import from common.
+import { PreferenceScope } from '@theia/core/lib/common/preferences/preference-scope';
+import { PreferenceService } from '@theia/core/lib/common/preferences/preference-service';
 import { backendUrl } from './backend-url';
 import { StorageService } from '@theia/core/lib/browser/storage-service';
 import { ProgressService } from '@theia/core/lib/common/progress-service';

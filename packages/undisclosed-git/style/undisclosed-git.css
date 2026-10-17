@@ -1,0 +1,45 @@
+/**
+ * Undisclosed SCM styling.
+ *
+ * Untracked files open as an INLINE (unified) diff against an empty original
+ * (see `empty-diff-inline-contribution.ts` in this package). Monaco still
+ * reserves a 35px hunk gutter on the left of an inline diff, to host the
+ * per-hunk "Discard"/"Revert Block" toolbar:
+ *
+ *   @theia/monaco-editor-core/.../diffEditor/features/gutterFeature.js
+ *     const width = 35;
+ *     this.width = ... hasActions ? width : 0 ...
+ *
+ * That gutter has NO background of its own, so against our (near-black) editor
+ * background it reads as a dead 35px strip before the first character of the
+ * file, even though it is real diff chrome (it is where the discard button
+ * appears on hover).
+ *
+ * Give it a visible background so the strip reads as intentional, the way
+ * Antigravity renders it. Colour = the theme's diff "inserted line" colour, so
+ * it stays in sync with the theme.
+ *
+ * IMPORTANT: in the workbench the theme variables are named `--theia-<id>`,
+ * NOT `--vscode-<id>`. Theia's `ColorRegistry.toCssVariableName()` builds
+ * `--${prefix}-${id.replace(/\./g, '-')}` with prefix `theia`, so the colour id
+ * `diffEditor.insertedLineBackground` becomes
+ * `--theia-diffEditor-insertedLineBackground`. The `--vscode-*` spelling is
+ * ONLY emitted inside webviews (see `webview-theme-data-provider.ts`) and is
+ * undefined on the workbench, so referencing it silently falls through to the
+ * hard-coded fallback (a faint grey, i.e. "still black").
+ *
+ * `diffEditorGutter.insertedLineBackground` has no theme default (Monaco
+ * registers it as `null`), so it is almost always unset and the `--theia-`
+ * inserted-line colour wins. That colour is the same green the diff already
+ * paints on inserted lines, which is what Antigravity's strip matches.
+ *
+ * Scoped to inline diffs with `:not(.side-by-side)`: in a side-by-side diff the
+ * same `.gutter` element is the draggable centre sash, where a change-coloured
+ * tint would be wrong.
+ */
+.monaco-diff-editor:not(.side-by-side) .gutter {
+	background-color: var(
+		--theia-diffEditorGutter-insertedLineBackground,
+		var(--theia-diffEditor-insertedLineBackground, rgba(255, 255, 255, 0.06))
+	);
+}

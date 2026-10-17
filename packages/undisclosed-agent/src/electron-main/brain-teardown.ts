@@ -32,6 +32,7 @@ import {
   ElectronMainApplicationContribution,
 } from '@theia/core/lib/electron-main/electron-main-application';
 import * as cp from 'child_process';
+import { MainAppBridgeContribution } from './main-app-bridge';
 
 /**
  * Resolve the process-group id of `pid`, or `undefined` on error. On POSIX a
@@ -147,6 +148,11 @@ export default new ContainerModule((bind) => {
   if (resourcesPresent()) {
     bind(ElectronMainApplicationContribution)
       .to(BrainTeardownContribution)
+      .inSingletonScope();
+    // Publish the live ElectronMainApplication on globalThis so the entry
+    // wrapper can fork a replacement BACKEND in place (see main-app-bridge.ts).
+    bind(ElectronMainApplicationContribution)
+      .to(MainAppBridgeContribution)
       .inSingletonScope();
   }
 });

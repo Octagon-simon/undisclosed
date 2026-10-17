@@ -65,4 +65,34 @@ enable toggle and delete, and adds a skill via zip upload. (A device symlink
 - Toolkit: `brain/app/agent/toolkit/skill_toolkit.py`
 - Backend: `brain/app/controller/skill_controller.py`, `brain/app/service/skill_service.py`, `skill_config_service.py`
 - UI: `agent-ui/src/components/CodeAgentWorkspace/AgentSkills.tsx`, `ChatBox/BottomBox/PickerPanel.tsx`
-- Examples: `resources/example-skills/skill-creator/`
+- Bundled examples: `resources/example-skills/` (frontend/design/authoring, shipped
+  and auto-installed). `refactoring-ui` is the design-rules skill (`SKILL.md` +
+  `references/diagnose.md`, `references/systems.md`, `references/techniques.md`, and
+  `assets/tokens.css`, MIT). Extra skills (video/media/motion) are no longer vendored;
+  they live in their upstream GitHub projects and install on demand - see
+  `docs/extra-skills.md`.
+- Packaging: the examples ship via electron-builder `extraResources` to
+  `<resources>/example-skills`. The frozen brain can't resolve that path from
+  `__file__` (PyInstaller extracts to a temp dir), so `brain-launcher.ts` points
+  it there explicitly with `UNDISCLOSED_EXAMPLE_SKILLS_DIR`.
+
+## UI skill composition
+
+Applying a UI/design skill is not the last step. The brain prompt
+(`SINGLE_AGENT_SYS_PROMPT` and the other `Skills System` blocks in
+`brain/app/agent/prompt.py`) tells the agent that whenever it applies any UI or
+visual-design skill the user has enabled (`premium-frontend-ui`, `uipro`,
+`ui-styling`, `banner-design`, `design-system`, `screenshot-to-code`, or a
+taste/design skill), it MUST also load `refactoring-ui` and run its
+diagnose/refactor pass over the UI it produced before declaring the task done.
+That pass is where concrete design errors (ad-hoc spacing/type/color, weak
+hierarchy, flat depth, contrast) get fixed. The rule lives in the prompt, not in
+each skill's `SKILL.md`, so it stays in one place and covers every UI skill the
+user enables.
+
+## See also
+
+- `docs/features/curated-skill-catalog.md` - the planned browse-and-install catalog,
+  so the app stops bundling and pre-installing every example skill.
+- `docs/extra-skills.md` - the extra (video/media) skills, their upstream GitHub
+  projects, and how to install one on demand.

@@ -918,6 +918,13 @@ def _config_info_map() -> dict[str, dict]:
             "env_vars": ["GITHUB_ACCESS_TOKEN"],
             "toolkit": "github_toolkit",
         },
+        "MongoDB": {
+            # Must match the key MongoDBToolkit.get_can_use_tools() gates on
+            # (MONGO_URL); the read-only query toolkit stays disabled until a
+            # connection string is set via the Connectors UI or .env.
+            "env_vars": ["MONGO_URL"],
+            "toolkit": "mongodb_toolkit",
+        },
         "Google Calendar": {
             "env_vars": [
                 "GOOGLE_CLIENT_ID",
@@ -1190,7 +1197,8 @@ async def chat_steps_playback(task_id: str, delay_time: float = Query(0.0)):
                 "step": "confirmed",
                 "data": {
                     "question": question,
-                    "attaches": [a["filePath"] for a in attaches]
+                    "attaches": [a["filePath"] for a in attaches],
+                    "selections": user_msg.get("selections") or [],
                 }
             }
             yield sse_json("confirmed", confirmed_payload)
@@ -1210,7 +1218,12 @@ async def chat_steps_playback(task_id: str, delay_time: float = Query(0.0)):
                         "createdAt": msg.get("createdAt"),
                         "attaches": msg.get("attaches") or [],
                         "fileList": msg.get("fileList") or [],
-                        "reasoning": msg.get("reasoning")
+                        "reasoning": msg.get("reasoning"),
+                        # Execution Summary snapshot, replayed so the panel
+                        # rebuilds the summary from history (not just live runs).
+                        "activities": msg.get("activities"),
+                        # Verification receipts travel with the summary.
+                        "testRuns": msg.get("testRuns"),
                     }
                 }
                 

@@ -28,9 +28,14 @@ import { requestEmbedScreen } from '@/agent-embed/embedNav';
 import { useComposerDraft } from '@/agent-embed/composerDraft';
 import { generateUniqueId, SITE_URL } from '@/lib';
 import {
+  buildSelectionPrompt,
+  selectionLabel,
+} from '@/lib/selectionPrompt';
+import {
   isProjectAchieved,
   setProjectAchievedState,
 } from '@/lib/projectAchievement';
+import { WORKFORCE_MODE_ENABLED } from '@/lib/featureFlags';
 import { inferSessionModeFromTask } from '@/lib/sessionMode';
 import {
   estimateContextTokens,
@@ -44,6 +49,7 @@ import { proxyUpdateTriggerExecution } from '@/service/triggerApi';
 import { useAuthStore } from '@/store/authStore';
 import {
   buildProjectContinuationContext,
+  hasLiveSessionStream,
   resolveChatModelForProject,
 } from '@/store/chatStore';
 import { usePageTabStore } from '@/store/pageTabStore';
@@ -222,6 +228,9 @@ export default function ChatBox(): JSX.Element {
   // Consume a one-shot composer prefill from the welcome/empty state (embed).
   const composerDraft = useComposerDraft((s) => s.draft);
   const clearComposerDraft = useComposerDraft((s) => s.clearDraft);
+  const composerSelection = useComposerDraft((s) => s.selection);
+  const clearComposerSelection = useComposerDraft((s) => s.clearSelection);
+  const composerFocusRequestId = useComposerDraft((s) => s.focusRequestId);
   useEffect(() => {
     if (composerDraft != null) {
       setMessage(composerDraft);
@@ -253,14 +262,19 @@ export default function ChatBox(): JSX.Element {
   // so a still-loading Project renders empty instead of the wrong mode.
   const inferredSessionMode = inferSessionModeFromTask(activeTask, null);
   const activeProjectMode = activeProjectMeta?.mode ?? activeProject?.mode;
-  const effectiveSessionMode =
-    activeProjectMode ?? inferredSessionMode ?? SessionMode.SINGLE_AGENT;
   // Fall back to SINGLE_AGENT (not undefined) so the input footer — and with it
   // the model selector — still renders on reloaded conversations that predate
   // persisted session modes. Without a fallback the whole footer was hidden and
   // users couldn't pick a model on old chats.
-  const displaySessionMode =
+  const requestedSessionMode =
     activeProjectMode ?? inferredSessionMode ?? SessionMode.SINGLE_AGENT;
+  // Workforce is build-gated. With the flag off a Project persisted as
+  // workforce still opens in single-agent mode, so the mode shown is the mode
+  // the send path uses.
+  const effectiveSessionMode = WORKFORCE_MODE_ENABLED
+    ? requestedSessionMode
+    : SessionMode.SINGLE_AGENT;
+  const displaySessionMode = effectiveSessionMode;
   const ensureActiveProjectMode = useCallback(() => {
     const projectId = projectStore.activeProjectId;
     if (!projectId || activeProjectMode) return;
@@ -278,6 +292,7 @@ export default function ChatBox(): JSX.Element {
   // send path reads first.
   const handleSessionModeChange = useCallback(
     (mode: SessionModeType) => {
+      if (!WORKFORCE_MODE_ENABLED && mode !== SessionMode.SINGLE_AGENT) return;
       const projectId = projectStore.activeProjectId;
       if (projectId) {
         updateProjectMeta(projectId, { mode });
@@ -387,12 +402,14 @@ export default function ChatBox(): JSX.Element {
     }
   }, [modelType]);
   useEffect(() => {
-    if (workspaceChatFocusRequestId === 0) return;
+    if (workspaceChatFocusRequestId === 0 && composerFocusRequestId === 0) {
+      return;
+    }
     const focusTimer = window.setTimeout(() => {
       textareaRef.current?.focus();
     }, 180);
     return () => clearTimeout(focusTimer);
-  }, [workspaceChatFocusRequestId]);
+  }, [workspaceChatFocusRequestId, composerFocusRequestId]);
 
   useEffect(() => {
     proxyFetchGet('/api/v1/configs').catch((err) =>
@@ -857,7 +874,7 @@ export default function ChatBox(): JSX.Element {
     executionId?: string
   ) => {
     const _taskId = taskId || chatStore.activeTaskId;
-    if (message.trim() === '' && !messageStr) return;
+    if (message.trim() === '' && !messageStr && !composerSelection) return;
 
     if (!hasModel) {
       if (isCloudUsageLimited) {
@@ -884,8 +901,20 @@ export default function ChatBox(): JSX.Element {
     const shouldResumeProject = isProjectAchieved(targetProjectMeta?.metadata);
 
     const rawMessageContent = messageStr || message;
+    const sentSelections =
+      !messageStr && composerSelection ? [{ ...composerSelection }] : undefined;
     let tempMessageContent = rawMessageContent;
-    const displayContent = tempMessageContent;
+    const displayContent = rawMessageContent;
+    // The brain gets the path + line range; the transcript shows the same
+    // reference as a pill (rendered from `sentSelections`).
+    if (!messageStr && composerSelection) {
+      const instruction =
+        rawMessageContent.trim().length > 0
+          ? rawMessageContent
+          : 'Read those lines.';
+      tempMessageContent =
+        buildSelectionPrompt(composerSelection) + instruction;
+    }
 
     if (executionId && targetProjectId) {
       const project = projectStore.getProjectById(targetProjectId);
@@ -970,6 +999,7 @@ export default function ChatBox(): JSX.Element {
             [],
         });
         setMessage('');
+        clearComposerSelection();
 
         // Scroll to bottom after adding user message
         setTimeout(() => {
@@ -1065,6 +1095,7 @@ export default function ChatBox(): JSX.Element {
             hasErrorMessage
           ) {
             setMessage('');
+            clearComposerSelection();
             // Pass the message content to startTask instead of adding it to current chatStore
             const attachesToSend =
               JSON.parse(JSON.stringify(chatStore.tasks[_taskId]?.attaches)) ||
@@ -1080,7 +1111,8 @@ export default function ChatBox(): JSX.Element {
                 attachesToSend,
                 executionId,
                 targetProjectId,
-                effectiveSessionMode
+                effectiveSessionMode,
+                { displayContent, selections: sentSelections }
               );
               chatStore.setAttaches(_taskId, []);
               // If activeTaskId changed (new task created), clear its draft too
@@ -1111,12 +1143,51 @@ export default function ChatBox(): JSX.Element {
             const nextTaskId = generateUniqueId();
             chatStore.setNextTaskId(nextTaskId);
             chatStore.setNextExecutionId(_taskId as string, executionId);
+            // Stable id for THIS follow-up's user turn. Recorded on the source
+            // task and reused when the turn is (re)placed, so a duplicated
+            // `confirmed`/`wait_confirm` can recognise and skip a second copy
+            // instead of rendering the same user bubble twice.
+            const turnUserId = generateUniqueId();
+            chatStore.setNextUserId(_taskId as string, turnUserId);
 
             // Use improve endpoint (POST /chat/{id}) - {id} is project_id.
             // Resolve the currently selected model so a mid-conversation switch
             // (e.g. model A -> model B) is honored on this follow-up turn.
             const improveModel =
               await resolveChatModelForProject(targetProjectId);
+
+            // Make sure a live consumer exists before enqueuing the turn. After
+            // a brain restart or a long idle drop the session's SSE stream is
+            // gone; without a consumer the improve POST lands in a queue nobody
+            // drains and the agent appears to "stop responding". Re-open a
+            // resume stream (attach WITHOUT re-running a turn) so the queued
+            // follow-up has somewhere to land.
+            if (!hasLiveSessionStream(targetProjectId)) {
+              try {
+                console.debug(
+                  '[handleSend] no live session stream; re-attaching before follow-up',
+                  { targetProjectId, _taskId }
+                );
+                await chatStore.startTask(
+                  _taskId,
+                  undefined,
+                  undefined,
+                  undefined,
+                  undefined,
+                  undefined,
+                  executionId,
+                  targetProjectId,
+                  effectiveSessionMode,
+                  { preserveTaskId: true, resume: true }
+                );
+              } catch (reAttachErr) {
+                console.error(
+                  '[handleSend] failed to re-attach session stream:',
+                  reAttachErr
+                );
+              }
+            }
+
             // The follow-up POST was fire-and-forget: if it rejected (4xx/5xx,
             // network, backend not consuming), the failure was SILENT and the
             // queued pill got stuck forever with no send ever happening — the
@@ -1181,24 +1252,32 @@ export default function ChatBox(): JSX.Element {
               chatStore.clearLiveReasoning(_taskId);
               chatStore.clearAcknowledgement(_taskId);
               chatStore.addMessages(_taskId, {
-                id: generateUniqueId(),
+                id: turnUserId,
                 role: 'user',
                 content: displayContent,
                 attaches: attachesForThisTurn,
+                selections: sentSelections,
               });
             } else {
               // Display-only queue entry (no executionId, so the background
               // processor ignores it — the direct POST above does the send).
               // Keyed by nextTaskId so we can drop it when its turn starts.
+              // The queue row is plain text, so spell the reference out there.
+              const queuedContent = composerSelection
+                ? [selectionLabel(composerSelection), displayContent]
+                    .filter((part) => part.trim().length > 0)
+                    .join('\n')
+                : displayContent;
               projectStore.addQueuedMessage(
                 targetProjectId,
-                displayContent,
+                queuedContent,
                 [],
                 nextTaskId
               );
             }
             chatStore.setAttaches(_taskId, []);
             setMessage('');
+            clearComposerSelection();
           }
         } else {
           setTimeout(() => {
@@ -1210,6 +1289,7 @@ export default function ChatBox(): JSX.Element {
             JSON.parse(JSON.stringify(chatStore.tasks[_taskId]?.attaches)) ||
             [];
           setMessage('');
+          clearComposerSelection();
           try {
             ensureActiveProjectMode();
             await chatStore.startTask(
@@ -1221,7 +1301,8 @@ export default function ChatBox(): JSX.Element {
               attachesToSend,
               executionId,
               targetProjectId,
-              effectiveSessionMode
+              effectiveSessionMode,
+              { displayContent, selections: sentSelections }
             );
             chatStore.setHasWaitComfirm(_taskId as string, true);
             chatStore.setAttaches(_taskId, []);
@@ -1618,6 +1699,8 @@ export default function ChatBox(): JSX.Element {
                     onSend: handleSend,
                     isRunning: isTaskBusy,
                     onStop: handleSkip,
+                    selection: composerSelection,
+                    onRemoveSelection: clearComposerSelection,
                     files:
                       chatStore.tasks[chatStore.activeTaskId]?.attaches?.map(
                         (f) => ({
@@ -1701,6 +1784,8 @@ export default function ChatBox(): JSX.Element {
                   onSend: handleSend,
                   isRunning: isTaskBusy,
                   onStop: handleSkip,
+                  selection: composerSelection,
+                  onRemoveSelection: clearComposerSelection,
                   files:
                     chatStore.tasks[chatStore.activeTaskId]?.attaches?.map(
                       (f) => ({

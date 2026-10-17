@@ -47,7 +47,11 @@ import {
   useTriggerConfigQuery,
 } from '@/hooks/queries/useTriggerQueries';
 import useChatStoreAdapter from '@/hooks/useChatStoreAdapter';
-import { proxyCreateTrigger, proxyUpdateTrigger } from '@/service/triggerApi';
+import {
+  proxyCreateTrigger,
+  proxyUpdateTrigger,
+  resolveWebhookUrl,
+} from '@/service/triggerApi';
 import { ActivityType, useActivityLogStore } from '@/store/activityLogStore';
 import { useSpaceStore } from '@/store/spaceStore';
 import { useTriggerStore } from '@/store/triggerStore';
@@ -56,6 +60,7 @@ import {
   RequestType,
   Trigger,
   TriggerInput,
+  TriggerScope,
   TriggerStatus,
   TriggerType,
 } from '@/types';
@@ -66,6 +71,7 @@ import {
   CableIcon,
   CircleAlert,
   Copy,
+  PlugZapIcon,
   Plus,
   Slack,
   WebhookIcon,
@@ -123,6 +129,7 @@ export const TriggerDialog: React.FC<TriggerDialogProps> = ({
     max_executions_per_hour: selectedTrigger?.max_executions_per_hour,
     max_executions_per_day: selectedTrigger?.max_executions_per_day,
     webhook_url: selectedTrigger?.webhook_url,
+    scope: selectedTrigger?.scope || 'workspace',
   });
   const [triggerConfig, setTriggerConfig] = useState<Record<string, any>>(
     getDefaultTriggerConfig()
@@ -155,6 +162,14 @@ export const TriggerDialog: React.FC<TriggerDialogProps> = ({
   const activeProjectMeta = useSpaceStore((state) =>
     activeProjectId ? state.getProjectMeta(activeProjectId) : null
   );
+  const activeSpace = useSpaceStore((state) =>
+    state.activeSpaceId ? state.spaces[state.activeSpaceId] ?? null : null
+  );
+  const folderName =
+    activeSpace?.rootPath?.split(/[/\\]/).filter(Boolean).pop() ||
+    activeSpace?.name ||
+    '';
+  const conversationName = activeProjectMeta?.name || '';
 
   // Fetch trigger config using query hook - only fetch when we have a valid app selected
   const shouldFetchConfig =
@@ -188,6 +203,9 @@ export const TriggerDialog: React.FC<TriggerDialogProps> = ({
           max_executions_per_hour: selectedTrigger.max_executions_per_hour,
           max_executions_per_day: selectedTrigger.max_executions_per_day,
           webhook_url: selectedTrigger.webhook_url,
+          scope:
+            selectedTrigger.scope ||
+            (selectedTrigger.project_id ? 'conversation' : 'workspace'),
         });
         // Load existing trigger config if available
         if (selectedTrigger.config) {
@@ -224,6 +242,7 @@ export const TriggerDialog: React.FC<TriggerDialogProps> = ({
           task_prompt: initialTaskPrompt || '',
           max_executions_per_hour: undefined,
           max_executions_per_day: undefined,
+          scope: 'workspace',
         });
         setTriggerConfig(getDefaultTriggerConfig());
         setScheduleConfig({});
@@ -289,9 +308,23 @@ export const TriggerDialog: React.FC<TriggerDialogProps> = ({
     onTriggerCreating?.(formData);
 
     try {
-      //Make sure we have an active project
-      if (!projectStore.activeProjectId) {
-        toast.error(t('triggers.project-id-required'));
+      const scope: TriggerScope = formData.scope || 'workspace';
+      // A conversation-scoped trigger needs an open conversation; a
+      // workspace-scoped one needs an open folder-space.
+      if (scope === 'conversation' && !activeProjectId) {
+        toast.error(
+          t('triggers.project-id-required', {
+            defaultValue: 'Open a conversation first',
+          })
+        );
+        return;
+      }
+      if (!activeSpaceId && !activeProjectMeta?.spaceId) {
+        toast.error(
+          t('triggers.workspace-id-required', {
+            defaultValue: 'Open a workspace folder first',
+          })
+        );
         return;
       }
 
@@ -309,6 +342,10 @@ export const TriggerDialog: React.FC<TriggerDialogProps> = ({
           task_prompt: formData.task_prompt,
           max_executions_per_hour: formData.max_executions_per_hour,
           max_executions_per_day: formData.max_executions_per_day,
+          scope,
+          space_id: activeSpaceId || activeProjectMeta?.spaceId || undefined,
+          project_id:
+            scope === 'conversation' ? activeProjectId || undefined : undefined,
         };
 
         // Include config based on trigger type
@@ -345,7 +382,8 @@ export const TriggerDialog: React.FC<TriggerDialogProps> = ({
         const createData: TriggerInput = {
           name: formData.name,
           description: formData.description,
-          space_id: activeProjectMeta?.spaceId || activeSpaceId || undefined,
+          scope,
+          space_id: activeSpaceId || activeProjectMeta?.spaceId || undefined,
           trigger_type: formData.trigger_type,
           custom_cron_expression: formData.custom_cron_expression,
           listener_type: formData.listener_type,
@@ -354,7 +392,8 @@ export const TriggerDialog: React.FC<TriggerDialogProps> = ({
           task_prompt: formData.task_prompt,
           max_executions_per_hour: formData.max_executions_per_hour,
           max_executions_per_day: formData.max_executions_per_day,
-          project_id: activeProjectId || undefined,
+          project_id:
+            scope === 'conversation' ? activeProjectId || undefined : undefined,
         };
 
         // Include config based on trigger type
@@ -396,8 +435,14 @@ export const TriggerDialog: React.FC<TriggerDialogProps> = ({
 
       handleClose();
 
-      // Display the webhook url in a success dialog (only for new webhooks)
-      if (
+      // Show the post-creation dialog for the triggers that have an inbound
+      // story worth confirming. It shows the URL for Webhook triggers; for
+      // Slack it now describes Socket Mode, since a Slack automation has no
+      // pasteable URL (the stored webhook_url points at localhost and is never
+      // used). Without this a new Slack automation silently dropped the dialog.
+      if (!selectedTrigger && formData.trigger_type === TriggerType.Slack) {
+        setIsWebhookSuccessOpen(true);
+      } else if (
         !selectedTrigger &&
         formData.trigger_type === TriggerType.Webhook &&
         response.webhook_url
@@ -416,7 +461,7 @@ export const TriggerDialog: React.FC<TriggerDialogProps> = ({
   const handleCopyWebhookUrl = async () => {
     try {
       await navigator.clipboard.writeText(
-        `${import.meta.env.VITE_PROXY_URL}/api${formData.webhook_url || createdWebhookUrl}`
+        resolveWebhookUrl(formData.webhook_url || createdWebhookUrl)
       );
       toast.success(t('triggers.webhook-url-copied'));
     } catch (_err) {
@@ -449,6 +494,97 @@ export const TriggerDialog: React.FC<TriggerDialogProps> = ({
           title={t('triggers.name')}
           placeholder={t('triggers.name-placeholder')}
         />
+
+        {/* Attachment scope: the whole workspace (folder), or just this conversation.
+            Stacked radios: each option is a real radio input; selecting one reveals
+            its blast radius (what the automation will actually affect). */}
+        <div className="space-y-2">
+          <Label className="text-sm font-bold">
+            {t('triggers.attach-to', { defaultValue: 'Attach to' })}
+          </Label>
+          <div
+            className="flex w-full flex-col gap-2"
+            role="radiogroup"
+            aria-label={t('triggers.attach-to', { defaultValue: 'Attach to' })}
+          >
+            {(
+              [
+                {
+                  value: 'workspace' as TriggerScope,
+                  label: t('triggers.attach-workspace', {
+                    defaultValue: 'This workspace',
+                  }),
+                  blast: folderName
+                    ? `Runs in every conversation in "${folderName}". Survives deleting the conversation you created it from.`
+                    : t('triggers.attach-workspace-hint', {
+                        defaultValue:
+                          'Runs in every conversation in this folder. Survives deleting the conversation you created it from.',
+                      }),
+                },
+                {
+                  value: 'conversation' as TriggerScope,
+                  label: t('triggers.attach-conversation', {
+                    defaultValue: 'This conversation',
+                  }),
+                  blast: conversationName
+                    ? `Runs only in "${conversationName}" while it is open. Deleting it orphans the trigger.`
+                    : t('triggers.attach-conversation-hint', {
+                        defaultValue:
+                          'Runs only while this conversation is open. Deleting the conversation orphans the trigger.',
+                      }),
+                },
+              ] as { value: TriggerScope; label: string; blast: string }[]
+            ).map((option) => {
+              const selected = (formData.scope || 'workspace') === option.value;
+              return (
+                <label
+                  key={option.value}
+                  className={
+                    'flex w-full cursor-pointer items-start gap-3 rounded-xl border border-solid px-3 py-2 text-left transition-colors ' +
+                    (selected
+                      ? 'border-ds-border-neutral-strong-default bg-ds-bg-neutral-muted-disabled'
+                      : 'border-ds-border-neutral-subtle-default') +
+                    (isLoading ? ' cursor-not-allowed opacity-60' : '')
+                  }
+                >
+                  <input
+                    type="radio"
+                    name="trigger-attach-scope"
+                    className="sr-only"
+                    checked={selected}
+                    disabled={isLoading}
+                    onChange={() =>
+                      setFormData({ ...formData, scope: option.value })
+                    }
+                  />
+                  <span
+                    aria-hidden="true"
+                    className={
+                      'mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-solid ' +
+                      (selected
+                        ? 'border-ds-border-neutral-strong-default'
+                        : 'border-ds-border-neutral-subtle-default')
+                    }
+                  >
+                    {selected ? (
+                      <span className="h-2 w-2 rounded-full bg-ds-text-neutral-muted-default" />
+                    ) : null}
+                  </span>
+                  <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <span className="text-sm font-medium text-ds-text-neutral-muted-default">
+                      {option.label}
+                    </span>
+                    {selected ? (
+                      <span className="text-xs text-ds-text-neutral-subtle-default">
+                        {option.blast}
+                      </span>
+                    ) : null}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+        </div>
 
         {/* Task Prompt - moved from step 2 */}
         <TriggerTaskInput
@@ -487,12 +623,14 @@ export const TriggerDialog: React.FC<TriggerDialogProps> = ({
               // Don't change trigger_type when switching to app tab
               // The actual type will be set when user selects an app
             }}
-            className="w-full rounded-2xl bg-ds-bg-neutral-muted-disabled"
+            className="w-full rounded-2xl border border-solid border-ds-border-neutral-subtle-default bg-ds-bg-neutral-muted-disabled"
           >
             <TabsList appearance="default" className="w-full">
               <TabsTrigger
                 value="schedule"
-                className="flex-1 gap-2 text-body-sm"
+                // The inactive pill bg equals the track bg in the embed theme,
+                // so add a border to keep both pills legible.
+                className="flex-1 gap-2 border border-solid border-ds-border-neutral-subtle-default text-body-sm data-[state=active]:border-ds-border-neutral-strong-default"
                 disabled={!!selectedTrigger}
               >
                 <AlarmClockIcon className="h-4 w-4" />
@@ -500,7 +638,7 @@ export const TriggerDialog: React.FC<TriggerDialogProps> = ({
               </TabsTrigger>
               <TabsTrigger
                 value="app"
-                className="flex-1 gap-2 text-body-sm"
+                className="flex-1 gap-2 border border-solid border-ds-border-neutral-subtle-default text-body-sm data-[state=active]:border-ds-border-neutral-strong-default"
                 disabled={!!selectedTrigger}
               >
                 <CableIcon className="h-4 w-4" />
@@ -623,7 +761,22 @@ export const TriggerDialog: React.FC<TriggerDialogProps> = ({
                       </Button>
                     )}
                   </div>
-                  {!selectedTrigger || !formData.webhook_url ? (
+                  {selectedApp === 'slack' ? (
+                    <div className="flex flex-col gap-2 rounded-xl bg-ds-bg-neutral-subtle-default p-4">
+                      <span className="inline-flex w-fit items-center gap-1.5 rounded-full border border-ds-border-status-completed-default-default bg-ds-bg-status-completed-subtle-default px-2 py-0.5 text-xs font-medium text-ds-text-status-completed-strong-default">
+                        <PlugZapIcon className="h-3.5 w-3.5" />
+                        {t('triggers.socket-mode', {
+                          defaultValue: 'Socket Mode',
+                        })}
+                      </span>
+                      <span className="text-xs leading-relaxed text-ds-text-neutral-muted-default">
+                        {t('triggers.socket-mode-hint', {
+                          defaultValue:
+                            'No public URL needed. The brain opens an outbound connection to Slack and receives events through it, so this works on localhost.',
+                        })}
+                      </span>
+                    </div>
+                  ) : !selectedTrigger || !formData.webhook_url ? (
                     <div className="rounded-lg bg-ds-bg-neutral-default-default p-3 text-sm text-ds-text-neutral-muted-default">
                       {t('triggers.webhook-url-after-creation')}
                     </div>
@@ -639,7 +792,19 @@ export const TriggerDialog: React.FC<TriggerDialogProps> = ({
                             <AlertTriangle className="h-4 w-4 flex-shrink-0 text-yellow-600" />
                           </TooltipSimple>
                         )}
-                        {`${import.meta.env.VITE_PROXY_URL}/api${formData.webhook_url || createdWebhookUrl}`}
+                        <a
+                          href={resolveWebhookUrl(
+                            formData.webhook_url || createdWebhookUrl
+                          )}
+                          target="_blank"
+                          rel="noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="underline decoration-dotted underline-offset-2 transition-colors hover:text-ds-text-brand-default-hover"
+                        >
+                          {resolveWebhookUrl(
+                            formData.webhook_url || createdWebhookUrl
+                          )}
+                        </a>
                       </div>
                       <Button
                         variant="outline"
@@ -884,38 +1049,73 @@ export const TriggerDialog: React.FC<TriggerDialogProps> = ({
                   {formData.description}
                 </div>
               )}
-              <Badge variant="default">{formData.webhook_method}</Badge>
+              {formData.trigger_type !== TriggerType.Slack && (
+                <Badge variant="default">{formData.webhook_method}</Badge>
+              )}
             </motion.div>
           </div>
 
-          {/* Webhook URL Section */}
-          <div className="flex flex-col p-4">
-            <div className="mb-4 flex items-center justify-start gap-2">
-              <Label className="text-sm font-semibold text-ds-text-neutral-default-default">
-                {t('triggers.your-webhook-url')}
-              </Label>
-              <TooltipSimple content={t('triggers.webhook-instructions')}>
-                <CircleAlert
-                  className="h-4 w-4 cursor-pointer text-ds-icon-neutral-default-default"
-                  onClick={(e) => e.stopPropagation()}
-                />
-              </TooltipSimple>
-            </div>
-
-            <div className="flex flex-row items-center justify-start gap-4 rounded-xl bg-ds-bg-neutral-subtle-default p-4">
-              <div className="w-full break-all font-mono text-sm text-ds-text-neutral-default-default">
-                {`${import.meta.env.VITE_PROXY_URL}/api${createdWebhookUrl}`}
+          {/* Slack triggers don't get a pasteable URL — they run over Socket
+              Mode — so show the Socket Mode state instead of a dead link. */}
+          {formData.trigger_type === TriggerType.Slack ? (
+            <div className="flex flex-col p-4">
+              <div className="mb-4 flex items-center justify-start gap-2">
+                <Label className="text-sm font-semibold text-ds-text-neutral-default-default">
+                  {t('triggers.socket-mode', { defaultValue: 'Socket Mode' })}
+                </Label>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleCopyWebhookUrl}
-              >
-                <Copy />
-                {t('triggers.copy')}
-              </Button>
+              <div className="flex flex-col gap-2 rounded-xl bg-ds-bg-neutral-subtle-default p-4">
+                <span className="inline-flex w-fit items-center gap-1.5 rounded-full border border-ds-border-status-completed-default-default bg-ds-bg-status-completed-subtle-default px-2 py-0.5 text-xs font-medium text-ds-text-status-completed-strong-default">
+                  <PlugZapIcon className="h-3.5 w-3.5" />
+                  {t('triggers.socket-mode-active', {
+                    defaultValue: 'Listening over Socket Mode',
+                  })}
+                </span>
+                <span className="text-xs leading-relaxed text-ds-text-neutral-muted-default">
+                  {t('triggers.socket-mode-hint', {
+                    defaultValue:
+                      'No public URL needed. The brain opens an outbound connection to Slack and receives events through it, so this works on localhost.',
+                  })}
+                </span>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="flex flex-col p-4">
+              <div className="mb-4 flex items-center justify-start gap-2">
+                <Label className="text-sm font-semibold text-ds-text-neutral-default-default">
+                  {t('triggers.your-webhook-url')}
+                </Label>
+                <TooltipSimple content={t('triggers.webhook-instructions')}>
+                  <CircleAlert
+                    className="h-4 w-4 cursor-pointer text-ds-icon-neutral-default-default"
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                </TooltipSimple>
+              </div>
+
+              <div className="flex flex-row items-center justify-start gap-4 rounded-xl bg-ds-bg-neutral-subtle-default p-4">
+                <div className="w-full break-all font-mono text-sm text-ds-text-neutral-default-default">
+                  <a
+                    href={resolveWebhookUrl(createdWebhookUrl)}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="underline decoration-dotted underline-offset-2 transition-colors hover:text-ds-text-brand-default-hover"
+                  >
+                    {resolveWebhookUrl(createdWebhookUrl)}
+                  </a>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleCopyWebhookUrl}
+                >
+                  <Copy />
+                  {t('triggers.copy')}
+                </Button>
+              </div>
+            </div>
+          )}
 
           {/* Info Tip Section */}
           {/* <div className="flex flex-col p-4">

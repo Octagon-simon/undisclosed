@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
 
+import { WORKFORCE_MODE_ENABLED } from '@/lib/featureFlags';
 import { cn } from '@/lib/utils';
 import type { SessionModeType } from '@/types/constants';
 import { SessionMode } from '@/types/constants';
@@ -82,7 +83,9 @@ export function ProjectModeToggle({
 
   const modeAriaLabel = t('layout.workspace-session-mode-label');
 
-  const isSingle = value === SessionMode.SINGLE_AGENT;
+  //workforce is build-gated; with the flag off this is a static single-agent chip
+  const mode = WORKFORCE_MODE_ENABLED ? value : SessionMode.SINGLE_AGENT;
+  const isSingle = mode === SessionMode.SINGLE_AGENT;
   const nextMode = isSingle ? SessionMode.WORKFORCE : SessionMode.SINGLE_AGENT;
   const label = isSingle ? labelSingle : labelWorkforce;
   const LeadingIcon = isSingle ? Joystick : Gamepad2;
@@ -114,12 +117,12 @@ export function ProjectModeToggle({
     </span>
   );
 
-  if (readOnly) {
+  if (readOnly || !WORKFORCE_MODE_ENABLED) {
     return (
       <div
         role="status"
         aria-label={`${modeAriaLabel}: ${label}`}
-        title={compact ? label : undefined}
+        title={compact || !WORKFORCE_MODE_ENABLED ? label : undefined}
         className={cn(shellClass, 'pointer-events-none bg-transparent')}
       >
         <span className="inline-flex min-h-[1.25rem] items-center gap-1.5 overflow-hidden">
@@ -152,7 +155,7 @@ export function ProjectModeToggle({
       <span className="relative inline-flex min-h-[1.25rem] min-w-0 flex-1 items-center overflow-hidden">
         <AnimatePresence mode="wait" initial={false}>
           <motion.span
-            key={value}
+            key={mode}
             className="inline-flex items-center gap-1.5 will-change-transform"
             variants={ROLL}
             initial="initial"

@@ -13,6 +13,7 @@
 # limitations under the License.
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
 
+import asyncio
 import logging
 import os
 import uuid
@@ -42,6 +43,14 @@ from app.agent.toolkit.git_toolkit import (
     WRITE_TOOL_NAMES as GIT_WRITE_TOOL_NAMES,
     GitToolkit,
 )
+from app.agent.toolkit.github_toolkit import (
+    WRITE_TOOL_NAMES as GITHUB_WRITE_TOOL_NAMES,
+    GithubToolkit,
+)
+from app.agent.toolkit.mongodb_toolkit import (
+    WRITE_TOOL_NAMES as MONGO_WRITE_TOOL_NAMES,
+    MongoDBToolkit,
+)
 from app.agent.toolkit.governance_toolkit import (
     GovernanceMode,
     wrap_with_approval,
@@ -55,13 +64,18 @@ from app.agent.toolkit.hybrid_browser_toolkit import HybridBrowserToolkit
 from app.agent.toolkit.observable_todo_toolkit import ObservableTodoToolkit
 from app.agent.toolkit.screenshot_toolkit import ScreenshotToolkit
 from app.agent.toolkit.figma_toolkit import FigmaToolkit
+from app.agent.toolkit.google_calendar_toolkit import GoogleCalendarToolkit
+from app.agent.toolkit.lark_toolkit import LarkToolkit
+from app.agent.toolkit.linkedin_toolkit import LinkedInToolkit
+from app.agent.toolkit.reddit_toolkit import RedditToolkit
 from app.agent.toolkit.search_toolkit import SearchToolkit
 from app.agent.toolkit.skill_toolkit import SkillToolkit
+from app.agent.toolkit.slack_toolkit import SlackToolkit
 from app.agent.toolkit.terminal_toolkit import TerminalToolkit
-from app.agent.toolkit.test_runner_toolkit import (
-    WRITE_TOOL_NAMES as TEST_RUNNER_WRITE_TOOL_NAMES,
-    TestRunnerToolkit,
-)
+from app.agent.toolkit.twitter_toolkit import TwitterToolkit
+from app.agent.toolkit.whatsapp_toolkit import WhatsAppToolkit
+from app.agent.toolkit.test_runner_toolkit import TestRunnerToolkit
+from app.agent.toolkit.code_review_toolkit import CodeReviewToolkit
 from app.agent.toolkit.web_deploy_toolkit import WebDeployToolkit
 from app.component.environment import env
 from app.hands.interface import IHands
@@ -83,8 +97,18 @@ DEFAULT_SINGLE_AGENT_TOOLKIT_CONFIG: dict[str, Any] = {
     "code_query": {"enabled": True},
     "code_search": {"enabled": True},
     "search": {"enabled": True},
+    # Third-party connectors (Slack, Lark, X/Twitter, WhatsApp, LinkedIn,
+    # Reddit, Google Calendar). Each toolkit is a no-op unless its token is
+    # configured, so this only surfaces the apps the user actually connected.
+    # Without it a SINGLE-AGENT turn (including a trigger execution) saw the
+    # file/terminal/MCP tools but never the Slack toolkit -- the agent then
+    # complained "I need Slack tools" and fell back to raw curl.
+    "connectors": {"enabled": True},
     "browser": {"enabled": True},
     "terminal": {"enabled": True},
+    # Deterministic code review (run_checks + review_diff). Read-only, no
+    # external token; pairs with the typecheck/verification flow.
+    "code_review": {"enabled": True},
     "web_fetch": {"enabled": True},
     "planning_worktree": {"enabled": True},
     "mcp": {"enabled": True},
@@ -93,6 +117,22 @@ DEFAULT_SINGLE_AGENT_TOOLKIT_CONFIG: dict[str, Any] = {
     # require explicit human approval. Default AUTO = no gating (ship dark).
     "governance": {"enabled": True, "mode": "auto"},
 }
+
+# Communication/social "connectors" for the SINGLE agent. Matches the built-in
+# integrations advertised by the Connectors UI (chat_platform_controller's
+# `_config_info_map`). Each entry is (label, toolkit class); the toolkit's
+# `get_can_use_tools` returns [] unless its env token is set, so only connected
+# apps contribute tools. Figma / GitHub / MongoDB already have their own blocks
+# below, so they are deliberately left out here.
+_CONNECTOR_TOOLKITS: tuple[tuple[str, Any], ...] = (
+    ("slack_toolkit", SlackToolkit),
+    ("lark_toolkit", LarkToolkit),
+    ("twitter_toolkit", TwitterToolkit),
+    ("whatsapp_toolkit", WhatsAppToolkit),
+    ("linkedin_toolkit", LinkedInToolkit),
+    ("reddit_toolkit", RedditToolkit),
+    ("google_calendar_toolkit", GoogleCalendarToolkit),
+)
 
 
 @dataclass
@@ -639,6 +679,73 @@ async def assemble_single_agent_toolkits(
         figma_tools = message_integration.register_functions(figma_tools)
         assembly.add_tools(figma_tools, FigmaToolkit.toolkit_name())
 
+    # GitHub: REST API tools (issues + pull requests). No-op unless a
+    # GITHUB_ACCESS_TOKEN is configured (get_can_use_tools returns []), so the
+    # single agent stays GitHub-free until a token is set. Mutating tools are
+    # gated under Ask mode, mirroring the local git toolkit.
+    github_tools = GithubToolkit.get_can_use_tools(options.project_id)
+    if github_tools:
+        github_tools = message_integration.register_functions(github_tools)
+        if governance_mode is GovernanceMode.ASK:
+            github_tools = _gate_tool_if_named(
+                github_tools,
+                target_names=GITHUB_WRITE_TOOL_NAMES,
+                field_name="github_write",
+                agent_name=Agents.single_agent,
+                api_task_id=options.project_id,
+            )
+        assembly.add_tools(github_tools, GithubToolkit.toolkit_name())
+
+    # MongoDB: read-only ad-hoc queries (find/count/distinct/aggregate) over
+    # mongosh. No-op unless a connection string is configured (MONGO_URL et al;
+    # get_can_use_tools returns []). The free-form escape hatch (mongo_eval) is
+    # the only mutating-capable tool, so it is gated under Ask mode.
+    mongo_tools = MongoDBToolkit.get_can_use_tools(options.project_id)
+    if mongo_tools:
+        mongo_tools = message_integration.register_functions(mongo_tools)
+        if governance_mode is GovernanceMode.ASK:
+            mongo_tools = _gate_tool_if_named(
+                mongo_tools,
+                target_names=MONGO_WRITE_TOOL_NAMES,
+                field_name="mongo_write",
+                agent_name=Agents.single_agent,
+                api_task_id=options.project_id,
+            )
+        assembly.add_tools(mongo_tools, MongoDBToolkit.toolkit_name())
+
+    # Connectors: the communication/social apps the user has connected (Slack,
+    # Lark, X/Twitter, WhatsApp, LinkedIn, Reddit, Google Calendar). Each
+    # get_can_use_tools is a no-op unless its token is set, so an unconnected
+    # app contributes nothing. This is what gives a single-agent turn -- and
+    # therefore a trigger execution -- the Slack tools it previously lacked.
+    if _enabled(config, "connectors"):
+        for _name, _toolkit_cls in _CONNECTOR_TOOLKITS:
+            try:
+                produced = _toolkit_cls.get_can_use_tools(options.project_id)
+                connector_tools = (
+                    await produced
+                    if asyncio.iscoroutine(produced)
+                    else produced
+                )
+                if connector_tools:
+                    connector_tools = message_integration.register_functions(
+                        list(connector_tools)
+                    )
+                    assembly.add_tools(
+                        connector_tools, _toolkit_cls.toolkit_name()
+                    )
+                    logger.info(
+                        "Connectors: attached %s (%d tools)",
+                        _toolkit_cls.toolkit_name(),
+                        len(connector_tools),
+                    )
+            except Exception:
+                logger.warning(
+                    "Connectors: failed to build %s; skipping",
+                    _name,
+                    exc_info=True,
+                )
+
     if _enabled(config, "browser") and (
         hands is None or hands.can_use_browser()
     ):
@@ -708,16 +815,21 @@ async def assemble_single_agent_toolkits(
             **_options(config, "test_runner"),
         )
         toolkit = message_integration.register_toolkits(toolkit)
-        test_tools = toolkit.get_tools()
-        if governance_mode is GovernanceMode.ASK:
-            test_tools = _gate_tool_if_named(
-                test_tools,
-                target_names=TEST_RUNNER_WRITE_TOOL_NAMES,
-                field_name="test_generation",
-                agent_name=Agents.single_agent,
-                api_task_id=options.project_id,
-            )
-        assembly.add_tools(test_tools, TestRunnerToolkit.toolkit_name())
+        # Read-only now (native coverage analysis; no generate/fix): no gate.
+        assembly.add_tools(toolkit.get_tools(), TestRunnerToolkit.toolkit_name())
+
+    if _enabled(config, "code_review"):
+        toolkit = CodeReviewToolkit(
+            options.project_id,
+            Agents.single_agent,
+            working_directory=working_directory,
+            **_options(config, "code_review"),
+        )
+        toolkit = message_integration.register_toolkits(toolkit)
+        # Deterministic + read-only: no Ask-mode gate needed.
+        assembly.add_tools(
+            toolkit.get_tools(), CodeReviewToolkit.toolkit_name()
+        )
 
     if _enabled(config, "diff"):
         toolkit = DiffToolkit(

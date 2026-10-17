@@ -13,6 +13,10 @@
 // limitations under the License.
 // ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
 
+import {
+  SelectionPill,
+  type CodeSelectionRef,
+} from '@/components/ChatBox/SelectionPill';
 import { Button } from '@/components/ui/button';
 import {
   Popover,
@@ -24,7 +28,8 @@ import { processDroppedFiles, processPastedFiles } from '@/lib/fileUtils';
 import { cn } from '@/lib/utils';
 import type { TriggerInput } from '@/types';
 import {
-  ArrowRight,
+  ArrowUp,
+  Bot,
   FileText,
   Hammer,
   Image,
@@ -64,6 +69,10 @@ export interface InputboxProps {
   isRunning?: boolean;
   /** Stop the active task (wired to the composer's Stop button). */
   onStop?: () => void;
+  /** Editor selection attached to this message, shown as a pill above the input. */
+  selection?: CodeSelectionRef | null;
+  /** Dismiss the attached selection pill. */
+  onRemoveSelection?: () => void;
   /** Array of file attachments */
   files?: FileAttachment[];
   /** Callback when files are modified */
@@ -92,6 +101,15 @@ export interface InputboxProps {
   /** Skill picker panel state; the toggle button only renders when the callback is provided. */
   skillPanelOpen?: boolean;
   onToggleSkillPanel?: () => void;
+  /**
+   * Number of tools available for the session. When provided, a "● Tools (N)"
+   * pill renders above the textarea (spec Section 7). Opt-in: no live
+   * tool-count source is wired yet, so the pill stays hidden until a caller
+   * passes one.
+   */
+  toolCount?: number;
+  /** Click target for the Tools pill (opens the tool list). */
+  onShowTools?: () => void;
   /** Callback when trigger is being created (for placeholder) */
   onTriggerCreating?: (triggerData: TriggerInput) => void;
   /** Callback when trigger is created successfully */
@@ -143,6 +161,8 @@ export const Inputbox = ({
   onSend,
   isRunning = false,
   onStop,
+  selection,
+  onRemoveSelection,
   files = [],
   onFilesChange,
   onAddFile,
@@ -158,6 +178,8 @@ export const Inputbox = ({
   onToggleConnectorPanel,
   skillPanelOpen = false,
   onToggleSkillPanel,
+  toolCount,
+  onShowTools,
   onTriggerCreating: _onTriggerCreating,
   onTriggerCreated: _onTriggerCreated,
 }: InputboxProps) => {
@@ -198,8 +220,9 @@ export const Inputbox = ({
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
   }, [value, textareaRef]);
 
-  // Determine if we're in the "Input" state (has content or files)
-  const hasContent = value.trim().length > 0 || files.length > 0;
+  // Determine if we're in the "Input" state (has content, files, or a selection)
+  const hasContent =
+    value.trim().length > 0 || files.length > 0 || !!selection;
 
   const handleTextChange = useCallback(
     (newValue: string, _cursorPos?: number) => {
@@ -209,7 +232,7 @@ export const Inputbox = ({
   );
 
   const handleSend = () => {
-    if (value.trim().length > 0 && !disabled) {
+    if ((value.trim().length > 0 || !!selection) && !disabled) {
       onSend?.();
     } else if (value.trim().length === 0) {
       toast.error(t('chat.message-cannot-be-empty'), {
@@ -351,6 +374,17 @@ export const Inputbox = ({
           </div>
         </div>
       )}
+      {/* Layer 2a: editor selection reference from "Send to Agent" */}
+      {selection && (
+        <div className="mb-2 flex w-full flex-wrap items-start gap-1.5">
+          <SelectionPill
+            path={selection.path}
+            startLine={selection.startLine}
+            endLine={selection.endLine}
+            onRemove={onRemoveSelection}
+          />
+        </div>
+      )}
       {/* Layer 2: File attachments (only show if has files) */}
       {files.length > 0 && (
         <div className="relative box-border flex w-full flex-wrap items-start gap-1 pb-2">
@@ -476,6 +510,31 @@ export const Inputbox = ({
               </PopoverContent>
             </Popover>
           )}
+        </div>
+      )}
+
+      {/* Layer 2.5: Context status line — "● Tools (N)" pill (spec Section 7).
+          Opt-in: only renders when the caller supplies a tool count. */}
+      {toolCount !== undefined && (
+        <div className="mb-2 flex w-full items-center">
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => onShowTools?.()}
+            aria-label={t('chat.input-show-tools', {
+              defaultValue: 'Show available tools',
+            })}
+            className={cn(
+              'inline-flex items-center gap-1 rounded border border-ds-border-neutral-subtle-default bg-ds-bg-neutral-default-default px-2 py-0.5 text-label-xs text-ds-text-neutral-subtle-default',
+              'transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50'
+            )}
+          >
+            <span
+              aria-hidden
+              className="h-1.5 w-1.5 rounded-full bg-ds-bg-status-completed-default-default"
+            />
+            {`Tools (${toolCount})`}
+          </button>
         </div>
       )}
 
@@ -615,29 +674,31 @@ export const Inputbox = ({
           )}
           {(!isRunning || value.trim().length > 0) && (
             <Button
+              type="button"
               size="xs"
               buttonContent="icon-only"
               buttonRadius="full"
-              variant="ghost"
+              variant="primary"
               onClick={handleSend}
-              disabled={disabled || value.trim().length === 0}
+              disabled={disabled || (value.trim().length === 0 && !selection)}
               aria-label={t('chat.input-send-message', {
                 defaultValue: 'Send message',
               })}
             >
-              {/* Ghost icon (like attach/MCP) so it's theme-following and visible
-                  in light + dark: muted when empty → brand when ready. */}
-              <ArrowRight
-                className={cn(
-                  'transition-transform duration-200',
-                  value.trim().length > 0
-                    ? 'rotate-[-90deg] text-ds-icon-brand-default-default'
-                    : 'text-ds-icon-neutral-muted-default'
-                )}
-              />
+              {/* Primary "Send ↑" (spec Section 7): a high-contrast filled
+                  submit button, theme-following via the tokenized Button. */}
+              <ArrowUp />
             </Button>
           )}
         </div>
+      </div>
+
+      {/* Disclaimer — mock parity (Section 7 tail). Static, non-interactive. */}
+      <div className="mt-1.5 flex w-full items-center justify-center gap-1 text-label-xs text-ds-text-neutral-subtle-default opacity-50">
+        <Bot className="h-3 w-3" aria-hidden />
+        {t('chat.ai-disclaimer', {
+          defaultValue: 'AI can make mistakes. Always double check the response',
+        })}
       </div>
     </div>
   );
