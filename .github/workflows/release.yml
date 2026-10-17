@@ -18,6 +18,15 @@
 #
 # Run `scripts/preflight-ci.sh --full` before tagging to reproduce these steps
 # locally and avoid burning a CI run.
+#
+# Publishing is spread over two steps on purpose. GitHub keys assets by
+# basename and each runner emits `builder-debug.yml` (plus both mac runners emit
+# `latest-mac.yml`), so uploading the artifact tree as-is races itself: the
+# second copy of a name makes the action PATCH an asset that is still being
+# processed, which GitHub answers with 404
+# ("Not Found - ...#update-a-release-asset"). scripts/prepare-release-assets.mjs
+# flattens the tree to unique names, then scripts/publish-release-assets.sh
+# uploads sequentially with retries.
 name: Release
 
 on:
@@ -27,6 +36,12 @@ on:
 
 permissions:
   contents: write # create the Release + upload assets
+
+# One publish per tag at a time. Two overlapping runs (a re-run started while
+# the first is still uploading) fight over the same asset names.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   package:
@@ -175,13 +190,16 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: installers-${{ matrix.os }}
+          # Update feeds only (`latest*.yml`). A plain `*.yml` also matched
+          # builder-debug.yml, which electron-builder writes on every runner and
+          # which nothing consumes.
           path: |
             apps/desktop/dist/*.AppImage
             apps/desktop/dist/*.deb
             apps/desktop/dist/*.exe
             apps/desktop/dist/*.dmg
             apps/desktop/dist/*.zip
-            apps/desktop/dist/*.yml
+            apps/desktop/dist/latest*.yml
             apps/desktop/dist/*.blockmap
           if-no-files-found: ignore
           # Same-run hand-off to the release job, not a kept artifact — short
@@ -194,9 +212,15 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+      # Collapse the per-runner trees into one flat directory with unique names
+      # and a merged latest-mac.yml (arm64 + x64 entries). Fails loudly on a
+      # collision it does not know how to merge, instead of racing at upload.
+      - name: Assemble release assets
+        run: node scripts/prepare-release-assets.mjs artifacts release-assets
       # A tag with a semver pre-release suffix (v0.1.0-beta.0, -rc.1, …) is
       # published as a GitHub PRE-release. That is the whole isolation story for
       # the upgrade branch: a pre-release carries the "Pre-release" badge and
@@ -204,9 +228,7 @@ jobs:
       # (currently v0.0.9) keeps the latest release and anyone on stable is
       # unaffected. Stable tags keep the default (latest) behavior.
       - name: Publish installers to the Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: artifacts/**/*
-          fail_on_unmatched_files: false
-          prerelease: ${{ contains(github.ref_name, '-') }}
-          make_latest: ${{ contains(github.ref_name, '-') && 'false' || 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: bash scripts/publish-release-assets.sh "$GITHUB_REF_NAME" release-assets

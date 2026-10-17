@@ -52,4 +52,13 @@ export default [
       ],
     },
   },
+  {
+    // Repo scripts run under Node (process, console, ...).
+    files: ['scripts/**/*.mjs', 'scripts/**/*.js'],
+    languageOptions: {
+      ecmaVersion: 'latest',
+      sourceType: 'module',
+      globals: { ...globals.node },
+    },
+  },
 ];

@@ -68,6 +68,12 @@ else
   echo "  [FAIL] shell syntax error (run: bash -n scripts/<file>.sh)" >&2
   fail=1
 fi
+if node --check scripts/prepare-release-assets.mjs 2>/dev/null; then
+  echo "  [ok] scripts/prepare-release-assets.mjs"
+else
+  echo "  [FAIL] scripts/prepare-release-assets.mjs does not parse" >&2
+  fail=1
+fi
 for f in package.json apps/desktop/package.json packages/*/package.json; do
   if node -e "JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'))" "$f"; then
     echo "  [ok] $f"
