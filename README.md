@@ -8,9 +8,10 @@ editor** - the agent is not docked next to a separate window the way it works in
 other tools. It plans, reads, writes and runs code against your actual
 workspace, right where you edit.
 
-Everything runs locally by default: your code, the editor, and the agent "brain"
-(the model orchestration). You bring your own model keys (BYOK) and nothing is
-sent to a vendor cloud.
+Everything runs locally: your code, the editor, and the agent "brain" (the model
+orchestration). Point it at a model on your own machine and nothing leaves it. Or
+bring your own key (BYOK) for a cloud model you trust, and only the request you
+send goes there.
 
 The project began as two decoupled halves: the **agent capability** is from
 [Eigent](https://eigent.ai), while the **editor shell + on-device packaging** here
@@ -26,12 +27,11 @@ model.
 
 ## Demo
 
-<video src="https://github.com/user-attachments/assets/7d3fb903-6dd2-4817-952a-a0b8d62b2219" width="100%" controls poster="docs/media/undisclosed-demo-poster.jpg"></video>
+<video src="docs/media/undisclosed-demo.mp4" width="100%" controls poster="docs/media/undisclosed-demo-poster.jpg"></video>
 
-<!-- <video src="docs/media/undisclosed-demo.mp4" width="100%" controls poster="docs/media/undisclosed-demo-poster.jpg"></video> -->
-
-[Watch the 20-second demo](docs/media/undisclosed-demo.mp4) (1920x1080, mp4) if your
-viewer doesn't play it inline.
+[Watch the 35-second demo](docs/media/undisclosed-demo.mp4) (1920x1080, mp4) if your
+viewer doesn't play it inline. The demo was written, animated and rendered inside
+Undisclosed itself, with the agent driving the HyperFrames pipeline.
 
 ---
 
