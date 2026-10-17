@@ -31,6 +31,7 @@ import {
   isProjectAchieved,
   setProjectAchievedState,
 } from '@/lib/projectAchievement';
+import { WORKFORCE_MODE_ENABLED } from '@/lib/featureFlags';
 import { inferSessionModeFromTask } from '@/lib/sessionMode';
 import {
   estimateContextTokens,
@@ -254,14 +255,19 @@ export default function ChatBox(): JSX.Element {
   // so a still-loading Project renders empty instead of the wrong mode.
   const inferredSessionMode = inferSessionModeFromTask(activeTask, null);
   const activeProjectMode = activeProjectMeta?.mode ?? activeProject?.mode;
-  const effectiveSessionMode =
-    activeProjectMode ?? inferredSessionMode ?? SessionMode.SINGLE_AGENT;
   // Fall back to SINGLE_AGENT (not undefined) so the input footer — and with it
   // the model selector — still renders on reloaded conversations that predate
   // persisted session modes. Without a fallback the whole footer was hidden and
   // users couldn't pick a model on old chats.
-  const displaySessionMode =
+  const requestedSessionMode =
     activeProjectMode ?? inferredSessionMode ?? SessionMode.SINGLE_AGENT;
+  // Workforce is build-gated. With the flag off a Project persisted as
+  // workforce still opens in single-agent mode, so the mode shown is the mode
+  // the send path uses.
+  const effectiveSessionMode = WORKFORCE_MODE_ENABLED
+    ? requestedSessionMode
+    : SessionMode.SINGLE_AGENT;
+  const displaySessionMode = effectiveSessionMode;
   const ensureActiveProjectMode = useCallback(() => {
     const projectId = projectStore.activeProjectId;
     if (!projectId || activeProjectMode) return;
@@ -279,6 +285,7 @@ export default function ChatBox(): JSX.Element {
   // send path reads first.
   const handleSessionModeChange = useCallback(
     (mode: SessionModeType) => {
+      if (!WORKFORCE_MODE_ENABLED && mode !== SessionMode.SINGLE_AGENT) return;
       const projectId = projectStore.activeProjectId;
       if (projectId) {
         updateProjectMeta(projectId, { mode });
