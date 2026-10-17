@@ -650,7 +650,7 @@
           <span class="idx">02</span>
           <div>
             <h3>The agent</h3>
-            <p>A dock widget, not a separate app. Toggle it with <code>Cmd/Ctrl+Shift+A</code>. It plans, asks when it needs you, and pings you on the desktop or Slack when it is done or stuck.</p>
+            <p>A dock widget, not a separate app. Toggle it with <code>Cmd/Ctrl+Shift+A</code>. It plans first, asks when a step needs your call, and leaves the diff and the test receipt in the panel.</p>
           </div>
           <span class="fact">&#8984;&#8679;A</span>
         </div>
@@ -682,7 +682,7 @@
           <span class="idx">06</span>
           <div>
             <h3>The skills</h3>
-            <p>Twenty ship with the app and load only when a task matches. Install more from a URL: video, media, decks, Figma, whatever the work needs.</p>
+            <p>Twenty ship with the app and load only when a task matches. Install more from a URL or a package: video, media, decks, Figma, whatever the work needs.</p>
           </div>
           <span class="fact">20 bundled</span>
         </div>
@@ -747,10 +747,10 @@
               <span class="chip">skill-creator</span>
               <span class="chip">skill-security-auditor</span>
             </div>
-            <p>Frontend, design, accessibility and deck skills, installed by default and toggleable per agent. This landing page was built with the antislop pair and the demo video with HyperFrames.</p>
+            <p>Frontend, design, accessibility and deck skills, installed by default and toggleable per agent. This landing page was built with the antislop skills; the demo video was built with HyperFrames.</p>
           </div>
           <div>
-            <h3>Install from a URL <span>on demand</span></h3>
+            <h3>Install on demand <span>from a URL</span></h3>
             <div class="chips">
               <span class="chip">hyperframes</span>
               <span class="chip">music-to-video</span>
@@ -759,7 +759,7 @@
               <span class="chip">figma</span>
               <span class="chip">docx</span>
             </div>
-            <p>Paste a skill's GitHub URL into the agent and it installs into your skill store. Nothing is bundled that you did not ask for.</p>
+            <p>Paste a skill's GitHub URL into the agent and ask it to install it. It fetches the folder into <code>~/.undisclosed/skills</code>, where it shows up under Your skills. A <code>.zip</code> or <code>.skill</code> bundle works from the Skills panel too.</p>
             <p><a class="text-link" href="https://github.com/Octagon-simon/undisclosed/blob/upgrade/theia-1.76/docs/extra-skills.md" target="_blank" rel="noopener">Browse the extra skills &rarr;</a></p>
           </div>
         </div>
@@ -775,7 +775,7 @@
         05 / Where it runs
       </span>
       <h2>Local is the default. Cloud is a choice you make per model.</h2>
-      <p class="band-lead">Two processes, both yours: the editor on <code>:3000</code> and the brain on <code>:5001</code>, talking over localhost. The only outbound call is the one your chosen model makes.</p>
+      <p class="band-lead">Two processes, both yours: the editor on <code>:3000</code> and the brain on <code>:5001</code>, talking over localhost. Nothing passes through an Undisclosed server.</p>
 
       <div class="band-cols">
         <div>
