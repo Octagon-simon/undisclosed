@@ -16,10 +16,14 @@ import { proxyFetchGet } from '@/api/http';
 import { createHost } from '@/host/createHost';
 import { getAuthStore, useAuthStore } from '@/store/authStore';
 import { getCloudModelStore } from '@/store/cloudModelStore';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 
 const API_CODE_TRIAL_LIMIT = '22';
+// The brain can be unreachable at launch (still booting) or restart underneath
+// a running window. Retry a failed check so the "select a model" overlay
+// clears itself once providers are readable again.
+const RETRY_INTERVAL_MS = 4000;
 
 const hasApiCode = (value: unknown, code: string) =>
   typeof value === 'object' &&
@@ -50,8 +54,18 @@ export function useModelConfigCheck(): {
   // token handling) rather than trusting the persisted optimistic value.
   const [isConfigLoaded, setIsConfigLoaded] = useState(false);
   const [cloudUsageLimitReached, setCloudUsageLimitReached] = useState(false);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const checkRef = useRef<() => Promise<void>>(async () => {});
+
+  const clearRetry = useCallback(() => {
+    if (retryTimerRef.current !== null) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
+  }, []);
 
   const checkModelConfig = useCallback(async () => {
+    let failed = false;
     try {
       if (modelType === 'cloud') {
         const { token, cloud_model_type } = getAuthStore();
@@ -99,6 +113,7 @@ export function useModelConfigCheck(): {
         setHasModelConfigured(false);
       }
     } catch (err: any) {
+      failed = true;
       console.error('Failed to check model config:', err);
       if (
         modelType === 'cloud' &&
@@ -109,9 +124,27 @@ export function useModelConfigCheck(): {
         setHasModelConfigured(false);
       }
     } finally {
+      if (failed) {
+        // Keep one retry queued no matter how many checks overlap (focus,
+        // route change, modelType change).
+        if (retryTimerRef.current === null) {
+          retryTimerRef.current = setTimeout(() => {
+            retryTimerRef.current = null;
+            void checkRef.current();
+          }, RETRY_INTERVAL_MS);
+        }
+      } else {
+        clearRetry();
+      }
       setIsConfigLoaded(true);
     }
-  }, [modelType, setHasModelConfigured]);
+  }, [modelType, setHasModelConfigured, clearRetry]);
+
+  useEffect(() => {
+    checkRef.current = checkModelConfig;
+  }, [checkModelConfig]);
+
+  useEffect(() => clearRetry, [clearRetry]);
 
   useEffect(() => {
     checkModelConfig();
