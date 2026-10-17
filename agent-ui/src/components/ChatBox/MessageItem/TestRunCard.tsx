@@ -361,7 +361,7 @@ export function TestRunCard({
                 <>
                   <span
                     className={cn(
-                      "text-[28px] font-medium leading-none tracking-tight",
+                      "text-lg font-medium leading-none tracking-tight",
                       failedRun
                         ? "text-ds-text-status-error-default-default"
                         : "text-ds-text-status-completed-default-default",
