@@ -32,3 +32,13 @@ export function parseFlag(value: unknown): boolean {
 export const WORKFORCE_MODE_ENABLED = parseFlag(
   import.meta.env.VITE_ENABLE_WORKFORCE_MODE
 );
+
+/**
+ * Ask-to-approve governance gate for mutating tools. Off by default: the gate
+ * works for terminal, file, git, GitHub, MongoDB and diff writes, but it is not
+ * finished enough to expose. While off, every turn runs in Auto and the
+ * approve toggle, the panel badge and the Ask/Auto menu entries are hidden.
+ */
+export const GOVERNANCE_MODE_ENABLED = parseFlag(
+  import.meta.env.VITE_ENABLE_GOVERNANCE_MODE
+);

@@ -28,6 +28,7 @@ import {
   useComposerDraft,
   type ComposerSelection,
 } from '@/agent-embed/composerDraft';
+import { GOVERNANCE_MODE_ENABLED } from '@/lib/featureFlags';
 import { useProjectStore } from '@/store/projectStore';
 import { useAuthStore, type GovernanceMode } from '@/store/authStore';
 import { ArrowLeft, Bot } from 'lucide-react';
@@ -119,6 +120,8 @@ export interface AgentPanelApi {
   showBrowser(): void;
   getGovernance(): GovernanceMode;
   setGovernance(mode: GovernanceMode): void;
+  /** False while the governance gate is behind its feature flag. */
+  governanceEnabled(): boolean;
   /** Reasoning "thinking" block visibility (persisted flag). */
   getShowThinking(): boolean;
   setShowThinking(value: boolean): void;
@@ -212,6 +215,7 @@ const AgentEmbedPanel = forwardRef<AgentPanelApi>((_props, ref) => {
         setBody((m) => (m === 'browser' ? 'conversation' : 'browser')),
       getGovernance: () => useAuthStore.getState().governanceMode,
       setGovernance: (mode) => setGovernanceMode(mode),
+      governanceEnabled: () => GOVERNANCE_MODE_ENABLED,
       getShowThinking: () => useAuthStore.getState().showThinking,
       setShowThinking: (value) =>
         useAuthStore.getState().setShowThinking(value),

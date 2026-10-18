@@ -261,11 +261,18 @@ export class UndisclosedAgentContribution
         widget?.setShowThinking(!(widget?.showThinkingEnabled() ?? true));
       },
     });
+    // Governance is gated behind VITE_ENABLE_GOVERNANCE_MODE in the panel
+    // bundle. The command's isVisible also drives menu visibility, so both
+    // entries disappear while the flag is off.
     commands.registerCommand(GOV_ASK, {
+      isVisible: (w) =>
+        (asAgent(w) ?? this.tryGetWidget())?.governanceEnabled() === true,
       isToggled: (w) => (asAgent(w) ?? this.tryGetWidget())?.governanceMode() === 'ask',
       execute: (w) => (asAgent(w) ?? this.tryGetWidget())?.setGovernance('ask'),
     });
     commands.registerCommand(GOV_AUTO, {
+      isVisible: (w) =>
+        (asAgent(w) ?? this.tryGetWidget())?.governanceEnabled() === true,
       isToggled: (w) => (asAgent(w) ?? this.tryGetWidget())?.governanceMode() === 'auto',
       execute: (w) => (asAgent(w) ?? this.tryGetWidget())?.setGovernance('auto'),
     });

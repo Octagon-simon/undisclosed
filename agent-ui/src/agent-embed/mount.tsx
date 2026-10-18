@@ -367,6 +367,7 @@ export function mountAgentPanel(
     showBrowser: () => apiRef.current?.showBrowser(),
     getGovernance: () => apiRef.current?.getGovernance() ?? 'auto',
     setGovernance: (mode) => apiRef.current?.setGovernance(mode),
+    governanceEnabled: () => apiRef.current?.governanceEnabled() ?? false,
     getShowThinking: () => apiRef.current?.getShowThinking() ?? true,
     setShowThinking: (value) => apiRef.current?.setShowThinking(value),
     exportChat: () => apiRef.current?.exportChat(),

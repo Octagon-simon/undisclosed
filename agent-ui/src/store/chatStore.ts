@@ -30,6 +30,7 @@ import { showStorageToast } from '@/components/Toast/storageToast';
 import type { AppHost } from '@/host/types';
 import { generateUniqueId, uploadLog } from '@/lib';
 import { feDebug } from '@/lib/debug';
+import { GOVERNANCE_MODE_ENABLED } from '@/lib/featureFlags';
 import { getConnectionConfig } from '@/store/connectionStore';
 import {
   classifyError,
@@ -2468,11 +2469,12 @@ const chatStore = (initial?: Partial<ChatStore>) =>
             extra_params: apiModel.extra_params,
             auth_source: apiModel.auth_source,
             installed_mcp: connectorGatewayMcpConfig || { mcpServers: {} },
-            // User-configured governance gate (Settings > Privacy): 'ask'
-            // requires explicit approval before terminal/file-write tool
-            // calls execute; 'auto' (default) runs them immediately.
+            // Governance gate is behind VITE_ENABLE_GOVERNANCE_MODE; a stored
+            // 'ask' must not reach the brain while the flag is off.
             toolkit_config: {
-              governance: { mode: governanceMode },
+              governance: {
+                mode: GOVERNANCE_MODE_ENABLED ? governanceMode : 'auto',
+              },
               memory: { enabled: memoryEnabled },
               thinking: { enabled: showThinking },
             },

@@ -60,6 +60,8 @@ export interface AgentPanelHandle {
   showBrowser(): void;
   getGovernance(): GovernanceMode;
   setGovernance(mode: GovernanceMode): void;
+  /** False while the governance gate is behind its feature flag. */
+  governanceEnabled(): boolean;
   getShowThinking(): boolean;
   setShowThinking(value: boolean): void;
   exportChat(): void;
@@ -374,6 +376,9 @@ export class UndisclosedAgentWidget extends BaseWidget {
   }
   setGovernance(mode: GovernanceMode): void {
     this.handle?.setGovernance(mode);
+  }
+  governanceEnabled(): boolean {
+    return this.handle?.governanceEnabled() ?? false;
   }
   showThinkingEnabled(): boolean {
     return this.handle?.getShowThinking() ?? true;

@@ -16,6 +16,7 @@ import { proxyFetchGet, proxyFetchPut } from '@/api/http';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { SITE_URL } from '@/lib';
+import { GOVERNANCE_MODE_ENABLED } from '@/lib/featureFlags';
 import { useAuthStore } from '@/store/authStore';
 import { ChevronDown } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -145,24 +146,26 @@ export default function SettingPrivacy() {
         </div>
 
         {/* Approval Mode Section */}
-        <div className="rounded-2xl bg-ds-bg-neutral-default-default px-6 py-4">
-          <div className="flex items-center justify-between gap-md">
-            <div className="flex flex-col gap-2">
-              <div className="text-body-base font-bold text-ds-text-neutral-default-default">
-                {t('setting.require-approval-for-risky-actions')}
+        {GOVERNANCE_MODE_ENABLED && (
+          <div className="rounded-2xl bg-ds-bg-neutral-default-default px-6 py-4">
+            <div className="flex items-center justify-between gap-md">
+              <div className="flex flex-col gap-2">
+                <div className="text-body-base font-bold text-ds-text-neutral-default-default">
+                  {t('setting.require-approval-for-risky-actions')}
+                </div>
+                <div className="text-body-sm font-normal text-ds-text-neutral-default-default">
+                  {t('setting.require-approval-for-risky-actions-description')}
+                </div>
               </div>
-              <div className="text-body-sm font-normal text-ds-text-neutral-default-default">
-                {t('setting.require-approval-for-risky-actions-description')}
+              <div className="flex items-center justify-center">
+                <Switch
+                  checked={governanceMode === 'ask'}
+                  onCheckedChange={handleToggleGovernanceMode}
+                />
               </div>
-            </div>
-            <div className="flex items-center justify-center">
-              <Switch
-                checked={governanceMode === 'ask'}
-                onCheckedChange={handleToggleGovernanceMode}
-              />
             </div>
           </div>
-        </div>
+        )}
 
         {/* Code Editor (beta) Section */}
         <div className="rounded-2xl bg-ds-bg-neutral-default-default px-6 py-4">

@@ -24,6 +24,7 @@ import ChatBox from '@/components/ChatBox';
 import { Button } from '@/components/ui/button';
 import { TooltipSimple } from '@/components/ui/tooltip';
 import useChatStoreAdapter from '@/hooks/useChatStoreAdapter';
+import { GOVERNANCE_MODE_ENABLED } from '@/lib/featureFlags';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/store/authStore';
 import { useProjectStore } from '@/store/projectStore';
@@ -92,7 +93,7 @@ export default function RightAgentPanel({
   );
   const boundFolder = spaceFolder ?? lastFolder;
   const folderName = boundFolder ? boundFolder.split(/[/\\]/).pop() : null;
-  const isAsk = governanceMode === 'ask';
+  const isAsk = GOVERNANCE_MODE_ENABLED && governanceMode === 'ask';
 
   // Resize the dock. The move/up handlers live inside `startDrag` as local
   // closures, so there's no self-referencing useCallback (which `exhaustive-deps`
@@ -177,30 +178,32 @@ export default function RightAgentPanel({
           </TooltipSimple>
         </div>
         <div className="flex shrink-0 items-center gap-1">
-          <TooltipSimple
-            content={
-              isAsk
-                ? 'Approval required for risky actions'
-                : 'Actions run automatically'
-            }
-            side="bottom"
-          >
-            <span
-              className={cn(
-                'inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-label-xs font-semibold',
+          {GOVERNANCE_MODE_ENABLED && (
+            <TooltipSimple
+              content={
                 isAsk
-                  ? 'bg-ds-bg-warning-subtle-default text-ds-text-warning-strong-default'
-                  : 'bg-ds-bg-neutral-muted-default text-ds-text-neutral-subtle-default'
-              )}
+                  ? 'Approval required for risky actions'
+                  : 'Actions run automatically'
+              }
+              side="bottom"
             >
-              {isAsk ? (
-                <ShieldAlert className="h-3 w-3" aria-hidden />
-              ) : (
-                <ShieldCheck className="h-3 w-3" aria-hidden />
-              )}
-              {isAsk ? 'Ask' : 'Auto'}
-            </span>
-          </TooltipSimple>
+              <span
+                className={cn(
+                  'inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-label-xs font-semibold',
+                  isAsk
+                    ? 'bg-ds-bg-warning-subtle-default text-ds-text-warning-strong-default'
+                    : 'bg-ds-bg-neutral-muted-default text-ds-text-neutral-subtle-default'
+                )}
+              >
+                {isAsk ? (
+                  <ShieldAlert className="h-3 w-3" aria-hidden />
+                ) : (
+                  <ShieldCheck className="h-3 w-3" aria-hidden />
+                )}
+                {isAsk ? 'Ask' : 'Auto'}
+              </span>
+            </TooltipSimple>
+          )}
           <TooltipSimple content="New project" side="bottom">
             <Button
               variant="ghost"
