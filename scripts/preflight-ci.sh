@@ -68,6 +68,7 @@ else
   echo "  [FAIL] shell syntax error (run: bash -n scripts/<file>.sh)" >&2
   fail=1
 fi
+run "license headers" bash "$ROOT/scripts/check-license-headers.sh"
 if node --check scripts/prepare-release-assets.mjs 2>/dev/null; then
   echo "  [ok] scripts/prepare-release-assets.mjs"
 else
