@@ -17,7 +17,7 @@ import anthropicImage from '@/assets/model/anthropic.svg';
 import azureImage from '@/assets/model/azure.svg';
 import bedrockImage from '@/assets/model/bedrock.svg';
 import deepseekImage from '@/assets/model/deepseek.svg';
-import eigentImage from '@/assets/model/eigent.svg';
+import undisclosedImage from '@/assets/logo/undisclosed-icon.svg';
 import ernieImage from '@/assets/model/ernie.png';
 import geminiImage from '@/assets/model/gemini.svg';
 import llamaCppImage from '@/assets/model/llamacpp.svg';
@@ -40,7 +40,7 @@ import {
 } from '@/pages/Agents/localModels';
 
 const MODEL_PROVIDER_IMAGE_MAP: Record<string, string> = {
-  cloud: eigentImage,
+  cloud: undisclosedImage,
   openai: openaiImage,
   'codex-subscription': openaiImage,
   'ant-ling': antLingImage,

@@ -30,7 +30,7 @@ import {
 import { useTranslation } from 'react-i18next';
 
 import background from '@/assets/custom/background.png';
-import eigentLogo from '@/assets/logo/eigent_icon.png';
+import undisclosedLogo from '@/assets/logo/undisclosed-icon.svg';
 
 const IS_LOCAL_MODE = import.meta.env.VITE_USE_LOCAL_PROXY === 'true';
 let lock = false;
@@ -362,7 +362,7 @@ export default function Login() {
   const renderLocalMode = () => (
     <div className="relative flex w-80 flex-1 flex-col items-center justify-center pt-8">
       <img
-        src={eigentLogo}
+        src={undisclosedLogo}
         className="absolute left-1/2 top-10 h-16 w-16 -translate-x-1/2"
       />
       <div className="mb-8 text-heading-lg font-bold text-ds-text-neutral-default-default">
@@ -391,7 +391,7 @@ export default function Login() {
   const renderHybridMode = () => (
     <div className="relative flex w-80 flex-1 flex-col items-center justify-center pt-8">
       <img
-        src={eigentLogo}
+        src={undisclosedLogo}
         className="absolute left-1/2 top-10 h-16 w-16 -translate-x-1/2"
       />
       <div className="mb-4 text-heading-lg font-bold text-ds-text-neutral-default-default">

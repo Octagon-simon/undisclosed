@@ -88,7 +88,7 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
-import eigentImage from '@/assets/model/eigent.svg';
+import undisclosedImage from '@/assets/logo/undisclosed-icon.svg';
 import { useEffectiveAppearance } from '@/shared/hostTheme';
 import {
   getModelImage,
@@ -2645,7 +2645,11 @@ export default function SettingModels() {
               {import.meta.env.VITE_USE_LOCAL_PROXY !== 'true' && (
                 <DropdownMenuSub>
                   <DropdownMenuSubTrigger className="gap-2">
-                    <img src={eigentImage} alt="Cloud" className="h-5 w-5" />
+                    <img
+                      src={undisclosedImage}
+                      alt="Cloud"
+                      className="h-5 w-5"
+                    />
                     <span className="text-body-sm">
                       {t('setting.eigent-cloud')}
                     </span>

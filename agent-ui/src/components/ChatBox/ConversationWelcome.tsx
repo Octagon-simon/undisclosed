@@ -19,44 +19,8 @@
  * can tweak and send. Replaces the previous blank panel.
  */
 
+import { UndisclosedMark } from '@/components/Brand/UndisclosedMark';
 import { useTranslation } from 'react-i18next';
-
-/**
- * Undisclosed logomark: three redaction bars ("blacked-out" lines of text) — the
- * brand metaphor for private / on-device / undisclosed work. Inlined (not an
- * <img>) so it renders under the agent-embed CSP, which blocks external assets.
- */
-function UndisclosedMark({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 48 48"
-      className={className}
-      fill="none"
-      aria-hidden
-      style={{ color: '#8b5cf6' }}
-    >
-      <rect x="7" y="13" width="34" height="6.4" rx="3.2" fill="currentColor" />
-      <rect
-        x="7"
-        y="24"
-        width="25"
-        height="6.4"
-        rx="3.2"
-        fill="currentColor"
-        opacity="0.82"
-      />
-      <rect
-        x="7"
-        y="35"
-        width="16"
-        height="6.4"
-        rx="3.2"
-        fill="currentColor"
-        opacity="0.64"
-      />
-    </svg>
-  );
-}
 
 const SUGGESTIONS = [
   'Explain what this project does',
@@ -82,7 +46,7 @@ export function ConversationWelcome({
           mode. Pin a translucent brand fill + a vivid icon that read on both. */}
       <span
         className="flex h-11 w-11 items-center justify-center rounded-2xl"
-        style={{ backgroundColor: 'rgba(124,58,237,0.16)' }}
+        style={{ backgroundColor: 'rgba(124,58,237,0.16)', color: '#8b5cf6' }}
       >
         <UndisclosedMark className="h-6 w-6" />
       </span>

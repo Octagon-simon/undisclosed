@@ -17,6 +17,9 @@ const config: StorybookConfig = {
     '@storybook/addon-themes',
   ],
   framework: { name: '@storybook/react-vite', options: {} },
+  // Serve agent-ui/public so the manager picks up public/favicon.svg (the
+  // Undisclosed mark) instead of falling back to the browser default.
+  staticDirs: ['../public'],
   core: { disableTelemetry: true },
   async viteFinal(cfg) {
     // The `STORYBOOK` env (set by the npm scripts) makes vite.config.ts skip the

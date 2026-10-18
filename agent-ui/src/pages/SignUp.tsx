@@ -27,7 +27,7 @@ import { proxyFetchPost } from '@/api/http';
 import background from '@/assets/custom/background.png';
 import github2 from '@/assets/icon/github.svg';
 import google from '@/assets/icon/google.svg';
-import eigentLogo from '@/assets/logo/eigent_icon.png';
+import undisclosedLogo from '@/assets/logo/undisclosed-icon.svg';
 import WindowControls from '@/components/WindowControls';
 import { useHost } from '@/host';
 import { hasStackKeys } from '@/lib';
@@ -346,7 +346,7 @@ export default function SignUp() {
         >
           <div className="relative flex w-80 flex-1 flex-col items-center justify-center pt-8">
             <img
-              src={eigentLogo}
+              src={undisclosedLogo}
               className="absolute left-1/2 top-10 h-16 w-16 -translate-x-1/2"
             />
             <div className="mb-4 flex items-end justify-between self-stretch">

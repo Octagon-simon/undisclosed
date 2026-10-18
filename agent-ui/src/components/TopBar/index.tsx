@@ -15,8 +15,8 @@
 import { proxyFetchGet } from '@/api/http';
 import giftWhiteIcon from '@/assets/custom/gift-white.svg';
 import giftIcon from '@/assets/custom/gift.svg';
-import eigentAppIconBlack from '@/assets/logo/icon_black.svg';
-import eigentAppIconWhite from '@/assets/logo/icon_white.svg';
+import appIconBlack from '@/assets/logo/undisclosed-icon-black.svg';
+import appIconWhite from '@/assets/logo/undisclosed-icon-white.svg';
 import { type HistoryTabId } from '@/components/Dashboard/HistoryTabsNav';
 import InviteCodeDialog from '@/components/Dialog/InviteCodeDialog';
 import ReportBugDialog from '@/components/Dialog/ReportBugDialog';
@@ -583,11 +583,7 @@ function HeaderWin() {
               className="no-drag focus-visible:ring-ds-ring-brand-default-focus/50 flex min-h-[28px] items-center gap-1.5 rounded-full px-2 text-label-sm font-bold text-ds-text-neutral-default-default outline-none transition-colors hover:bg-ds-bg-neutral-default-hover focus-visible:ring-[3px]"
             >
               <img
-                src={
-                  appearance === 'dark'
-                    ? eigentAppIconWhite
-                    : eigentAppIconBlack
-                }
+                src={appearance === 'dark' ? appIconWhite : appIconBlack}
                 alt=""
                 className="h-5 w-5 select-none"
                 width={16}
