@@ -245,6 +245,7 @@ class ApprovalDecision(BaseModel):
     approval_id: str
     decision: str  # approve/approved or deny/denied
     decided_by: str | None = None
+    allow_scopes: list[str] | None = None
 
 
 class TaskContent(BaseModel):

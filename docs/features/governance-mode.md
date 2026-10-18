@@ -1,6 +1,6 @@
 # Governance Mode: How Commands Are Gated
 
-_Last verified against source on 2026-10-06._
+_Last verified against source on 2026-10-18._
 
 This document describes exactly how "governance mode" decides which agent
 actions require a human approval prompt, and what those actions are. It is a
@@ -10,27 +10,22 @@ read-only description of current behavior; no behavior was changed.
 
 ## TL;DR (the important part)
 
-**Governance gates at the TOOL level, not the command level.**
+Governance has two layers: the **approval gate** wraps a tool, and the
+**command policy** (`brain/app/agent/toolkit/command_policy.py`) decides from
+the live arguments whether that call needs a prompt.
 
-When governance is in **Ask** mode, the assembler wraps a fixed set of
-*mutating tools*. For the terminal, it wraps the entire `shell_exec` tool. The
-wrapper asks for approval **before it ever looks at the arguments**, so in Ask
-mode **every** `shell_exec` call prompts, no matter what the command is:
+| Tier | Examples | Auto | Ask |
+| --- | --- | --- | --- |
+| 0 read-only | `ls`, `git status`, `tsc --noEmit`, `npm test` | run | run |
+| 1 workspace write | `npm install`, `mkdir`, `git add`, `git commit` | run | prompt |
+| 2 destructive | `git push`, `git reset --hard`, `npm publish`, SQL drops | prompt | prompt |
+| 3 hard block | `rm`, `sudo`, `shutdown`, `dd`, `mkfs`, `git rm` | reject | reject |
 
-- `ls -la` -> prompts
-- `git status` -> prompts
-- `rm -rf /` -> prompts
-
-There is **no "is this command dangerous?" classifier** anywhere in our
-governance layer today. The only place in the stack that reasons about
-"dangerous commands" is CAMEL's `safe_mode` denylist, which *hard-blocks*
-(rather than prompts for) a fixed list of commands. That layer is separate from
-governance and is described in the last section.
-
-So the feature you want ("only show the box when the command is actually
-dangerous") is **not a config flag** we can flip. It requires teaching the
-gate to inspect the tool call's arguments and decide per-call. See
-["Where a danger check would go"](#where-a-danger-check-would-go).
+The terminal (`shell_exec`) is wrapped in **both** modes, so tier 2 prompts
+even when the feature flag is off. Other mutating tools (`write_to_file`,
+`git_add`, `apply_patch`, ...) are still wrapped only in Ask mode and are
+tier 1. Tier 3 is rejected before the ApprovalManager is consulted, so
+approval cannot override it.
 
 ---
 
@@ -38,8 +33,8 @@ gate to inspect the tool call's arguments and decide per-call. See
 
 | Mode | Behavior |
 | --- | --- |
-| `auto` (default) | No gating. Tools run immediately. This is the shipped default ("ship dark"). |
-| `ask` | The gated tools below require explicit human approval before they execute. |
+| `auto` (default) | Tier 0 and 1 run immediately; tier 2 prompts; tier 3 is rejected. |
+| `ask` | Tier 1 also prompts; tier 2 prompts; tier 3 is rejected. |
 
 The value is a per-session setting, not a build-time constant. Unknown or
 misspelled values fall back to `auto` (fail-open on config typos, so a bad
@@ -91,9 +86,10 @@ The user sets it in the UI; it rides along on every chat request in
 ## 3. What gets gated (the exact list)
 
 Gating happens in `assemble_single_agent_toolkits`
-(`brain/app/agent/factory/toolkit_assembler.py:453+`). When
-`governance_mode is GovernanceMode.ASK`, it wraps specific tool names via
-`_gate_tool_if_named` (`:165-197`). The complete set:
+(`brain/app/agent/factory/toolkit_assembler.py:453+`). `_gate_tool_if_named`
+(`:205-234`) wraps specific tool names. The terminal is wrapped in every mode;
+the rest are wrapped when `governance_mode is GovernanceMode.ASK`. The
+complete set:
 
 | Toolkit | Gated tool name(s) | `field_name` (label in prompt) | Call site |
 | --- | --- | --- | --- |
@@ -127,9 +123,11 @@ Key properties of the wrapper:
 
 - It returns a **new** `FunctionTool` preserving the original's
   name/description/parameters, so the model's view of the tool is unchanged.
-- On **every** call it: builds a short human-readable summary of the arguments
-  (`_describe_call`, `:205-216`), then calls
-  `ApprovalManager.request_approval(...)` and blocks until a decision lands.
+- On **every** call it resolves the tier from the arguments (`_call_tier`).
+  Tier 0 always runs directly, tier 1 runs directly in Auto, and tier 3 is
+  rejected. Only when approval is needed does it build the summary
+  (`_describe_call`) and call `ApprovalManager.request_approval(...)`, then
+  block until a decision lands.
 - It resolves the per-session `ApprovalManager` through the task lock:
   `get_task_lock(project_id).approval_manager`. This is the same instance the
   SSE and HTTP layers use.
@@ -197,7 +195,32 @@ Flow:
      `command=...` out of the raw `shell_exec(...)` string so the user sees the
      command, not the signature).
 
-## 6. CAMEL `safe_mode` (a different layer, hard-blocks instead of prompting)
+## 6. Command policy (tiers 0-3)
+
+`brain/app/agent/toolkit/command_policy.py` classifies a shell command line
+into four tiers. It is pure: no config, no I/O, tested directly.
+
+| Tier | Examples | Auto | Ask |
+| --- | --- | --- | --- |
+| 0 read-only | `ls`, `cat`, `rg`, `git status`, `tsc --noEmit`, `npm test` | run | run |
+| 1 workspace write | `npm install`, `mkdir`, `git add`, `git commit`, `echo > file` | run | prompt (flag) |
+| 2 destructive | `git push`, `git reset --hard`, `git clean -fd`, `npm publish`, SQL drops | classified | classified |
+| 3 hard block | `rm`, `sudo`, `shutdown`, `dd`, `mkfs`, `find -delete`, `git rm` | rejected | rejected |
+
+`TerminalToolkit.shell_exec` also calls `assess_command(command)` and returns
+a "blocked by the command policy" error for tier 3 before the Docker/local
+split, before the venv activation prefix, and before CAMEL's `safe_mode`. The
+approval wrapper applies the same tier check one layer up, so a blocked
+command never reaches either path.
+
+Splitting rules: the line is split on `&&`, `||`, `;`, `|`, `&`, newlines,
+subshells, and backticks outside quotes. Each segment is classified and the
+highest tier wins. Blocked binaries are also found inside `bash -c`, `eval`,
+`xargs`, `find -exec`, and `$(...)`. Unknown commands are tier 1, not blocked,
+so an unfamiliar command still runs. A quoted mention (`echo "rm -rf /"`) is
+data, not a command, and is not blocked.
+
+## 7. CAMEL `safe_mode` (a different layer, hard-blocks instead of prompting)
 
 Separate from governance, the terminal toolkit is constructed with
 `safe_mode=True` (`brain/app/agent/factory/toolkit_assembler.py:663`). This is
@@ -223,34 +246,31 @@ hits the safe-mode block).
 
 ---
 
-## Where a danger check would go
+## Where the danger check goes
 
-If the goal is "prompt only for dangerous commands", the decision has to move
-from *assembly time* (which tool) to *call time* (which arguments). The natural
-extension points:
+The classifier now exists (`command_policy.py`, section 6). The remaining work
+is to consume it at *call time*, not assembly time, inside
+`wrap_with_approval`:
 
 - **Primary:** inside `wrap_with_approval`
   (`brain/app/agent/toolkit/governance_toolkit.py:74-197`). Before calling
   `manager.request_approval(...)`, it already has `name`, `args`, and
-  `kwargs`. Add a classifier here: if the call is benign, run it directly and
-  skip the prompt; if it's dangerous (or unrecognized), prompt.
-  - For the terminal, the relevant argument is `command` on `shell_exec`
-    (`args[0]` or `kwargs["command"]`).
-  - Reuse CAMEL's `DANGEROUS_COMMANDS` list as one signal; add a read-only
-    allowlist (e.g. `ls`, `cat`, `grep`, `find`, `git status/diff/log`) as
-    another; treat anything unrecognized as "ask" (fail-closed for unknown).
-- **Alternative / complementary:** don't wrap the whole `shell_exec` tool;
-  instead wrap it with a wrapper that only prompts conditionally (same as
-  above, just framed as "conditional gate" rather than "unconditional gate").
+  `kwargs`. For `shell_exec`, run `assess_command` on the command string:
+  tier 0 runs without a prompt, tier 1 prompts only in Ask mode (or when the
+  task allowlist does not cover its scope), and tier 2 always prompts.
+  - Reuse CAMEL's `DANGEROUS_COMMANDS` list as one signal; `command_policy`
+    already covers the same binaries plus disk/database/deploy actions.
+- **Also:** wrap the terminal in Auto mode, not only in Ask mode, so tier 2
+  can prompt with the feature flag off. The wrapper needs the session's
+  `GovernanceMode` passed in; it currently does not receive it.
 
-Things to decide when implementing:
+Decisions already made:
 
-- Default posture for unrecognized commands (recommend: ask).
-- Whether `auto` mode should still hard-block CAMEL's `DANGEROUS_COMMANDS`
-  (it currently does, via `safe_mode`).
-- Whether the classifier lives in the brain (authoritative, shared) or the
-  wrapper only (minimal change). Recommend the brain, so tests can cover it
-  directly (see `brain/tests/app/agent/toolkit/test_governance_toolkit.py`).
+- Unrecognized commands are tier 1 (run), not blocked. Blocking them would make
+  the terminal unusable.
+- Tier 3 is blocked in Auto too, and approval cannot override it.
+- The classifier lives in the brain so both the gate and the terminal share it
+  and tests hit it directly.
 
 ## Source index (quick map)
 

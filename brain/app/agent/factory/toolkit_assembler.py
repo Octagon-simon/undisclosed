@@ -209,6 +209,7 @@ def _gate_tool_if_named(
     field_name: str,
     agent_name: str,
     api_task_id: str,
+    mode: GovernanceMode = GovernanceMode.ASK,
 ) -> list[FunctionTool | Callable]:
     """Wrap matching risky tools with an approval gate. Returns new list."""
     gated: list[FunctionTool | Callable] = []
@@ -224,6 +225,7 @@ def _gate_tool_if_named(
                         field_name=field_name,
                         agent_name=agent_name,
                         api_task_id=api_task_id,
+                        mode=mode,
                     )
                 )
                 continue
@@ -686,14 +688,16 @@ async def assemble_single_agent_toolkits(
     github_tools = GithubToolkit.get_can_use_tools(options.project_id)
     if github_tools:
         github_tools = message_integration.register_functions(github_tools)
-        if governance_mode is GovernanceMode.ASK:
-            github_tools = _gate_tool_if_named(
-                github_tools,
-                target_names=GITHUB_WRITE_TOOL_NAMES,
-                field_name="github_write",
-                agent_name=Agents.single_agent,
-                api_task_id=options.project_id,
-            )
+        # Wrapped in AUTO too: these writes are tier 2, so approval is
+        # independent of the flag.
+        github_tools = _gate_tool_if_named(
+            github_tools,
+            target_names=GITHUB_WRITE_TOOL_NAMES,
+            field_name="github_write",
+            agent_name=Agents.single_agent,
+            api_task_id=options.project_id,
+            mode=governance_mode,
+        )
         assembly.add_tools(github_tools, GithubToolkit.toolkit_name())
 
     # MongoDB: read-only ad-hoc queries (find/count/distinct/aggregate) over
@@ -778,14 +782,15 @@ async def assemble_single_agent_toolkits(
         )
         toolkit = message_integration.register_toolkits(toolkit)
         terminal_tools = toolkit.get_tools()
-        if governance_mode is GovernanceMode.ASK:
-            terminal_tools = _gate_tool_if_named(
-                terminal_tools,
-                target_names={"shell_exec"},
-                field_name="terminal",
-                agent_name=Agents.single_agent,
-                api_task_id=options.project_id,
-            )
+        # Wrapped in AUTO too: tier 2 must prompt even with the flag off.
+        terminal_tools = _gate_tool_if_named(
+            terminal_tools,
+            target_names={"shell_exec"},
+            field_name="terminal",
+            agent_name=Agents.single_agent,
+            api_task_id=options.project_id,
+            mode=governance_mode,
+        )
         assembly.add_tools(terminal_tools, TerminalToolkit.toolkit_name())
 
     if _enabled(config, "git"):
@@ -797,14 +802,16 @@ async def assemble_single_agent_toolkits(
         )
         toolkit = message_integration.register_toolkits(toolkit)
         git_tools = toolkit.get_tools()
-        if governance_mode is GovernanceMode.ASK:
-            git_tools = _gate_tool_if_named(
-                git_tools,
-                target_names=GIT_WRITE_TOOL_NAMES,
-                field_name="git_write",
-                agent_name=Agents.single_agent,
-                api_task_id=options.project_id,
-            )
+        # Wrapped in AUTO too: `git_push` is tier 2, so it prompts in every
+        # mode. `git add`/`commit` stay tier 1 and only prompt in ASK.
+        git_tools = _gate_tool_if_named(
+            git_tools,
+            target_names=GIT_WRITE_TOOL_NAMES,
+            field_name="git_write",
+            agent_name=Agents.single_agent,
+            api_task_id=options.project_id,
+            mode=governance_mode,
+        )
         assembly.add_tools(git_tools, GitToolkit.toolkit_name())
 
     if _enabled(config, "test_runner"):

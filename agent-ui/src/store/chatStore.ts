@@ -398,6 +398,16 @@ export interface ActiveApproval {
   tool_name: string;
   detail: string;
   agent_name: string | null;
+  /** Policy tier from the backend; absent on older payloads. */
+  tier?: 'read_only' | 'workspace_write' | 'destructive';
+  /** Directory the call runs in, shown under the command. */
+  working_directory?: string | null;
+  /** Plain-language explanation of what the command does, shown under the title. */
+  description?: string | null;
+  /** Scopes the pending call touches (backend ids: file_reads, ...). */
+  scopes?: string[];
+  /** Scopes already suppressed for this task (backend ids). */
+  allowed_scopes?: string[];
 }
 
 interface Task {
@@ -5050,12 +5060,30 @@ const chatStore = (initial?: Partial<ChatStore>) =>
               tool_name: string;
               detail?: string;
               agent_name?: string | null;
+              tier?: number | null;
+              working_directory?: string | null;
+              description?: string | null;
+              scopes?: string[];
+              allowed_scopes?: string[];
             };
+            const tier =
+              data.tier === 2
+                ? 'destructive'
+                : data.tier === 1
+                  ? 'workspace_write'
+                  : data.tier === 0
+                    ? 'read_only'
+                    : undefined;
             setActiveApproval(currentTaskId, {
               approval_id: data.approval_id,
               tool_name: data.tool_name,
               detail: data.detail || '',
               agent_name: data.agent_name || null,
+              tier,
+              working_directory: data.working_directory ?? null,
+              description: data.description ?? null,
+              scopes: data.scopes ?? [],
+              allowed_scopes: data.allowed_scopes ?? [],
             });
             setIsPending(currentTaskId, false);
             return;

@@ -33,7 +33,7 @@ from app.model.chat import (
     SupplementChat,
     UpdateData,
 )
-from app.model.enums import Status
+from app.model.enums import ApprovalScope, Status
 from app.run_context import RunContext
 
 logger = logging.getLogger("task_service")
@@ -346,6 +346,12 @@ class ApprovalRequestPayload(BaseModel):
     tool_name: str
     detail: str = ""
     agent_name: str | None = None
+    tier: int | None = None
+    tier_label: str | None = None
+    scopes: list[str] = []
+    description: str = ""
+    working_directory: str | None = None
+    allowed_scopes: list[str] = []
 
 
 class ApprovalResolvedPayload(BaseModel):
@@ -355,6 +361,8 @@ class ApprovalResolvedPayload(BaseModel):
     approval_id: str
     decision: str  # approved / denied / timeout
     decided_by: str | None = None
+    scopes: list[str] = []
+    expired: bool = False
 
 
 class ActionApprovalRequestData(BaseModel):
@@ -484,6 +492,9 @@ class TaskLock:
     """Per-session ApprovalManager gating risky tool executions (governance
     ASK mode). None until the first solve loop for this task lock creates
     one."""
+    approval_scopes: dict[str, set[str]]
+    """Task-scoped suppression scopes keyed by task id. Resets when the run
+    moves to a new task, so a new turn prompts again."""
 
     def __init__(
         self, id: str, queue: asyncio.Queue, human_input: dict
@@ -520,6 +531,7 @@ class TaskLock:
         self.memory_service = None
         self._memory_finalized_runs = set()
         self.approval_manager = None
+        self.approval_scopes = {}
         # Identifies the consumer currently attached to this project's queue.
         # A re-attach (resume) assigns a new id; the older consumer's loop sees
         # the mismatch and exits, so exactly one consumer drains the queue.
@@ -529,6 +541,27 @@ class TaskLock:
             "Task lock initialized",
             extra={"task_id": id, "created_at": self.created_at.isoformat()},
         )
+
+    def approval_scope_key(self, task_id: str | None = None) -> str:
+        return task_id or self.current_task_id or self.id
+
+    def allowed_approval_scopes(self, task_id: str | None = None) -> set[str]:
+        """Scopes already suppressed for this task. Reads are the default."""
+        key = self.approval_scope_key(task_id)
+        stored = self.approval_scopes.get(key)
+        if stored is None:
+            return {ApprovalScope.FILE_READS.value}
+        return set(stored)
+
+    def set_approval_scopes(
+        self, scopes: list[str] | tuple[str, ...], task_id: str | None = None
+    ) -> set[str]:
+        """Replace the task's suppression set with `scopes`."""
+        valid = {scope.value for scope in ApprovalScope}
+        key = self.approval_scope_key(task_id)
+        allowed = {str(scope) for scope in scopes if str(scope) in valid}
+        self.approval_scopes[key] = allowed
+        return set(allowed)
 
     async def put_queue(self, data: ActionData):
         self.last_accessed = datetime.now()

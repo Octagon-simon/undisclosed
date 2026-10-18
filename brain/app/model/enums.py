@@ -12,7 +12,17 @@
 # limitations under the License.
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
 
-from enum import Enum
+from enum import Enum, StrEnum
+
+
+class ApprovalScope(StrEnum):
+    """Task-scoped suppression scope offered on the approval card."""
+
+    FILE_READS = "file_reads"
+    FILE_WRITES = "file_writes"
+    BUILDS_TESTS = "builds_tests"
+    DEPENDENCY_INSTALLS = "dependency_installs"
+    GIT_ADD_COMMIT = "git_add_commit"
 
 
 class Status(str, Enum):

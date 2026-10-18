@@ -36,7 +36,14 @@ def _fake_task_lock():
     task_lock = MagicMock()
     task_lock.id = "project_1"
     task_lock.current_task_id = "task_1"
+    task_lock.working_directory = "/tmp/project"
     task_lock.put_queue = AsyncMock()
+    task_lock.allowed_approval_scopes = MagicMock(
+        return_value={"file_reads"}
+    )
+    task_lock.set_approval_scopes = MagicMock(
+        side_effect=lambda scopes: set(scopes)
+    )
     return task_lock
 
 
@@ -252,3 +259,102 @@ class TestCancelAll:
     def test_cancel_all_on_empty_manager_returns_zero(self):
         manager = ApprovalManager(_fake_task_lock())
         assert manager.cancel_all() == 0
+
+
+class TestApprovalContext:
+    @pytest.mark.asyncio
+    async def test_request_payload_carries_card_fields(self, _patch_emitters):
+        task_lock = _fake_task_lock()
+        manager = ApprovalManager(task_lock, approval_timeout_s=5)
+
+        request_task = asyncio.create_task(
+            manager.request_approval(
+                tool_name="terminal",
+                detail="mkdir out",
+                tier=1,
+                tier_label="Writes files",
+                scopes=["file_writes"],
+                description="This command changes your workspace.",
+            )
+        )
+        for _ in range(50):
+            if task_lock.put_queue.call_args_list:
+                break
+            await asyncio.sleep(0.001)
+
+        payload = task_lock.put_queue.call_args_list[0].args[0].data
+        assert payload.tier == 1
+        assert payload.tier_label == "Writes files"
+        assert payload.scopes == ["file_writes"]
+        assert payload.allowed_scopes == ["file_reads"]
+        assert payload.working_directory == "/tmp/project"
+
+        (approval_id,) = list(manager._pending.keys())
+        manager.resolve(approval_id, "denied")
+        await request_task
+
+    @pytest.mark.asyncio
+    async def test_approved_decision_applies_allow_scopes(
+        self, _patch_emitters
+    ):
+        task_lock = _fake_task_lock()
+        manager = ApprovalManager(task_lock, approval_timeout_s=5)
+
+        request_task = asyncio.create_task(
+            manager.request_approval(tool_name="terminal")
+        )
+        await asyncio.sleep(0)
+        (approval_id,) = list(manager._pending.keys())
+        manager.resolve(
+            approval_id, "approved", allow_scopes=["file_writes"]
+        )
+        assert await request_task == "approved"
+        task_lock.set_approval_scopes.assert_called_once_with(
+            ["file_writes"]
+        )
+
+        resolved = task_lock.put_queue.await_args_list[-1].args[0].data
+        assert resolved.scopes == ["file_writes"]
+        assert resolved.expired is False
+
+    @pytest.mark.asyncio
+    async def test_denied_decision_does_not_touch_allow_scopes(
+        self, _patch_emitters
+    ):
+        task_lock = _fake_task_lock()
+        manager = ApprovalManager(task_lock, approval_timeout_s=5)
+
+        request_task = asyncio.create_task(
+            manager.request_approval(tool_name="terminal")
+        )
+        await asyncio.sleep(0)
+        (approval_id,) = list(manager._pending.keys())
+        manager.resolve(approval_id, "denied", allow_scopes=["file_writes"])
+        await request_task
+        task_lock.set_approval_scopes.assert_not_called()
+
+
+class TestTimeoutPayload:
+    @pytest.mark.asyncio
+    async def test_timeout_payload_is_marked_expired(self, _patch_emitters):
+        task_lock = _fake_task_lock()
+        manager = ApprovalManager(task_lock, approval_timeout_s=0.05)
+
+        await manager.request_approval(tool_name="terminal")
+        for _ in range(50):
+            resolved = [
+                call.args[0]
+                for call in task_lock.put_queue.call_args_list
+                if isinstance(call.args[0], ActionApprovalResolvedData)
+            ]
+            if resolved:
+                break
+            await asyncio.sleep(0.001)
+
+        payload = resolved[-1].data
+        assert payload.decision == "timeout"
+        assert payload.expired is True
+
+    def test_default_timeout_is_five_minutes(self):
+        manager = ApprovalManager(_fake_task_lock())
+        assert manager._timeout_s == 300.0

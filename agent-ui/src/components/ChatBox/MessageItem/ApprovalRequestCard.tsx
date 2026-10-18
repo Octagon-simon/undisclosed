@@ -46,11 +46,9 @@ import { fetchPost } from '@/api/http';
 import { Button } from '@/components/ui/button';
 import type { ActiveApproval, VanillaChatStore } from '@/store/chatStore';
 import { useProjectStore } from '@/store/projectStore';
-import { Loader2, ShieldAlert } from 'lucide-react';
+import { Check, Folder, Loader2, RotateCcw, ShieldAlert } from 'lucide-react';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { toast } from 'sonner';
-
-type Decision = 'approve' | 'deny';
 
 /**
  * The backend sends `detail` as a raw tool-call string, e.g.
@@ -79,12 +77,268 @@ function friendlyApprovalDetail(detail: string): string {
   if (!raw) return '';
   for (const key of MEANINGFUL_ARG_KEYS) {
     // key='...' or key="..." (non-greedy to the matching quote)
-    const match = raw.match(
-      new RegExp(`${key}\\s*=\\s*(['"])([\\s\\S]*?)\\1`)
-    );
+    const match = raw.match(new RegExp(`${key}\\s*=\\s*(['"])([\\s\\S]*?)\\1`));
     if (match && match[2].trim()) return match[2];
   }
   return raw;
+}
+
+export type ApprovalTier = 'read_only' | 'workspace_write' | 'destructive';
+export type ApprovalDecision = 'approve' | 'deny';
+export type ApprovalScope = 'reads' | 'writes' | 'tests' | 'installs' | 'git';
+
+const SCOPE_OPTIONS: {
+  id: ApprovalScope;
+  label: string;
+  hint: string;
+}[] = [
+  {
+    id: 'reads',
+    label: 'File reads',
+    hint: 'Read file contents and repository state',
+  },
+  { id: 'writes', label: 'File writes', hint: 'Create or modify files' },
+  {
+    id: 'tests',
+    label: 'Builds & tests',
+    hint: 'Run tests, linters, and type-checks',
+  },
+  {
+    id: 'installs',
+    label: 'Dependency installs',
+    hint: 'Install or update dependencies',
+  },
+  {
+    id: 'git',
+    label: 'Git add & commit',
+    hint: 'Stage and commit changes, but never push or reset',
+  },
+];
+
+// Backend scope ids (see ApprovalScope in app/model/enums.py) mapped to the
+// short ids this view uses.
+const BACKEND_SCOPE_TO_CARD: Record<string, ApprovalScope> = {
+  file_reads: 'reads',
+  file_writes: 'writes',
+  builds_tests: 'tests',
+  dependency_installs: 'installs',
+  git_add_commit: 'git',
+};
+
+const CARD_SCOPE_TO_BACKEND: Record<ApprovalScope, string> = {
+  reads: 'file_reads',
+  writes: 'file_writes',
+  tests: 'builds_tests',
+  installs: 'dependency_installs',
+  git: 'git_add_commit',
+};
+
+const TIER_LABELS: Record<ApprovalTier, string> = {
+  read_only: 'Read only',
+  workspace_write: 'Writes files',
+  destructive: 'Destructive',
+};
+
+const TIER_SURFACES: Record<ApprovalTier, string> = {
+  read_only:
+    'bg-ds-bg-neutral-subtle-default text-ds-text-neutral-muted-default',
+  workspace_write:
+    'bg-ds-bg-warning-subtle-default text-ds-text-warning-strong-default',
+  destructive:
+    'bg-ds-bg-error-subtle-default text-ds-text-error-strong-default',
+};
+
+export interface ApprovalRequestCardViewProps {
+  toolName: string;
+  command: string;
+  tier?: ApprovalTier;
+  workingDirectory?: string | null;
+  description?: string | null;
+  submitting?: ApprovalDecision | null;
+  expired?: boolean;
+  /** Scopes to suppress for the rest of the task. Omit to hide the row. */
+  selectedScopes?: ApprovalScope[];
+  onToggleScope?: (scope: ApprovalScope) => void;
+  expiresIn?: string | null;
+  onApprove?: () => void;
+  onDeny?: () => void;
+  onRetry?: () => void;
+  className?: string;
+}
+
+/**
+ * Presentational approval prompt. Store wiring and POSTing the decision live in
+ * `ApprovalRequestCard`; this view is shared with Storybook so the design can be
+ * reviewed without a running task.
+ */
+export function ApprovalRequestCardView({
+  toolName,
+  command,
+  tier = 'workspace_write',
+  workingDirectory,
+  description,
+  submitting = null,
+  expired = false,
+  selectedScopes,
+  onToggleScope,
+  expiresIn,
+  onApprove,
+  onDeny,
+  onRetry,
+  className,
+}: ApprovalRequestCardViewProps) {
+  const busy = submitting !== null;
+
+  return (
+    <div
+      role="alertdialog"
+      aria-label={`Approval needed: ${toolName}`}
+      className={[
+        'pointer-events-auto w-full max-w-[560px] overflow-hidden rounded-xl border border-solid border-ds-border-neutral-strong-default bg-ds-bg-neutral-default-default shadow-lg',
+        className ?? '',
+      ].join(' ')}
+    >
+      <div className="flex items-start gap-3 px-4 pt-3.5">
+        <span
+          className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${TIER_SURFACES[tier]}`}
+        >
+          <ShieldAlert size={15} aria-hidden />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="text-body-sm font-bold text-ds-text-neutral-default-default">
+              Approval needed
+            </span>
+            <span
+              className={`inline-flex items-center rounded-full border border-transparent px-2 py-0.5 text-label-xs font-medium ${TIER_SURFACES[tier]}`}
+            >
+              {TIER_LABELS[tier]}
+            </span>
+          </div>
+          <p className="mt-1 text-label-xs leading-relaxed text-ds-text-neutral-muted-default">
+            {description || 'Review this command before it runs.'}
+          </p>
+        </div>
+      </div>
+
+      <div className="mx-4 mt-3 overflow-hidden rounded-lg border border-solid border-ds-border-neutral-default-default bg-ds-bg-neutral-muted-default">
+        <div className="max-h-40 overflow-y-auto px-3 py-2">
+          <pre className="m-0 flex gap-2 whitespace-pre-wrap break-all font-mono text-label-xs leading-relaxed text-ds-text-neutral-default-default">
+            <span
+              aria-hidden
+              className="select-none text-ds-text-neutral-subtle-default"
+            >
+              $
+            </span>
+            <span className="min-w-0">{command}</span>
+          </pre>
+        </div>
+      </div>
+
+      {workingDirectory ? (
+        <div className="mx-4 mt-2.5 flex items-center gap-1.5 text-label-xs text-ds-text-neutral-muted-default">
+          <Folder size={12} className="shrink-0" aria-hidden />
+          <span className="truncate font-mono">{workingDirectory}</span>
+        </div>
+      ) : null}
+
+      {selectedScopes ? (
+        <div className="mx-4 mt-3">
+          <div className="text-label-xs text-ds-text-neutral-muted-default">
+            Suppress prompts for the rest of this task:
+          </div>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {SCOPE_OPTIONS.map((scope) => {
+              const selected = selectedScopes.includes(scope.id);
+              return (
+                <button
+                  key={scope.id}
+                  type="button"
+                  aria-pressed={selected}
+                  disabled={busy || expired}
+                  title={scope.hint}
+                  onClick={() => onToggleScope?.(scope.id)}
+                  className={[
+                    'inline-flex cursor-pointer items-center gap-1 rounded-full border border-solid px-2 py-0.5 text-label-xs transition-colors disabled:pointer-events-none',
+                    selected
+                      ? 'border-transparent bg-ds-bg-success-subtle-default text-ds-text-success-strong-default'
+                      : 'border-ds-border-neutral-default-default bg-ds-bg-neutral-default-default text-ds-text-neutral-muted-default hover:border-ds-border-neutral-strong-default',
+                  ].join(' ')}
+                >
+                  {selected ? (
+                    <Check size={11} className="shrink-0" aria-hidden />
+                  ) : null}
+                  {scope.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+
+      <div className="mt-3 flex items-center justify-between gap-2 bg-ds-bg-neutral-subtle-default px-4 py-2.5">
+        <span
+          className={`min-w-0 truncate text-label-xs ${
+            expired
+              ? 'text-ds-text-warning-strong-default'
+              : 'text-ds-text-neutral-muted-default'
+          }`}
+        >
+          {expired
+            ? 'Request expired.'
+            : (expiresIn ?? 'Runs only if you approve.')}
+        </span>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            tone="neutral"
+            size="xs"
+            buttonContent="text"
+            disabled={busy}
+            onClick={onDeny}
+            className="gap-1.5"
+          >
+            {submitting === 'deny' ? (
+              <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+            ) : null}
+            Deny
+          </Button>
+          {expired ? (
+            <Button
+              type="button"
+              variant="primary"
+              tone="neutral"
+              size="xs"
+              buttonContent="text"
+              disabled={busy}
+              onClick={onRetry}
+              className="gap-1.5"
+            >
+              <RotateCcw className="h-3 w-3" aria-hidden />
+              Retry
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              variant="primary"
+              tone={tier === 'destructive' ? 'error' : 'success'}
+              size="xs"
+              buttonContent="text"
+              disabled={busy}
+              onClick={onApprove}
+              className="gap-1.5"
+            >
+              {submitting === 'approve' ? (
+                <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+              ) : null}
+              Approve
+            </Button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export interface ApprovalRequestCardProps {
@@ -94,14 +348,14 @@ export interface ApprovalRequestCardProps {
 
 function useActiveApproval(
   chatStore: VanillaChatStore,
-  taskId: string | null
+  taskId: string | null,
 ): ActiveApproval | null {
   return useSyncExternalStore(
     (callback) => chatStore.subscribe(callback),
     () =>
       taskId
         ? (chatStore.getState().tasks[taskId]?.activeApproval ?? null)
-        : null
+        : null,
   );
 }
 
@@ -111,7 +365,8 @@ export function ApprovalRequestCard({
 }: ApprovalRequestCardProps) {
   const approval = useActiveApproval(chatStore, taskId);
   const activeProjectId = useProjectStore((state) => state.activeProjectId);
-  const [submitting, setSubmitting] = useState<Decision | null>(null);
+  const [submitting, setSubmitting] = useState<ApprovalDecision | null>(null);
+  const [selectedScopes, setSelectedScopes] = useState<ApprovalScope[]>([]);
 
   // This component instance persists across successive approvals for the same
   // task (it renders null between them rather than unmounting). `submitting` is
@@ -120,13 +375,22 @@ export function ApprovalRequestCard({
   // changes so a fresh prompt doesn't inherit the previous one's disabled/
   // spinner state.
   const approvalId = approval?.approval_id;
+  const allowedScopes = approval?.allowed_scopes;
   useEffect(() => {
     setSubmitting(null);
-  }, [approvalId]);
+    setSelectedScopes(
+      (allowedScopes ?? [])
+        .map((scope) => BACKEND_SCOPE_TO_CARD[scope])
+        .filter((scope): scope is ApprovalScope => Boolean(scope))
+    );
+  }, [approvalId, allowedScopes]);
 
   if (!approval) return null;
 
-  const handleDecision = async (decision: Decision) => {
+  const showScopeRow =
+    approval.tier !== 'destructive' && (approval.scopes?.length ?? 0) > 0;
+
+  const handleDecision = async (decision: ApprovalDecision) => {
     if (submitting) return;
     setSubmitting(decision);
     try {
@@ -134,6 +398,13 @@ export function ApprovalRequestCard({
         approval_id: approval.approval_id,
         decision,
         decided_by: 'user',
+        ...(showScopeRow
+          ? {
+              allow_scopes: selectedScopes.map(
+                (scope) => CARD_SCOPE_TO_BACKEND[scope]
+              ),
+            }
+          : {}),
       });
     } catch (error) {
       console.error('Failed to submit approval decision:', error);
@@ -148,64 +419,24 @@ export function ApprovalRequestCard({
   // two don't overlap when both are visible during a running, gated task.
   return (
     <div className="pointer-events-none sticky bottom-44 left-0 right-0 top-2 z-30 mt-4 flex w-full justify-center px-2">
-      <div
-        role="alertdialog"
-        aria-label={`Approval needed: ${approval.tool_name}`}
-        className="pointer-events-auto flex w-full max-w-[560px] flex-col gap-2 rounded-2xl border border-solid border-ds-border-neutral-default-default bg-ds-bg-neutral-subtle-default px-4 py-3 shadow-lg backdrop-blur-md"
-      >
-        <div className="flex items-center gap-2">
-          <ShieldAlert
-            size={16}
-            aria-hidden
-            className="shrink-0 text-ds-text-warning-strong-default"
-          />
-          <span className="text-body-sm font-bold text-ds-text-neutral-default-default">
-            Approval needed: {approval.tool_name}
-          </span>
-          {approval.agent_name ? (
-            <span className="text-label-xs text-ds-text-neutral-subtle-default">
-              · {approval.agent_name}
-            </span>
-          ) : null}
-        </div>
-        {approval.detail ? (
-          <div className="overflow-x-auto whitespace-pre-wrap break-words rounded-md bg-ds-bg-neutral-muted-default px-3.5 py-2 font-mono text-label-xs text-ds-text-neutral-default-default">
-            {friendlyApprovalDetail(approval.detail)}
-          </div>
-        ) : null}
-        <div className="flex items-center gap-2 pt-1">
-          <Button
-            type="button"
-            variant="primary"
-            tone="success"
-            size="xs"
-            buttonContent="text"
-            disabled={submitting !== null}
-            onClick={() => handleDecision('approve')}
-            className="gap-1.5"
-          >
-            {submitting === 'approve' ? (
-              <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
-            ) : null}
-            Approve
-          </Button>
-          <Button
-            type="button"
-            variant="primary"
-            tone="error"
-            size="xs"
-            buttonContent="text"
-            disabled={submitting !== null}
-            onClick={() => handleDecision('deny')}
-            className="gap-1.5"
-          >
-            {submitting === 'deny' ? (
-              <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
-            ) : null}
-            Deny
-          </Button>
-        </div>
-      </div>
+      <ApprovalRequestCardView
+        toolName={approval.tool_name}
+        command={friendlyApprovalDetail(approval.detail)}
+        tier={approval.tier}
+        workingDirectory={approval.working_directory}
+        description={approval.description}
+        selectedScopes={showScopeRow ? selectedScopes : undefined}
+        onToggleScope={(scope) =>
+          setSelectedScopes((current) =>
+            current.includes(scope)
+              ? current.filter((item) => item !== scope)
+              : [...current, scope]
+          )
+        }
+        submitting={submitting}
+        onApprove={() => handleDecision('approve')}
+        onDeny={() => handleDecision('deny')}
+      />
     </div>
   );
 }

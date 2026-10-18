@@ -990,6 +990,7 @@ async def approval(id: str, data: ApprovalDecision, request: Request):
             data.approval_id,
             data.decision,
             decided_by=data.decided_by,
+            allow_scopes=data.allow_scopes,
         )
     except ValueError as exc:
         raise UserException(code.error, str(exc)) from exc

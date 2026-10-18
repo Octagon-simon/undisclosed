@@ -60,6 +60,20 @@ VALID_DECISIONS = ("approved", "denied")
 _CATEGORY = "mutating"
 
 
+def _allowed_scopes(task_lock) -> list[str]:
+    """Read the task's suppression set without trusting a stub/mock."""
+    getter = getattr(task_lock, "allowed_approval_scopes", None)
+    if not callable(getter):
+        return []
+    try:
+        result = getter()
+    except Exception:  # pragma: no cover - defensive
+        return []
+    if not isinstance(result, (set, frozenset, list, tuple)):
+        return []
+    return sorted(str(scope) for scope in result)
+
+
 @dataclass
 class _PendingApproval:
     future: asyncio.Future[str]
@@ -74,7 +88,7 @@ class ApprovalManager:
         self,
         task_lock,
         *,
-        approval_timeout_s: float = 120.0,
+        approval_timeout_s: float = 300.0,
     ) -> None:
         self._task_lock = task_lock
         self._timeout_s = float(approval_timeout_s)
@@ -90,6 +104,11 @@ class ApprovalManager:
         tool_name: str,
         detail: str = "",
         agent_name: str | None = None,
+        tier: int | None = None,
+        tier_label: str | None = None,
+        scopes: list[str] | None = None,
+        description: str = "",
+        working_directory: str | None = None,
     ) -> str:
         """Block until a human approves/denies (or timeout). Returns the
         lowercase decision string."""
@@ -117,12 +136,24 @@ class ApprovalManager:
 
         # 2. Queue the SSE prompt. Fire-and-forget scheduling keeps this
         #    safe from worker threads (put_queue is a coroutine).
+        if not isinstance(working_directory, str):
+            working_directory = getattr(
+                self._task_lock, "working_directory", None
+            )
+        if not isinstance(working_directory, str):
+            working_directory = None
         request_data = ActionApprovalRequestData(
             data=ApprovalRequestPayload(
                 approval_id=approval_id,
                 tool_name=tool_name,
                 detail=detail,
                 agent_name=agent_name,
+                tier=tier,
+                tier_label=tier_label,
+                scopes=list(scopes or []),
+                description=description,
+                working_directory=working_directory,
+                allowed_scopes=_allowed_scopes(self._task_lock),
             )
         )
         scheduled = _schedule_async_task(
@@ -163,6 +194,7 @@ class ApprovalManager:
         decision: str,
         *,
         decided_by: str | None = None,
+        allow_scopes: list[str] | None = None,
     ) -> bool:
         """Deliver a human decision. Returns True if a waiter was woken.
 
@@ -181,6 +213,12 @@ class ApprovalManager:
         if entry is None:
             return False
         self._clear_timeout_entry(entry)
+
+        applied: list[str] = []
+        if normalized == "approved" and allow_scopes is not None:
+            setter = getattr(self._task_lock, "set_approval_scopes", None)
+            if callable(setter):
+                applied = sorted(setter(allow_scopes))
 
         task_id = self._current_task_id()
         event = (
@@ -205,6 +243,7 @@ class ApprovalManager:
                         approval_id=approval_id,
                         decision=normalized,
                         decided_by=decided_by,
+                        scopes=applied,
                     )
                 )
             )
@@ -267,6 +306,7 @@ class ApprovalManager:
                         approval_id=approval_id,
                         decision="timeout",
                         decided_by="timeout",
+                        expired=True,
                     )
                 )
             )

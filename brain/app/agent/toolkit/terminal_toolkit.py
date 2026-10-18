@@ -1,4 +1,5 @@
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+# Portions Copyright 2026 Simon Ugorji. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -16,9 +17,11 @@ import asyncio
 import logging
 import os
 import platform
+import re
 import shutil
 import subprocess
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 from camel.toolkits.terminal_toolkit import (
@@ -26,7 +29,9 @@ from camel.toolkits.terminal_toolkit import (
 )
 from camel.toolkits.terminal_toolkit.terminal_toolkit import _to_plain
 
+from app.agent.toolkit import shell_sessions
 from app.agent.toolkit.abstract_toolkit import AbstractToolkit
+from app.agent.toolkit.command_policy import assess_command
 from app.component.environment import env
 from app.service.task import (
     Action,
@@ -42,6 +47,13 @@ logger = logging.getLogger("terminal_toolkit")
 # App version - should match electron app version
 # TODO: Consider getting this from a shared config
 APP_VERSION = "1.0.2"
+
+# a blocking call is bounded by wall clock, not by inherited pipe lifetime
+DEFAULT_BLOCKING_TIMEOUT = 10.0
+# a command that has not finished by then is reported as a live session
+STARTED_MESSAGE_TAIL = 4_000
+# keep a single result from flooding the model context
+MAX_RESULT_CHARS = 100_000
 
 
 def get_terminal_base_venv_path() -> str:
@@ -111,6 +123,12 @@ class TerminalToolkit(BaseTerminalToolkit, AbstractToolkit):
             clone_current_env=True,
             install_dependencies=[],
         )
+
+        # the base class wipes *.log directly in log_dir on every construction,
+        # so session logs live one level down and survive into later turns
+        self._session_log_dir = os.path.join(self.log_dir, "sessions")
+        os.makedirs(self._session_log_dir, exist_ok=True)
+        self._log_lock = threading.RLock()
 
         # Auto-register with TaskLock for cleanup when task ends
         from app.service.task import get_task_lock_if_exists
@@ -349,12 +367,168 @@ class TerminalToolkit(BaseTerminalToolkit, AbstractToolkit):
                 exc_info=True,
             )
 
+    def _project_key(self) -> str:
+        return shell_sessions.project_key(self.working_dir)
+
+    def _session_log_file(self, session_id: str) -> str:
+        safe_id = re.sub(r"[^A-Za-z0-9_.-]", "_", session_id)
+        return os.path.join(self._session_log_dir, f"{safe_id}.log")
+
+    def _tail_text(
+        self,
+        log_file: str,
+        limit: int = STARTED_MESSAGE_TAIL,
+        strip_header: bool = False,
+    ) -> str:
+        try:
+            size = os.path.getsize(log_file)
+            with open(log_file, encoding="utf-8", errors="replace") as handle:
+                if size > limit:
+                    handle.seek(size - limit)
+                text = handle.read()
+        except OSError:
+            return ""
+        text = _to_plain(text)
+        if strip_header:
+            marker = text.find("\n$ ")
+            if marker != -1:
+                text = text[marker + 3 :]
+                first_newline = text.find("\n")
+                if first_newline != -1:
+                    text = text[first_newline + 1 :]
+        if size > limit:
+            text = "...(truncated)...\n" + text
+        return text
+
+    def _read_result(
+        self, session: dict, limit: int = MAX_RESULT_CHARS
+    ) -> str:
+        log_file = session.get("log_file")
+        if not log_file:
+            return ""
+        try:
+            size = os.path.getsize(log_file)
+            start = session.get("offset", 0)
+            with open(log_file, encoding="utf-8", errors="replace") as handle:
+                if size - start > limit:
+                    handle.seek(size - limit)
+                    text = "...(truncated)...\n" + handle.read()
+                else:
+                    handle.seek(start)
+                    text = handle.read()
+            session["offset"] = size
+        except OSError:
+            return ""
+        return _to_plain(text)
+
+    def _read_new_output(self, session: dict, cursor: str = "offset") -> str:
+        log_file = session.get("log_file")
+        if not log_file or not os.path.exists(log_file):
+            return ""
+        with self._log_lock:
+            offset = session.get(cursor, 0)
+            with open(log_file, encoding="utf-8", errors="replace") as handle:
+                handle.seek(offset)
+                chunk = handle.read()
+                session[cursor] = handle.tell()
+        return chunk
+
+    def _start_tail_reader(self, session: dict) -> None:
+        """Stream a file-backed session to the UI without touching a pipe."""
+
+        def tail() -> None:
+            while True:
+                chunk = self._read_new_output(session, cursor="stream_offset")
+                if chunk:
+                    try:
+                        self._update_terminal_output(chunk)
+                    except Exception:
+                        logger.debug(
+                            "terminal tail push failed", exc_info=True
+                        )
+                process = session.get("process")
+                if process is None or process.poll() is not None:
+                    chunk = self._read_new_output(
+                        session, cursor="stream_offset"
+                    )
+                    if chunk:
+                        try:
+                            self._update_terminal_output(chunk)
+                        except Exception:
+                            logger.debug(
+                                "terminal tail push failed", exc_info=True
+                            )
+                    session["running"] = False
+                    return
+                time.sleep(0.2)
+
+        thread = threading.Thread(
+            target=tail,
+            name=f"shell-tail-{session['id']}",
+            daemon=True,
+        )
+        thread.start()
+        session["tail_thread"] = thread
+
+    def _spawn_local(self, command: str, session_id: str) -> dict:
+        os.makedirs(self._session_log_dir, exist_ok=True)
+        log_file = self._session_log_file(session_id)
+
+        with open(log_file, "ab") as output:
+            output.write(
+                (
+                    f"--- {time.ctime()} | session {session_id} ---\n"
+                    f"$ {command}\n"
+                ).encode()
+            )
+            output.flush()
+            start_offset = output.tell()
+
+            kwargs: dict = {
+                "shell": True,
+                "stdin": subprocess.PIPE,
+                "stdout": output,
+                "stderr": subprocess.STDOUT,
+                "cwd": self.working_dir,
+                "env": self._get_env_vars(),
+                "text": True,
+            }
+            if os.name == "nt":
+                kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+            else:
+                kwargs["start_new_session"] = True
+            process = subprocess.Popen(command, **kwargs)
+
+        pgid = None
+        if os.name != "nt":
+            try:
+                pgid = os.getpgid(process.pid)
+            except ProcessLookupError:
+                pgid = None
+
+        session = {
+            "id": session_id,
+            "process": process,
+            "pgid": pgid,
+            "command": command,
+            "running": True,
+            "log_file": log_file,
+            "offset": start_offset,
+            "stream_offset": start_offset,
+            "started_at": time.time(),
+            "backend": "local",
+            "project": self._project_key(),
+        }
+        self.shell_sessions[session_id] = session
+        shell_sessions.register(self._project_key(), session)
+        return session
+
     def shell_exec(
         self,
         command: str,
         id: str | None = None,
         block: bool = True,
-        timeout: float = 20.0,
+        timeout: float = DEFAULT_BLOCKING_TIMEOUT,
         **_ignored: object,
     ) -> str:
         r"""Executes a shell command in blocking or non-blocking mode.
@@ -364,10 +538,16 @@ class TerminalToolkit(BaseTerminalToolkit, AbstractToolkit):
             id (str, optional): A unique identifier for the command's session.
                 If not provided, a unique ID will be automatically generated.
             block (bool, optional): Determines the execution mode. Defaults to True.
-            timeout (float, optional): Timeout in seconds for blocking mode. Defaults to 20.0.
+                Use False for servers, watchers, and any command without a
+                natural end.
+            timeout (float, optional): Maximum wall-clock seconds to wait in
+                blocking mode. Defaults to 10.
 
         Returns:
             str: The output of the command execution.
+
+        Blocked commands (`rm`, `sudo`, `shutdown`, `dd`, `mkfs`, `git rm`,
+        `find -delete`) return an error and are never executed.
         """
         # Tolerate stray kwargs. Weaker models sometimes pass a bare
         # `description` (conflating it with the message-integration
@@ -375,24 +555,182 @@ class TerminalToolkit(BaseTerminalToolkit, AbstractToolkit):
         # not), which otherwise raised `unexpected keyword argument
         # 'description'` and failed EVERY shell call, stalling the whole turn.
         if _ignored:
-            logger.debug("shell_exec ignoring stray kwargs: %s", list(_ignored))
-        # Auto-generate ID if not provided
+            logger.debug(
+                "shell_exec ignoring stray kwargs: %s", list(_ignored)
+            )
         if id is None:
-            import time
-
             id = f"auto_{int(time.time() * 1000)}"
 
-        result = super().shell_exec(
-            id=id, command=command, block=block, timeout=timeout
-        )
+        # tier 3 is a hard block: approval cannot override it, so reject
+        # before the Docker/local split or the venv activation prefix.
+        assessment = assess_command(command)
+        if assessment.blocked:
+            logger.info(
+                "Blocked tier-3 shell command",
+                extra={
+                    "api_task_id": self.api_task_id,
+                    "tier": int(assessment.tier),
+                    "reason": assessment.reason,
+                },
+            )
+            return (
+                "Error: Command blocked by the command policy. "
+                f"{assessment.reason}. It is never executed, even with "
+                "approval. Use a non-destructive alternative; if removal is "
+                "genuinely required, ask the user to do it."
+            )
 
-        # If the command executed successfully but returned empty output,
-        # provide a clear success message to help the AI agent understand
-        # that the command completed without error.
-        if block and result == "":
-            return "Command executed successfully (no output)."
+        if self.use_docker_backend:
+            return super().shell_exec(
+                id=id, command=command, block=block, timeout=timeout
+            )
 
-        return result
+        existing = shell_sessions.find(self._project_key(), id)
+        if existing is not None and shell_sessions.is_running(existing):
+            return (
+                f"Error: Session '{id}' already exists and is running. "
+                "Use a different ID or kill the existing session first."
+            )
+
+        if self.safe_mode:
+            is_safe, message = self._sanitize_command(command)
+            if not is_safe:
+                return (
+                    "Error: Command rejected by TerminalToolkit safe mode. "
+                    f"{message}"
+                )
+            command = message
+
+        env_path = self._get_venv_path()
+        if env_path:
+            if self.os_type == "Windows":
+                activate = os.path.join(env_path, "Scripts", "activate.bat")
+                command = f'call "{activate}" && {command}'
+            else:
+                activate = os.path.join(env_path, "bin", "activate")
+                command = f'. "{activate}" && {command}'
+
+        try:
+            session = self._spawn_local(command, id)
+        except Exception as exc:
+            logger.warning("Failed to start shell session %s: %s", id, exc)
+            return f"Error: Failed to start command: {exc}"
+
+        if not block:
+            self._start_tail_reader(session)
+            return (
+                f"Session '{id}' started in the background.\n\n"
+                f"Use:\n  - shell_view('{id}') - new output\n"
+                f"  - shell_kill_process('{id}') - terminate"
+            )
+
+        try:
+            session["process"].wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            session["running"] = True
+            self._start_tail_reader(session)
+            tail = self._tail_text(session["log_file"], strip_header=True)
+            return (
+                f"Command still running after {timeout:g}s. Session '{id}'.\n"
+                f"Read with shell_view('{id}'), stop with "
+                f"shell_kill_process('{id}').\n"
+                f"Last output:\n{tail or '(no output yet)'}"
+            )
+
+        session["running"] = False
+        result = self._read_result(session)
+
+        if result:
+            try:
+                self._update_terminal_output(result)
+            except Exception:
+                logger.debug("terminal result push failed", exc_info=True)
+            return result
+
+        return "Command executed successfully (no output)."
+
+    def shell_view(self, id: str) -> str:
+        r"""Retrieves new output from a background session without blocking.
+
+        Args:
+            id (str): The unique session ID returned by shell_exec.
+
+        Returns:
+            str: Output produced since the last call, or a status message.
+        """
+        session = shell_sessions.find(self._project_key(), id)
+        if session is None:
+            session = self.shell_sessions.get(id)
+        if session is None or session.get("backend") == "docker":
+            return super().shell_view(id)
+
+        running = shell_sessions.is_running(session)
+        chunk = self._read_new_output(session)
+        if chunk:
+            try:
+                self._update_terminal_output(chunk)
+            except Exception:
+                logger.debug("terminal view push failed", exc_info=True)
+            return (
+                chunk if running else chunk + "\n\n--- SESSION TERMINATED ---"
+            )
+
+        if running:
+            return (
+                "[No new output]\n"
+                "Session is running but idle. Actions could take:\n"
+                "  - For interactive sessions: Send input "
+                "with shell_write_to_process()\n"
+                "  - For long tasks: Check again later (don't poll too frequently)"
+            )
+        return "--- SESSION TERMINATED (no new output) ---"
+
+    def shell_kill_process(self, id: str) -> str:
+        r"""Terminates a background session and the processes it started.
+
+        Prefer this over `kill`/`pkill`/`taskkill`. The registry is in memory,
+        so an id from before a brain restart is gone; if the port is still
+        open, report it to the user rather than killing an unknown process.
+
+        Args:
+            id (str): The unique session ID returned by shell_exec.
+
+        Returns:
+            str: What was terminated, and whether its port was released.
+        """
+        session = shell_sessions.find(self._project_key(), id)
+        if session is None:
+            session = self.shell_sessions.get(id)
+        if session is None or session.get("backend") == "docker":
+            return super().shell_kill_process(id)
+
+        ports = shell_sessions.ports_in_command(session.get("command", ""))
+        outcome = shell_sessions.terminate_tree(session)
+        shell_sessions.forget(self._project_key(), id)
+        self.shell_sessions.pop(id, None)
+
+        if outcome == "already exited":
+            message = f"Session '{id}' had already exited."
+        elif outcome == "no process":
+            message = f"Session '{id}' had no live process."
+        else:
+            message = f"Process in session '{id}' has been terminated."
+
+        if ports:
+            still_open = shell_sessions.wait_for_ports_closed(ports)
+            if still_open:
+                message += (
+                    " Port(s) still open: "
+                    + ", ".join(str(port) for port in still_open)
+                    + "."
+                )
+            else:
+                message += (
+                    " Port(s) "
+                    + ", ".join(str(port) for port in ports)
+                    + " are free."
+                )
+        return message
 
     def cleanup(self, remove_venv: bool = True):
         """Clean up all active sessions and optionally remove the virtual environment.
