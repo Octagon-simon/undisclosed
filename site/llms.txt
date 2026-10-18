@@ -82,7 +82,7 @@ https://github.com/Octagon-simon/undisclosed/blob/upgrade/theia-1.76/docs/extra-
   behind the `VITE_ENABLE_GOVERNANCE_MODE` build flag and off by default while
   it is finished. With the flag on, it gates terminal commands, file writes, git
   writes, GitHub writes and MongoDB writes behind an explicit prompt that names
-  the action; a denial or 120-second timeout stops it.
+  the action; a denial or five-minute timeout stops it.
 - Integrations stay unavailable until connected. Ask mode gates GitHub and
   MongoDB writes; Slack, Notion and Google connectors are not gated yet, so
   their tokens should be scoped to what the agent may touch.

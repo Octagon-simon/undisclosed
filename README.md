@@ -46,10 +46,10 @@ inside Undisclosed itself, with the agent driving the HyperFrames pipeline.
 - **Runs on-device**. The "brain" is a local FastAPI (uvicorn) agent backend,
   bound to `127.0.0.1:5001` by default. No SaaS runtime, no vendor cloud. Model
   calls use the keys *you* configure (OpenAI, Gemini, and more).
-- **Verifiable controls, not a promise**: an approval gate for mutating tools
-  (behind `VITE_ENABLE_GOVERNANCE_MODE`, off by default while it is still being
-  finished), a memory switch with Clear, opt-in debug dumps, and localhost-only
-  networking by default. See [Privacy and control](#privacy-and-control).
+- **Verifiable controls, not a promise**: an approval gate for risky tools, on by
+  default (risky calls wait for your approval; always-approve is opt-in), a
+  memory switch with Clear, opt-in debug dumps, and localhost-only networking by
+  default. See [Privacy and control](#privacy-and-control).
 - **Checks before "done"**: typecheck + lint, a deterministic diff review, and
   tests paired with a coverage-gap plan. See
   [Reliability over tool count](#reliability-over-tool-count).
@@ -134,42 +134,48 @@ Debug dumps are off unless you set the flag.
 
 ### Can it run a destructive shell command without approval?
 
-Yes. The only mode shipped on is **Auto**: `shell_exec`, `write_to_file`, git
-writes and the other mutating tools run immediately, because most coding turns
-need it. The approval gate exists but is gated behind
-`VITE_ENABLE_GOVERNANCE_MODE` and off by default, because it is not finished.
+No, not by default. **Ask** is the default mode: mutating calls wait for an
+explicit approval in the panel before they execute. **Auto** (always approve) is
+opt-in from the panel's mode menu or Settings > Privacy, and the choice is
+remembered per user.
 
-Build with the flag on and the panel's `⋯` menu offers **Ask to approve**. These
-then wait for an explicit approval in the panel before they execute:
+In Ask mode these wait for approval:
 
 - `shell_exec` (terminal)
-- `write_to_file`
+- `write_to_file` and `apply_patch`
+- `execute_code` (worker agents)
 - git writes (`git_add`, `git_commit`, `git_push`, `git_checkout`, `git_stash`,
   `git_create_branch`)
 - GitHub writes (issues, pull requests, comments, branches)
 - MongoDB's write-capable `mongo_eval` escape hatch
 
-The prompt names the tool and its arguments (built by `_describe_call` in
+The prompt names the tool, its arguments and the workspace (built by
+`_describe_call` in
 [`governance_toolkit.py`](brain/app/agent/toolkit/governance_toolkit.py)).
-Denying it, or not answering within 120 seconds, returns a governance rejection
-to the model instead of running the action. Read-only tools are not gated. The
-mode is sent with every turn as `toolkit_config.governance.mode`; the gate
-wiring is in
+Denying it, or not answering within five minutes, returns a governance rejection
+to the model instead of running the action. Read-only calls, including
+read-only shell commands, are not gated.
+
+Commands are classified per segment by
+[`command_policy.py`](brain/app/agent/toolkit/command_policy.py), so a
+destructive command is refused in both modes, approval cannot override it, and a
+compound command is judged by its riskiest part. The mode is sent with every
+turn as `toolkit_config.governance.mode`; the gate wiring is in
 [`toolkit_assembler.py`](brain/app/agent/factory/toolkit_assembler.py) and the
 UI side in [`chatStore.ts`](agent-ui/src/store/chatStore.ts).
 
 ### What about integrations that can modify external resources?
 
 Integrations are credential-gated: the toolkit is only assembled when its token,
-OAuth grant, or MCP server is present. With the approval flag on, Ask mode gates
-GitHub writes, the MongoDB escape hatch, git writes and local file writes. It
-does **not** gate every third-party connector yet: Slack, Notion, Google Workspace, social and similar
+OAuth grant, or MCP server is present. Ask mode (the default) gates GitHub
+writes, the MongoDB escape hatch, git writes and local file writes. It does
+**not** gate every third-party connector yet: Slack, Notion, Google Workspace, social and similar
 toolkits use the permissions of the token you gave them. Treat those tokens as
 granting the agent exactly what the token can do, and scope them accordingly.
 
 ### Can I see what it is about to do?
 
-- With the approval flag on, Ask mode shows the exact pending call before it
+- Ask mode (the default) shows the exact pending call before it
   runs.
 - The agent plans in the panel, and file changes show up as diffs you can review
   in the panel and in git.

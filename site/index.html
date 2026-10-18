@@ -312,14 +312,14 @@
     -webkit-backdrop-filter:blur(14px) saturate(1.2);
     border-bottom:1px solid var(--line);
   }
-  .nav-inner{ display:flex; align-items:center; justify-content:space-between; gap:24px; height:68px; }
-  .brand{ display:inline-flex; align-items:center; gap:.6rem; text-decoration:none; font-weight:600; letter-spacing:-.01em; }
+  .nav-inner{ display:flex; align-items:center; justify-content:space-between; gap:20px; height:68px; min-width:0; }
+  .brand{ display:inline-flex; align-items:center; gap:.6rem; flex:none; white-space:nowrap; text-decoration:none; font-weight:600; letter-spacing:-.01em; }
   .brand .mark{ width:26px; height:26px; border-radius:8px; overflow:hidden; display:block; }
-  .brand small{ font-family:var(--mono); font-size:.66rem; letter-spacing:.14em; text-transform:uppercase; color:var(--muted); font-weight:500; }
-  .nav-links{ display:flex; align-items:center; gap:26px; }
-  .nav-links a{ text-decoration:none; font-size:.94rem; color:var(--muted); transition:color .2s var(--ease); }
+  .brand small{ font-family:var(--mono); font-size:.66rem; line-height:1; letter-spacing:.14em; text-transform:uppercase; color:var(--muted); font-weight:500; white-space:nowrap; }
+  .nav-links{ display:flex; align-items:center; gap:clamp(14px,1.6vw,26px); white-space:nowrap; }
+  .nav-links a{ text-decoration:none; white-space:nowrap; line-height:1; font-size:.94rem; color:var(--muted); transition:color .2s var(--ease); }
   .nav-links a:hover{ color:var(--ink); }
-  .nav-cta{ display:flex; align-items:center; gap:12px; }
+  .nav-cta{ display:flex; align-items:center; flex:none; gap:12px; }
   .theme-toggle{
     display:inline-flex; align-items:center; justify-content:center;
     width:40px; height:40px; flex:none; padding:0; border-radius:999px; cursor:pointer;
@@ -332,10 +332,41 @@
   .theme-toggle .sun{ display:none; }
   :root[data-theme="dark"] .theme-toggle .sun{ display:block; }
   :root[data-theme="dark"] .theme-toggle .moon{ display:none; }
-  @media (max-width: 1020px){ .nav-links{ display:none; } }
+  @media (max-width: 1120px){ .nav-links{ display:none; } }
   @media (max-width: 560px){ .nav-cta .btn-ghost{ display:none; } }
   @media (max-width: 430px){ .brand small{ display:none; } }
   @media (max-width: 340px){ .brand{ font-size:0; gap:0; } }
+
+  /* ---------- mobile nav ---------- */
+  .nav-menu-btn{
+    display:none; align-items:center; justify-content:center;
+    width:40px; height:40px; flex:none; padding:0; border-radius:999px; cursor:pointer;
+    border:1px solid var(--line-strong); background:transparent; color:var(--ink);
+    transition:background-color .2s var(--ease), border-color .2s var(--ease);
+  }
+  .nav-menu-btn:hover{ background:var(--paper-3); }
+  .nav-menu-btn svg{ width:18px; height:18px; }
+  .nav-menu-btn .close-icon{ display:none; }
+  .nav-menu-btn[aria-expanded="true"] .menu-icon{ display:none; }
+  .nav-menu-btn[aria-expanded="true"] .close-icon{ display:block; }
+  .mobile-nav{
+    position:absolute; left:0; right:0; top:100%; z-index:39;
+    background:var(--paper); border-bottom:1px solid var(--line);
+    box-shadow:var(--shadow-md); padding:6px clamp(20px,5vw,40px) 14px;
+  }
+  .mobile-nav[hidden]{ display:none; }
+  .mobile-nav a{
+    display:block; padding:12px 0; white-space:nowrap; text-decoration:none;
+    font-size:1rem; color:var(--ink-2); border-top:1px solid var(--line);
+  }
+  .mobile-nav a:first-child{ border-top:0; }
+  .mobile-nav a:hover{ color:var(--ink); }
+  @media (max-width: 1120px){ .nav-menu-btn{ display:inline-flex; } }
+  @media (max-width: 420px){
+    .wrap{ padding-inline:14px; }
+    .nav-inner{ gap:12px; }
+    .nav-cta{ gap:8px; }
+  }
 
   /* ---------- hero ---------- */
   .hero{ padding-top:clamp(36px,5vw,64px); padding-bottom:clamp(44px,7vw,86px); }
@@ -581,7 +612,7 @@
   .foot{ display:grid; grid-template-columns:1.2fr 1fr; gap:clamp(24px,4vw,48px); padding-block:38px 78px; align-items:start; }
   .foot-brand{ display:grid; gap:12px; justify-items:start; }
   .foot-links{ display:flex; flex-wrap:wrap; gap:10px 22px; justify-content:flex-end; }
-  .foot-links a{ text-decoration:none; font-size:.9rem; color:var(--muted); transition:color .2s var(--ease); }
+  .foot-links a{ text-decoration:none; white-space:nowrap; font-size:.9rem; color:var(--muted); transition:color .2s var(--ease); }
   .foot-links a:hover{ color:var(--ink); }
   .copy{
     grid-column:1 / -1; display:flex; flex-wrap:wrap; gap:6px 24px; justify-content:space-between;
@@ -698,7 +729,21 @@
         GitHub
       </a>
       <a class="btn btn-primary btn-sm" href="#download" data-ga-cta="download_nav">Download</a>
+      <button class="nav-menu-btn" type="button" id="nav-menu-btn" aria-label="Open menu" aria-expanded="false" aria-controls="mobile-nav">
+        <svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+        <svg class="close-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
     </div>
+  </div>
+  <div class="mobile-nav" id="mobile-nav" hidden>
+    <a href="#demo">Demo</a>
+    <a href="#panel">In the panel</a>
+    <a href="#capabilities">Capabilities</a>
+    <a href="#skills">Skills</a>
+    <a href="#privacy">Privacy</a>
+    <a href="#reliability">Reliability</a>
+    <a href="#open-source">Open source</a>
+    <a href="https://github.com/Octagon-simon/undisclosed" target="_blank" rel="noopener">GitHub</a>
   </div>
 </header>
 
@@ -1018,7 +1063,7 @@
         </div>
         <div>
           <h3><span>03 / Shell</span>Can it run a destructive command?</h3>
-          <p>In Auto, yes. An <strong>Ask to approve</strong> gate is built but off by default behind <code>VITE_ENABLE_GOVERNANCE_MODE</code> while it is finished. With the flag on, terminal, file, git, GitHub and MongoDB writes wait for approval that names the action. Denial or a 120-second timeout stops it.</p>
+          <p>In Auto, yes. An <strong>Ask to approve</strong> gate is built but off by default behind <code>VITE_ENABLE_GOVERNANCE_MODE</code> while it is finished. With the flag on, terminal, file, git, GitHub and MongoDB writes wait for approval that names the action. Denial or a five-minute timeout stops it.</p>
         </div>
         <div>
           <h3><span>04 / Integrations</span>What can a connector change?</h3>
@@ -1144,7 +1189,7 @@
         </details>
         <details>
           <summary>Can the agent run commands without asking?</summary>
-          <p>In Auto, yes. An <strong>Ask to approve</strong> gate exists but is off by default behind <code>VITE_ENABLE_GOVERNANCE_MODE</code> while it is finished. With the flag on, terminal, file, git, GitHub and MongoDB writes wait for an approval naming the action, and a denial or 120-second timeout stops it.</p>
+          <p>In Auto, yes. An <strong>Ask to approve</strong> gate exists but is off by default behind <code>VITE_ENABLE_GOVERNANCE_MODE</code> while it is finished. With the flag on, terminal, file, git, GitHub and MongoDB writes wait for an approval naming the action, and a denial or five-minute timeout stops it.</p>
         </details>
         <details>
           <summary>What is stored on disk?</summary>
@@ -1554,6 +1599,33 @@
       setTimeout(function () { a.open(); }, 700);
     }
   })();
+</script>
+<script>
+/* mobile nav: the desktop link row is hidden below 1120px */
+(function () {
+  var button = document.getElementById("nav-menu-btn");
+  var panel = document.getElementById("mobile-nav");
+  if (!button || !panel) return;
+  function setOpen(open) {
+    button.setAttribute("aria-expanded", open ? "true" : "false");
+    button.setAttribute("aria-label", open ? "Close menu" : "Open menu");
+    panel.hidden = !open;
+  }
+  button.addEventListener("click", function () {
+    setOpen(button.getAttribute("aria-expanded") !== "true");
+  });
+  panel.addEventListener("click", function (event) {
+    if (event.target instanceof Element && event.target.closest("a")) {
+      setOpen(false);
+    }
+  });
+  document.addEventListener("keydown", function (event) {
+    if (event.key === "Escape") setOpen(false);
+  });
+  window.addEventListener("resize", function () {
+    if (window.innerWidth > 1120) setOpen(false);
+  });
+})();
 </script>
 </body>
 </html>
