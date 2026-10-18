@@ -12,8 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
 
-import logoBlack from '@/assets/logo/logo_black.png';
-import logoWhite from '@/assets/logo/logo_white.png';
+import { UndisclosedWordmark } from '@/components/Brand/UndisclosedMark';
 import VerticalNavigation, {
   HISTORY_VERTICAL_SIDEBAR_CLASSNAME,
   type VerticalNavItem,
@@ -24,7 +23,6 @@ import { SITE_URL } from '@/lib';
 import Appearance from '@/pages/Setting/Appearance';
 import General from '@/pages/Setting/General';
 import Privacy from '@/pages/Setting/Privacy';
-import { useAuthStore } from '@/store/authStore';
 import {
   Download,
   Fingerprint,
@@ -40,8 +38,6 @@ export default function Setting() {
   const navigate = useNavigate();
   const location = useLocation();
   const { t } = useTranslation();
-  const appearance = useAuthStore((state) => state.appearance);
-  const logoSrc = appearance === 'dark' ? logoWhite : logoBlack;
   const host = useHost();
   const ipcRenderer = host?.ipcRenderer;
   const version = useAppVersion();
@@ -145,7 +141,7 @@ export default function Setting() {
           onClick={() => window.open(SITE_URL, '_blank', 'noopener,noreferrer')}
           className="no-drag mt-4 flex cursor-pointer items-center bg-transparent transition-opacity duration-200 hover:opacity-60"
         >
-          <img src={logoSrc} alt="Undisclosed" className="ml-3 h-6 w-auto" />
+          <UndisclosedWordmark className="ml-3 text-ds-text-neutral-default-default" />
         </button>
         <button
           type="button"
