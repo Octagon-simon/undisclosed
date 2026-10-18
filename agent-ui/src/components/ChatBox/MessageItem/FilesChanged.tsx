@@ -164,7 +164,7 @@ function DiffView({ patch }: { patch: string }) {
   );
 
   return (
-    <div className="border-t border-ds-border-neutral-subtle-default bg-ds-bg-neutral-subtle-default">
+    <div className="border-t border-solid border-ds-border-neutral-subtle-default bg-ds-bg-neutral-subtle-default">
       {hunkPositions.length ? (
         <div className="flex items-center justify-between gap-2 px-3 py-1.5 text-label-xs text-ds-text-neutral-subtle-default">
           <span>
@@ -328,7 +328,7 @@ export function FilesChanged({
   return (
     <div
       className={cn(
-        'overflow-hidden rounded-lg border border-ds-border-neutral-subtle-default bg-ds-bg-neutral-default-default',
+        'overflow-hidden rounded-lg border border-solid border-ds-border-neutral-subtle-default bg-ds-bg-neutral-default-default',
         className
       )}
     >
@@ -345,7 +345,7 @@ export function FilesChanged({
           <span className="text-sm font-semibold text-ds-text-neutral-default-default">
             Changed Files
           </span>
-          <span className="rounded border border-ds-border-neutral-subtle-default bg-ds-bg-neutral-subtle-default px-1.5 py-0.5 font-mono text-label-xs text-ds-text-neutral-subtle-default">
+          <span className="rounded border border-solid border-ds-border-neutral-subtle-default bg-ds-bg-neutral-subtle-default px-1.5 py-0.5 font-mono text-label-xs text-ds-text-neutral-subtle-default">
             {fileLabel}
           </span>
           <span className="font-mono text-label-xs">
@@ -381,14 +381,14 @@ export function FilesChanged({
           return (
             <div
               key={f.path}
-              className="border-b border-ds-border-neutral-subtle-default last:border-b-0 cursor-pointer"
+              className="cursor-pointer"
             >
               <div
                 {...rowInteractions(f.path)}
                 title={relativeToRoot(f.path)}
                 className={cn(
-                  'flex items-center justify-between gap-2 px-3 py-2 text-left outline-none transition-colors hover:bg-ds-bg-neutral-subtle-default focus-visible:outline-none',
-                  open && 'bg-ds-bg-neutral-subtle-default'
+                  'flex items-center justify-between gap-2 px-3 py-2 text-left outline-none transition-colors hover:bg-ds-bg-neutral-subtle-hover focus-visible:outline-none',
+                  open && 'bg-ds-bg-neutral-subtle-hover'
                 )}
               >
                 <span className="flex min-w-0 items-center gap-1.5 font-mono text-label-xs text-ds-text-neutral-default-default">
@@ -443,11 +443,11 @@ export function FilesChanged({
                 hasPatch ? (
                   <DiffView patch={patch as string} />
                 ) : loading && !fetchedReady(f) && !f.patch ? (
-                  <div className="border-t border-ds-border-neutral-subtle-default px-3 py-2 text-label-xs text-ds-text-neutral-subtle-default">
+                  <div className="px-3 py-2 text-label-xs text-ds-text-neutral-subtle-default">
                     Loading diff…
                   </div>
                 ) : (
-                  <div className="border-t border-ds-border-neutral-subtle-default px-3 py-2 text-label-xs text-ds-text-neutral-subtle-default">
+                  <div className="px-3 py-2 text-label-xs text-ds-text-neutral-subtle-default">
                     No diff available.
                   </div>
                 )
