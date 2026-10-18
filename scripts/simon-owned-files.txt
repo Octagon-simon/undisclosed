@@ -1,0 +1,37 @@
+# Simon-authored files. These are not derived from upstream Eigent and must
+# carry the Simon Ugorji banner only. The new-file check cannot catch them once
+# they are committed, so list them explicitly here.
+
+agent-ui/src/components/BrainStatus/index.tsx
+agent-ui/src/components/BrainStatus/useBrainStatus.ts
+agent-ui/src/components/ChatBox/ContextWindowNotice.tsx
+agent-ui/src/components/ChatBox/MessageItem/ExecutionSummary.tsx
+agent-ui/src/components/ChatBox/MessageItem/PanelSection.tsx
+agent-ui/src/components/ChatBox/MessageItem/PlanCard.tsx
+agent-ui/src/components/ChatBox/MessageItem/TestRunCard.tsx
+agent-ui/src/components/ChatBox/SelectionPill.tsx
+agent-ui/src/components/CodeAgentWorkspace/AgentTriggers.tsx
+agent-ui/src/lib/contextWindow.ts
+agent-ui/src/lib/featureFlags.ts
+agent-ui/src/lib/providerRegistry.ts
+agent-ui/src/shared/hostTheme.test.ts
+agent-ui/src/shared/hostTheme.ts
+agent-ui/src/stories/panels/AgentPanelFull.stories.tsx
+agent-ui/src/stories/panels/ApprovalRequestCard.stories.tsx
+agent-ui/src/stories/panels/ChangedFiles.stories.tsx
+agent-ui/src/stories/panels/Composer.stories.tsx
+agent-ui/src/stories/panels/ExecutionSummary.stories.tsx
+agent-ui/src/stories/panels/PanelSection.stories.tsx
+agent-ui/src/stories/panels/PlanCard.stories.tsx
+agent-ui/src/stories/panels/SelectionPill.stories.tsx
+agent-ui/src/stories/panels/TelemetryStrip.stories.tsx
+agent-ui/src/stories/panels/TestRunCard.stories.tsx
+agent-ui/src/stories/panels/ThoughtProcess.stories.tsx
+agent-ui/src/stories/panels/UserTurn.stories.tsx
+agent-ui/src/stories/ui/Badge.stories.tsx
+agent-ui/src/stories/ui/DropdownMenu.stories.tsx
+agent-ui/src/stories/ui/Switch.stories.tsx
+agent-ui/src/stories/ui/Tabs.stories.tsx
+agent-ui/src/stories/ui/Tag.stories.tsx
+agent-ui/src/stories/ui/Textarea.stories.tsx
+agent-ui/src/stories/ui/Tooltip.stories.tsx
