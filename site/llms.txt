@@ -67,13 +67,46 @@ https://github.com/Octagon-simon/undisclosed/blob/upgrade/theia-1.76/docs/extra-
 
 ## Privacy model
 
-- The editor, the agent brain, conversation history and project memory run on
-  the user's machine. History and todos are stored under `~/.undisclosed`.
+- The editor and the agent brain run on the user's machine. The brain binds
+  `127.0.0.1:5001` by default.
 - There is no Undisclosed account and no analytics SDK in the app.
 - With a local model, the whole loop works offline and no code leaves the
   machine.
 - With a BYOK cloud model, the prompt and the context the agent sends go to that
   provider. Nothing passes through an Undisclosed server.
+- Conversation turns are stored in `~/.undisclosed/turns`, memory in
+  `~/.undisclosed/memory`, and brain logs in `~/.undisclosed/logs`. Debug dumps
+  are opt-in with `UNDISCLOSED_DEBUG=1`. The Memory panel can switch memory off
+  or clear stored facts.
+- Approval mode defaults to Auto. An Ask-to-approve gate exists but is gated
+  behind the `VITE_ENABLE_GOVERNANCE_MODE` build flag and off by default while
+  it is finished. With the flag on, it gates terminal commands, file writes, git
+  writes, GitHub writes and MongoDB writes behind an explicit prompt that names
+  the action; a denial or 120-second timeout stops it.
+- Integrations stay unavailable until connected. Ask mode gates GitHub and
+  MongoDB writes; Slack, Notion and Google connectors are not gated yet, so
+  their tokens should be scoped to what the agent may touch.
+
+## Reliability
+
+- Every code change goes through the same loop before the agent reports it done:
+  `run_checks` (project typecheck and lint), `review_diff` (deterministic,
+  line-anchored findings, no extra model call), and `run_tests` with a
+  coverage-gap plan the agent has to address or explain.
+- The panel keeps the receipts for the turn: the file diff, the test-run card
+  and the verification summary.
+- Success is judged on real tasks: tests pass, the diff matches the request, how
+  often the agent needed intervention, and how much manual correction was
+  required. Tool count is not a score.
+- The evaluation currently runs on this repository and on Angler. There is no
+  public leaderboard yet.
+
+## Built with Undisclosed
+
+- Undisclosed itself: the editor, agent panel, brain, README and the demo video
+  rendered inside it.
+- Angler (https://getanglerapp.com): a macOS menu-bar app that gives the flat
+  desktop depth as the laptop lid tilts. App and site built with Undisclosed.
 
 ## Demo
 

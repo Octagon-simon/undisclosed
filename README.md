@@ -43,9 +43,16 @@ inside Undisclosed itself, with the agent driving the HyperFrames pipeline.
 - **It can actually touch your workspace**: terminal, file read/write, git, search,
   debugging, browser + screenshots, web search - via selectable "hands". The agent
   plans in your editor and executes changes you can see and review.
-- **Runs on-device**. The "brain" is a local FastAPI (uvicorn) agent backend. No SaaS
-  runtime, no vendor cloud. Model calls use the keys *you* configure (OpenAI, Gemini,
-  and more).
+- **Runs on-device**. The "brain" is a local FastAPI (uvicorn) agent backend,
+  bound to `127.0.0.1:5001` by default. No SaaS runtime, no vendor cloud. Model
+  calls use the keys *you* configure (OpenAI, Gemini, and more).
+- **Verifiable controls, not a promise**: an approval gate for mutating tools
+  (behind `VITE_ENABLE_GOVERNANCE_MODE`, off by default while it is still being
+  finished), a memory switch with Clear, opt-in debug dumps, and localhost-only
+  networking by default. See [Privacy and control](#privacy-and-control).
+- **Checks before "done"**: typecheck + lint, a deterministic diff review, and
+  tests paired with a coverage-gap plan. See
+  [Reliability over tool count](#reliability-over-tool-count).
 - **Storybook + hot reload** for fast agent-UI iteration, separate from the slow full
   editor rebuild.
 - **Installable desktop app** (Electron + frozen Python brain) for macOS / Windows /
@@ -81,6 +88,144 @@ auto-launched alongside Electron.
        In dev the browser proxies /api on :3000 → brain; in the packaged app the
        Theia/Electron backend proxies /api straight to the bundled brain.
 ```
+
+---
+
+## Privacy and control
+
+"Local-first" is only worth something if you can check it. These are the concrete
+answers for this build, with the code that implements each one.
+
+### Does the agent send my source code to a cloud provider?
+
+Only when you choose a cloud model.
+
+- **Local model**: if the model runs on your machine (Ollama, LM Studio, Hugging
+  Face, or any OpenAI-compatible server on localhost), the model call stays on the
+  machine. No Undisclosed server is in the path.
+- **Cloud model (BYOK)**: the provider you configured receives the request the
+  agent assembled: the prompt, the conversation context, file contents the agent
+  read, and tool results it is reasoning over. The editor and brain still run
+  locally; the key goes from this machine to that provider, not through us.
+- **Other hands have their own network paths**: web search, the CDP browser,
+  GitHub, Figma, Notion, Slack, Google Workspace and similar toolkits talk to
+  their own services when you connect them. Each one stays unavailable until its
+  credentials are configured.
+
+There is no Undisclosed account and we do not ship an analytics SDK in the app.
+The minimum network requirement is the model endpoint you configure.
+
+### What is stored, and where?
+
+Everything is on disk under your home directory:
+
+| Path | What it holds |
+| --- | --- |
+| `~/.undisclosed/turns/` | conversation turns (`turn_<id>.json`): messages, tool activity summaries, token counts |
+| `~/.undisclosed/memory/` | the memory tree: facts, conversation events, tool events, run summaries, and the local vector store |
+| `~/.undisclosed/logs/brain.log` | packaged brain stdout/stderr, rotated at 16 MB |
+| `~/.undisclosed/debug/<task>.log` | full turn dumps, **only when `UNDISCLOSED_DEBUG=1`**: prompt, tool calls with arguments and results, model response |
+| `~/eigent/` (falls back to `~/.undisclosed/`) | per-task run artifacts and the working files the brain writes |
+
+Memory is on by default. The panel's **Memory** screen has a "Remember across
+conversations" switch and a **Clear** button (`GET /memory/status`, `DELETE /memory`).
+Turning it off stops new facts for new tasks; Clear removes the stored facts.
+Debug dumps are off unless you set the flag.
+
+### Can it run a destructive shell command without approval?
+
+Yes. The only mode shipped on is **Auto**: `shell_exec`, `write_to_file`, git
+writes and the other mutating tools run immediately, because most coding turns
+need it. The approval gate exists but is gated behind
+`VITE_ENABLE_GOVERNANCE_MODE` and off by default, because it is not finished.
+
+Build with the flag on and the panel's `⋯` menu offers **Ask to approve**. These
+then wait for an explicit approval in the panel before they execute:
+
+- `shell_exec` (terminal)
+- `write_to_file`
+- git writes (`git_add`, `git_commit`, `git_push`, `git_checkout`, `git_stash`,
+  `git_create_branch`)
+- GitHub writes (issues, pull requests, comments, branches)
+- MongoDB's write-capable `mongo_eval` escape hatch
+
+The prompt names the tool and its arguments (built by `_describe_call` in
+[`governance_toolkit.py`](brain/app/agent/toolkit/governance_toolkit.py)).
+Denying it, or not answering within 120 seconds, returns a governance rejection
+to the model instead of running the action. Read-only tools are not gated. The
+mode is sent with every turn as `toolkit_config.governance.mode`; the gate
+wiring is in
+[`toolkit_assembler.py`](brain/app/agent/factory/toolkit_assembler.py) and the
+UI side in [`chatStore.ts`](agent-ui/src/store/chatStore.ts).
+
+### What about integrations that can modify external resources?
+
+Integrations are credential-gated: the toolkit is only assembled when its token,
+OAuth grant, or MCP server is present. With the approval flag on, Ask mode gates
+GitHub writes, the MongoDB escape hatch, git writes and local file writes. It
+does **not** gate every third-party connector yet: Slack, Notion, Google Workspace, social and similar
+toolkits use the permissions of the token you gave them. Treat those tokens as
+granting the agent exactly what the token can do, and scope them accordingly.
+
+### Can I see what it is about to do?
+
+- With the approval flag on, Ask mode shows the exact pending call before it
+  runs.
+- The agent plans in the panel, and file changes show up as diffs you can review
+  in the panel and in git.
+- `UNDISCLOSED_DEBUG=1` records the outgoing prompt and every tool call/result.
+  To see the actual network traffic, run the brain under a proxy or watch the
+  loopback interface; it binds `127.0.0.1:5001` by default (Docker uses
+  `0.0.0.0`).
+
+---
+
+## Reliability over tool count
+
+An agent that supports fifteen tools and frequently makes the wrong change is
+less useful than one that supports five and finishes predictably. Undisclosed
+ships a verification loop instead of a longer tool list.
+
+The developer prompt makes these steps mandatory before a change is called done
+(see `<verification_workflow>` in [`prompt.py`](brain/app/agent/prompt.py)):
+
+1. **Typecheck and lint.** `run_checks` detects the project's typecheck and lint
+   commands and runs both
+   ([`code_review_toolkit.py`](brain/app/agent/toolkit/code_review_toolkit.py)).
+2. **Review the diff.** `review_diff` scans the changed lines with a deterministic
+   ruleset and returns line-anchored findings (`file:line [severity] message ->
+   suggestion`). No extra model call, no external reviewer service.
+3. **Test with coverage.** `run_tests` runs the suite with coverage and appends a
+   `coverage_gap_plan`; the agent has to state which gaps it is closing or why a
+   gap is out of scope
+   ([`test_runner_toolkit.py`](brain/app/agent/toolkit/test_runner_toolkit.py)).
+
+The panel keeps the receipts: a file diff, a test-run card, and the verification
+summary for the turn.
+
+We judge the agent on real tasks, not benchmark theatre: do the tests pass, does
+the diff match the request, how often did it need intervention, and how much
+manual correction did the result need. Those are the numbers that decide whether
+a release is good. We do not publish a tool-count score.
+
+That evaluation currently runs on this repo and on Angler. There is no public
+leaderboard yet. When there is one, it will report those four numbers.
+
+---
+
+## Projects built with Undisclosed
+
+The product is early, so this list is short on purpose. It grows as more work
+ships.
+
+- **[Undisclosed](https://github.com/Octagon-simon/undisclosed)** itself: the
+  editor, the agent panel, the brain, this README, and the demo video rendered
+  inside it.
+- **[Angler](https://getanglerapp.com)** is a macOS menu-bar app that turns the
+  flat Mac desktop into a surface with depth as you tilt the laptop lid. The app
+  and its site were built with Undisclosed.
+
+If you build something with it, open an issue with a link and we will add it.
 
 ---
 
