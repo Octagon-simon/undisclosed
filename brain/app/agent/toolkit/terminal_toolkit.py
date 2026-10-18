@@ -563,7 +563,9 @@ class TerminalToolkit(BaseTerminalToolkit, AbstractToolkit):
 
         # tier 3 is a hard block: approval cannot override it, so reject
         # before the Docker/local split or the venv activation prefix.
-        assessment = assess_command(command)
+        assessment = assess_command(
+            command, workspace=getattr(self, "working_dir", None)
+        )
         if assessment.blocked:
             logger.info(
                 "Blocked tier-3 shell command",

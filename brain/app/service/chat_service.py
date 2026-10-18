@@ -53,6 +53,7 @@ from app.agent.prompt import (
     append_connected_app_mcp_notice,
     build_remote_sub_agent_planning_notice,
 )
+from app.agent.toolkit.governance_toolkit import gate_worker_tools
 from app.agent.toolkit.human_toolkit import HumanToolkit
 from app.agent.toolkit.note_taking_toolkit import NoteTakingToolkit
 from app.agent.toolkit.skill_toolkit import SkillToolkit
@@ -92,6 +93,7 @@ from app.utils.agent_memory import (
 )
 from app.utils.event_loop_utils import set_main_event_loop
 from app.utils.file_utils import (
+    DEFAULT_SKIP_EXTENSIONS,
     get_working_directory,
     list_files,
     resolve_attach_refs,
@@ -204,7 +206,7 @@ def format_task_context(
                     working_directory,
                     base=working_directory,
                     skip_dirs={"node_modules", "__pycache__", "venv"},
-                    skip_extensions=(".pyc", ".tmp"),
+                    skip_extensions=DEFAULT_SKIP_EXTENSIONS,
                     skip_prefix=".",
                 )
                 if seen_files is not None:
@@ -267,7 +269,7 @@ def collect_previous_task_context(
             working_directory,
             base=working_directory,
             skip_dirs={"node_modules", "__pycache__", "venv"},
-            skip_extensions=(".pyc", ".tmp"),
+            skip_extensions=DEFAULT_SKIP_EXTENSIONS,
             skip_prefix=".",
         )
         if generated_files:
@@ -400,7 +402,7 @@ def build_conversation_context(
                         working_directory,
                         base=working_directory,
                         skip_dirs={"node_modules", "__pycache__", "venv"},
-                        skip_extensions=(".pyc", ".tmp"),
+                        skip_extensions=DEFAULT_SKIP_EXTENSIONS,
                         skip_prefix=".",
                     )
                     all_generated_files.update(files_list)
@@ -3093,6 +3095,13 @@ async def new_agent_model(
         )
         tools.extend(terminal_toolkit.get_tools())
         tool_names.append(titleize("terminal_toolkit"))
+    # Dynamic/trigger workers build their own toolkits; apply the session's
+    # approval policy so they can't run what the single agent must ask for.
+    tools = gate_worker_tools(
+        tools,
+        api_task_id=options.project_id,
+        agent_name=data.name,
+    )
     if data.mcp_tools is not None:
         tools = [*tools, *await get_mcp_tools(data.mcp_tools, hands=hands)]
         for item in data.mcp_tools["mcpServers"].keys():

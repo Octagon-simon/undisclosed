@@ -22,6 +22,7 @@ from app.agent.toolkit.command_policy import (
     describe_scope,
     describe_tier,
     is_blocked,
+    summarize_command,
 )
 
 
@@ -171,7 +172,7 @@ def test_reason_is_returned() -> None:
 
 def test_describe_tier() -> None:
     assert describe_tier(CommandTier.READ_ONLY) == "Read only"
-    assert describe_tier(CommandTier.WORKSPACE_WRITE) == "Writes files"
+    assert describe_tier(CommandTier.WORKSPACE_WRITE) == "May change files"
     assert describe_tier(CommandTier.DESTRUCTIVE) == "Destructive"
     assert describe_tier(CommandTier.BLOCKED) == "Blocked"
 
@@ -223,3 +224,187 @@ def test_describe_scope() -> None:
         == "Dependency installs"
     )
     assert describe_scope(CommandScope.GIT_ADD_COMMIT) == "Git add & commit"
+    assert describe_scope(CommandScope.CODE_EXECUTION) == "Runs code"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cd /Users/octagon/work",
+        "cd ..",
+        "pushd sub",
+        "export FOO=1",
+        "set -e",
+        "unset FOO",
+        "alias ll='ls -l'",
+    ],
+)
+def test_shell_state_builtins_are_read_only(command: str) -> None:
+    assessment = assess_command(command)
+    assert assessment.tier == CommandTier.READ_ONLY
+    assert classify_scopes(command) == ()
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cd /Users/octagon/work && ls",
+        "cd /Users/octagon/work && find . -name '*.py'",
+        "export FOO=1 && ls -la",
+    ],
+)
+def test_cd_prefix_does_not_make_a_read_a_write(command: str) -> None:
+    assessment = assess_command(command)
+    assert assessment.tier == CommandTier.READ_ONLY
+    assert classify_scopes(command) == (CommandScope.FILE_READS,)
+
+
+def test_multi_step_read_command_reports_reads_only() -> None:
+    # The exact shape that produced a "Writes files" card for a listing.
+    command = (
+        'cd /Users/octagon/work && ls; echo "=== files ==="; '
+        'find . -name "governance*" -not -path "*/node_modules/*"'
+    )
+    assessment = assess_command(command)
+    assert assessment.tier == CommandTier.READ_ONLY
+    assert assessment.scopes == (CommandScope.FILE_READS,)
+
+
+def test_version_checks_are_read_only() -> None:
+    # The exact command that showed a "Writes files" card: `node` was not a
+    # known binary, so `node -v` fell through to the conservative write tier.
+    command = (
+        "cd /Users/octagon/Documents/github/eigent-theia/demo-live && "
+        "node -v && npm -v && echo '--- ancestor package.json ---' && "
+        "ls /Users/octagon/Documents/github/eigent-theia/package.json "
+        "2>/dev/null"
+    )
+    assessment = assess_command(command)
+    assert assessment.tier == CommandTier.READ_ONLY
+    assert assessment.scopes == (CommandScope.FILE_READS,)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "node -e \"console.log('hi')\"",
+        "node scripts/build.js",
+        "python3 -c 'import sys; print(sys.version)'",
+        "python3 scripts/check.py",
+    ],
+)
+def test_running_code_reports_code_execution(command: str) -> None:
+    assessment = assess_command(command)
+    assert assessment.tier == CommandTier.WORKSPACE_WRITE
+    assert assessment.scopes == (CommandScope.CODE_EXECUTION,)
+    assert CommandScope.FILE_WRITES not in assessment.scopes
+
+
+def test_heredoc_body_is_not_parsed_as_commands() -> None:
+    # The exact shape an agent uses to run a throwaway Playwright script. The
+    # body is DATA for `cat`, not a run of `const` / `require` shell commands.
+    command = (
+        "cd /tmp && cat > /tmp/shot.cjs <<'EOF'\n"
+        "const { chromium } = require('playwright');\n"
+        "console.log(chromium);\n"
+        "EOF\n"
+        "node /tmp/shot.cjs"
+    )
+    assessment = assess_command(command)
+    assert assessment.scopes == (
+        CommandScope.FILE_READS,
+        CommandScope.CODE_EXECUTION,
+    )
+    assert CommandScope.FILE_WRITES not in assessment.scopes
+    assert CommandScope.BUILDS_TESTS not in assessment.scopes
+
+
+def test_heredoc_body_text_cannot_trigger_a_block() -> None:
+    command = "cat > /tmp/notes.txt <<'EOF'\nrm -rf /\nEOF\n"
+    assert assess_command(command).blocked is False
+
+
+def test_command_after_heredoc_is_still_classified() -> None:
+    command = "cat > /tmp/notes.txt <<'EOF'\nhello\nEOF\nrm -rf /tmp/out"
+    assert assess_command(command).blocked is True
+
+
+def test_shell_heredoc_body_is_still_classified() -> None:
+    # A shell executes its heredoc body, so the body is commands, not data.
+    command = "bash <<'EOF'\nrm -rf /\nEOF"
+    assert assess_command(command).blocked is True
+
+
+def test_summary_names_the_actions_in_order() -> None:
+    command = (
+        "cd /tmp && node -v && npm -v && echo '--- deps ---' && "
+        "node -e \"console.log(1)\""
+    )
+    assert summarize_command(command) == (
+        "check the node version, check the npm version, "
+        "print a message, then run a short JavaScript snippet"
+    )
+
+
+def test_summary_for_a_test_run() -> None:
+    assert summarize_command("python3 -m pytest tests -q") == "run the tests"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "find . -exec touch {} \\;",
+        "find . -exec mkdir out {} +",
+        "find . -exec chmod 777 {} \\;",
+    ],
+)
+def test_find_exec_write_is_not_read_only(command: str) -> None:
+    assessment = assess_command(command)
+    assert assessment.tier == CommandTier.WORKSPACE_WRITE
+    assert assessment.scopes == (CommandScope.FILE_WRITES,)
+
+
+def test_find_exec_keeps_blocked_inner_command() -> None:
+    assert is_blocked("find . -exec rm {} \\;")
+
+
+def test_inline_delete_inside_workspace_is_allowed(
+    tmp_path,
+) -> None:
+    command = f'python3 -c "import os; os.remove(\'{tmp_path}/old.py\')"'
+    assessment = assess_command(command, workspace=tmp_path)
+    assert assessment.tier == CommandTier.WORKSPACE_WRITE
+
+
+def test_inline_delete_outside_workspace_is_blocked(tmp_path) -> None:
+    command = 'python3 -c "import os; os.remove(\'/tmp/notes.txt\')"'
+    assessment = assess_command(command, workspace=tmp_path)
+    assert assessment.tier == CommandTier.BLOCKED
+    assert "outside the workspace" in assessment.reason
+
+
+def test_inline_rmtree_outside_workspace_is_blocked(tmp_path) -> None:
+    command = 'python3 -c "import shutil; shutil.rmtree(\'../other\')"'
+    assert is_blocked(command, workspace=tmp_path)
+
+
+def test_inline_delete_home_is_blocked(tmp_path) -> None:
+    command = 'python3 -c "import os; os.remove(\'~/secrets.env\')"'
+    assert is_blocked(command, workspace=tmp_path)
+
+
+def test_inline_delete_relative_inside_workspace_is_allowed(tmp_path) -> None:
+    command = 'python3 -c "import os; os.remove(\'build/old.js\')"'
+    assert not is_blocked(command, workspace=tmp_path)
+
+
+def test_documented_delete_rule_is_not_a_command() -> None:
+    # prose that mentions rm must stay read-only when it is a quoted string
+    assert assess_command('echo "rm -rf /"').tier == CommandTier.READ_ONLY
+
+
+def test_inline_delete_with_a_variable_target_always_asks(tmp_path) -> None:
+    command = 'python3 -c "import os; p = \'x\'; os.remove(p)"'
+    assessment = assess_command(command, workspace=tmp_path)
+    assert assessment.tier == CommandTier.DESTRUCTIVE
+    assert "cannot scope" in assessment.reason

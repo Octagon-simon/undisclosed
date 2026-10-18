@@ -23,6 +23,10 @@ class ApprovalScope(StrEnum):
     BUILDS_TESTS = "builds_tests"
     DEPENDENCY_INSTALLS = "dependency_installs"
     GIT_ADD_COMMIT = "git_add_commit"
+    # Script and inline-code execution: `python -c`, `node -e`, a script path.
+    # It may write, but claiming "File writes" for a snippet that only prints
+    # is wrong, so it gets its own scope.
+    CODE_EXECUTION = "code_execution"
 
 
 class Status(str, Enum):

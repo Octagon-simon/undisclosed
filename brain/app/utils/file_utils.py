@@ -26,6 +26,7 @@ from app.component.environment import env
 from app.exception.exception import PathEscapesBaseError
 from app.model.chat import Chat
 from app.run_context import get_current_run_context
+from app.utils.scratch_files import SCRATCH_FILE_SUFFIXES
 
 logger = logging.getLogger("file_utils")
 
@@ -36,8 +37,14 @@ MAX_PATH_LENGTH_UNIX = 4096
 DEFAULT_SKIP_DIRS = frozenset(
     {".git", "node_modules", "__pycache__", "venv", ".venv", "camel_logs"}
 )
-# Default file extensions to skip when listing (list_files)
-DEFAULT_SKIP_EXTENSIONS: tuple[str, ...] = (".pyc", ".tmp", ".temp")
+# Default file extensions to skip when listing (list_files). Scratch suffixes
+# are excluded so backups never reach the model as "generated files".
+DEFAULT_SKIP_EXTENSIONS: tuple[str, ...] = (
+    ".pyc",
+    ".tmp",
+    ".temp",
+    *SCRATCH_FILE_SUFFIXES,
+)
 
 
 def _max_path_length() -> int:

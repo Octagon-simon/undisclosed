@@ -28,6 +28,7 @@ from app.agent.prompt import (
 from app.agent.toolkit.excel_toolkit import ExcelToolkit
 from app.agent.toolkit.file_write_toolkit import FileToolkit
 from app.agent.toolkit.google_drive_mcp_toolkit import GoogleDriveMCPToolkit
+from app.agent.toolkit.governance_toolkit import gate_worker_tools
 from app.agent.toolkit.human_toolkit import HumanToolkit
 from app.agent.toolkit.markitdown_toolkit import MarkItDownToolkit
 
@@ -151,6 +152,14 @@ async def document_agent(
         tool_names.append(SearchToolkit.toolkit_name())
     else:
         search_tools = []
+    # Document workers write files (write_to_file, Excel, PPTX) and can run
+    # shell commands; gate them like the single agent.
+    tools = gate_worker_tools(
+        tools,
+        api_task_id=options.project_id,
+        agent_name=Agents.document_agent,
+    )
+
     system_message = DOCUMENT_SYS_PROMPT.format(
         platform_system=platform.system(),
         platform_machine=platform.machine(),

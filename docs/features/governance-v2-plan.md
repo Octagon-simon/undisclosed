@@ -224,6 +224,11 @@ That answers "any prompt on my system to know what to use": yes for code navigat
 
 Everything below exists today and is wired end to end:
 
+> **Status (2026-10-18): shipped and on by default.** The feature flag is gone.
+> New and existing sessions start in `ask`; `auto` is an explicit opt-in in the
+> panel menu or Settings > Privacy. The "flagged off" lines below describe the
+> pre-ship state that motivated this plan.
+
 | Piece | Location |
 | --- | --- |
 | Mode enum + gate wrapper | `brain/app/agent/toolkit/governance_toolkit.py` |
@@ -233,7 +238,7 @@ Everything below exists today and is wired end to end:
 | Store state | `agent-ui/src/store/chatStore.ts:396`, `:5079` |
 | Prompt card above composer | `agent-ui/src/components/ChatBox/MessageItem/ApprovalRequestCard.tsx` |
 | Outcome card | `.../ApprovalOutcomeCard.tsx` |
-| Feature flag | `VITE_ENABLE_GOVERNANCE_MODE`, off by default |
+| Default mode | `ask` (`agent-ui/src/store/authStore.ts`); `auto` is opt-in |
 
 So "we have not built it properly" is accurate, but the gap is not the plumbing. It is four things:
 

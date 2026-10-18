@@ -53,6 +53,7 @@ from app.service.task import (
     set_process_task,
 )
 from app.utils.event_loop_utils import _schedule_async_task
+from app.utils.tool_call_repair import repair_tool_call_pairing
 
 # Logger for agent tracking
 logger = logging.getLogger("agent")
@@ -836,9 +837,46 @@ class ListenChatAgent(ChatAgent):
 
         return super()._handle_batch_response(response)
 
+    @staticmethod
+    def _repair_tool_pairs(args: tuple, kwargs: dict) -> None:
+        """Drop tool calls left unanswered by an interrupted turn.
+
+        A cancelled turn can strand an assistant `tool_calls` message with no
+        `tool` replies; providers then reject every later request in the
+        session with a 400 and the turn never finishes.
+        """
+        messages = kwargs.get("openai_messages")
+        if messages is None and args:
+            messages = args[0]
+        repair_tool_call_pairing(messages)
+
+    def _stream_response(  # type: ignore[override]
+        self,
+        openai_messages: list[dict[str, Any]],
+        num_tokens: int,
+        response_format: type[BaseModel] | None = None,
+    ):
+        self._repair_tool_pairs((openai_messages,), {})
+        return super()._stream_response(
+            openai_messages, num_tokens, response_format
+        )
+
+    async def _astream_response(  # type: ignore[override]
+        self,
+        openai_messages: list[dict[str, Any]],
+        num_tokens: int,
+        response_format: type[BaseModel] | None = None,
+    ):
+        self._repair_tool_pairs((openai_messages,), {})
+        async for response in super()._astream_response(
+            openai_messages, num_tokens, response_format
+        ):
+            yield response
+
     async def _aget_model_response(self, *args: Any, **kwargs: Any):  # type: ignore[override]
-        """Re-request the completion once if the model returns unparseable
-        tool-call arguments, before falling back to empty-arg sanitization.
+        """Repair unpaired tool calls, then re-request the completion once if
+        the model returns unparseable tool-call arguments, before falling back
+        to empty-arg sanitization.
 
         The first attempt asks `_handle_batch_response` to reject malformed
         arguments (raising `_MalformedToolCallArgs`); a truncated/garbled tool
@@ -848,6 +886,7 @@ class ListenChatAgent(ChatAgent):
         retry is still malformed, the flag is off and `_handle_batch_response`
         degrades gracefully instead of looping.
         """
+        self._repair_tool_pairs(args, kwargs)
         self._reject_malformed_tool_args = True
         try:
             return await super()._aget_model_response(*args, **kwargs)

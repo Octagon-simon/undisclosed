@@ -30,6 +30,10 @@ from app.agent.tool_rag import (
     reconcile_agent_tools,
     reconcile_agent_tools_routed,
 )
+from app.agent.toolkit.governance_toolkit import (
+    mode_from_toolkit_config,
+    record_session_governance_mode,
+)
 from app.component.debug import debug_dump, debug_enabled
 from app.component.environment import env
 from app.hands.interface import IHands
@@ -1151,6 +1155,12 @@ async def single_agent_solve(
     if approval_manager is None:
         approval_manager = ApprovalManager(task_lock)
         task_lock.approval_manager = approval_manager
+    # Seed the session policy before any worker is spawned; workers read it
+    # instead of being handed the config.
+    record_session_governance_mode(
+        options.project_id,
+        mode_from_toolkit_config(getattr(options, "toolkit_config", None)),
+    )
 
     async def ensure_agent(task_id: str):
         nonlocal agent

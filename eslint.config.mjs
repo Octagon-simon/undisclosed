@@ -20,6 +20,8 @@ export default [
       'apps/**',
       'agent-ui/**',
       'brain/**',
+      // Local scratch/debug scripts (already gitignored).
+      '.tmp/**',
       'resources/**',
       'plugins/**',
       'site/**',

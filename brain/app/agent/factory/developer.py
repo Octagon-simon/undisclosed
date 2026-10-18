@@ -29,8 +29,10 @@ from app.agent.prompt import (
 )
 from app.agent.tool_rag import attach_load_capability, prepare_tool_rag
 from app.agent.toolkit.code_execution_toolkit import CodeExecutionToolkit
+from app.agent.toolkit.code_review_toolkit import CodeReviewToolkit
 from app.agent.toolkit.diff_toolkit import DiffToolkit
 from app.agent.toolkit.github_toolkit import GithubToolkit
+from app.agent.toolkit.governance_toolkit import gate_worker_tools
 from app.agent.toolkit.human_toolkit import HumanToolkit
 from app.agent.toolkit.mongodb_toolkit import MongoDBToolkit
 
@@ -41,7 +43,6 @@ from app.agent.toolkit.search_toolkit import SearchToolkit
 from app.agent.toolkit.skill_toolkit import SkillToolkit
 from app.agent.toolkit.terminal_toolkit import TerminalToolkit
 from app.agent.toolkit.test_runner_toolkit import TestRunnerToolkit
-from app.agent.toolkit.code_review_toolkit import CodeReviewToolkit
 from app.agent.toolkit.web_deploy_toolkit import WebDeployToolkit
 from app.agent.utils import NOW_STR
 from app.hands.interface import IHands
@@ -188,6 +189,14 @@ async def developer_agent(
         )
         tools.extend(terminal_toolkit.get_tools())
         tool_names.append(TerminalToolkit.toolkit_name())
+
+    # Same gate as the single agent: without it a delegated developer could
+    # run shell/file/git/connector writes the user was never asked about.
+    tools = gate_worker_tools(
+        tools,
+        api_task_id=options.project_id,
+        agent_name=Agents.developer_agent,
+    )
 
     system_message = DEVELOPER_SYS_PROMPT.format(
         platform_system=platform.system(),

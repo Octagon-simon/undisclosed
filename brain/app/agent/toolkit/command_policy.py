@@ -22,10 +22,12 @@ appears inside `bash -c`, command substitution, or a pipe.
 
 from __future__ import annotations
 
+import os
 import re
 import shlex
 from dataclasses import dataclass
 from enum import IntEnum
+from pathlib import Path
 
 from app.model.enums import ApprovalScope as CommandScope
 
@@ -267,6 +269,36 @@ _DEPLOY_READ_SUBCOMMANDS = frozenset(
 
 _SHELL_BINARIES = frozenset({"sh", "bash", "zsh", "dash"})
 
+_FIND_EXEC_FLAGS = frozenset({"-exec", "-execdir", "-ok", "-okdir"})
+_FIND_EXEC_TOKENS = frozenset({"{}", ";", "+", "\\;"})
+
+# Builtins that only mutate the shell process itself, never the workspace.
+# Without this, `cd <dir> && ls` fell through to "not a known read-only
+# command" and the approval card claimed a read-only listing wrote files.
+_SHELL_STATE_BUILTINS = frozenset(
+    {
+        ":",
+        "alias",
+        "cd",
+        "declare",
+        "dirs",
+        "export",
+        "false",
+        "jobs",
+        "local",
+        "popd",
+        "pushd",
+        "set",
+        "shift",
+        "true",
+        "typeset",
+        "umask",
+        "unalias",
+        "unset",
+        "wait",
+    }
+)
+
 _PYTHON_TEST_MODULES = frozenset(
     {"pytest", "unittest", "ruff", "mypy", "pyright", "flake8", "json.tool"}
 )
@@ -284,13 +316,67 @@ _DESTRUCTIVE_SQL = re.compile(
 
 _SUBSTITUTION = re.compile(r"\$\(([^()]*)\)|`([^`]*)`")
 
+# Delete calls a script can make without invoking a blocked binary. The
+# literal targets are checked against the workspace: deletion is allowed
+# inside it (the task may legitimately replace a component) and is a hard
+# block anywhere else.
+_DELETE_CALL = re.compile(
+    r"(?:os\.(?:remove|unlink|rmdir)"
+    r"|shutil\.rmtree"
+    r"|Path\([^)]*\)\.(?:unlink|rmdir)"
+    r"|fs\.(?:unlink|unlinkSync|rm|rmSync|rmdir|rmdirSync)"
+    r"|\.(?:unlink|rmdir))\s*\("
+)
+_PATH_LITERAL = re.compile(r"""Path\(\s*['"]([^'"]+)['"]\s*\)""")
+_DELETE_ARG_LITERAL = re.compile(r"""\s*(?:path\s*=\s*)?['"]([^'"]+)['"]""")
+
 _WRITE_REDIRECTS = frozenset({">", ">>", ">|", "&>", "&>>"})
 
 _DEV_NULL_TARGETS = frozenset({"/dev/null", "nul", "$null"})
 
 
-def assess_command(command: str | None) -> CommandAssessment:
-    """Classify a command line, taking the highest tier of its segments."""
+def _delete_targets(command: str) -> list[str]:
+    """Literal paths a script would delete, best-effort."""
+    targets = list(_PATH_LITERAL.findall(command))
+    for match in _DELETE_CALL.finditer(command):
+        literal = _DELETE_ARG_LITERAL.match(command, match.end())
+        if literal is not None:
+            targets.append(literal.group(1))
+    seen: list[str] = []
+    for target in targets:
+        if target not in seen:
+            seen.append(target)
+    return seen
+
+
+def _escapes_workspace(target: str, workspace: Path) -> bool:
+    """True when a literal target resolves outside the workspace.
+
+    Relative targets resolve against the workspace because that is the shell's
+    cwd. ``~`` and environment variables are expanded first, so
+    ``os.remove("~/x")`` cannot slip through as ``<workspace>/~/x``.
+    """
+    expanded = os.path.expandvars(os.path.expanduser(target.strip()))
+    if not expanded:
+        return False
+    path = Path(expanded)
+    if not path.is_absolute():
+        path = workspace / path
+    try:
+        path.resolve().relative_to(workspace)
+    except (OSError, ValueError):
+        return True
+    return False
+
+
+def assess_command(
+    command: str | None, workspace: str | Path | None = None
+) -> CommandAssessment:
+    """Classify a command line, taking the highest tier of its segments.
+
+    When ``workspace`` is given, a script that deletes a literal path outside
+    it is tier 3: deletion is allowed inside the project only.
+    """
     text = (command or "").strip()
     if not text:
         return CommandAssessment(CommandTier.READ_ONLY, "empty command")
@@ -311,6 +397,24 @@ def assess_command(command: str | None) -> CommandAssessment:
             if scope not in scopes:
                 scopes.append(scope)
 
+    if workspace and best != CommandTier.BLOCKED and _DELETE_CALL.search(text):
+        root = Path(workspace).expanduser().resolve()
+        targets = _delete_targets(text)
+        escapes = [
+            target for target in targets if _escapes_workspace(target, root)
+        ]
+        if escapes:
+            best = CommandTier.BLOCKED
+            reason = (
+                f"deletes {escapes[0]} outside the workspace; deletion is "
+                "only allowed inside the project"
+            )
+        elif not targets:
+            # A variable or a glob: the target cannot be checked statically,
+            # so the call needs an approval in every mode.
+            best = max(best, CommandTier.DESTRUCTIVE)
+            reason = "deletes files it cannot scope"
+
     return CommandAssessment(best, reason, tuple(segments), tuple(scopes))
 
 
@@ -328,16 +432,23 @@ def classify_scopes(command: str | None) -> tuple[CommandScope, ...]:
     return tuple(scopes)
 
 
-def is_blocked(command: str | None) -> bool:
+def is_blocked(
+    command: str | None, workspace: str | Path | None = None
+) -> bool:
     """True when the command contains a tier 3 action."""
-    return assess_command(command).blocked
+    return assess_command(command, workspace).blocked
 
 
 def describe_tier(tier: CommandTier) -> str:
-    """Short label used in tool results and the approval card."""
+    """Short label used in tool results and the approval card.
+
+    Tier 1 is "may change files", not "writes files": it covers commands whose
+    side effects are not knowable from the command line (running a script,
+    `python -c`), and a definite-write label there was misleading.
+    """
     return {
         CommandTier.READ_ONLY: "Read only",
-        CommandTier.WORKSPACE_WRITE: "Writes files",
+        CommandTier.WORKSPACE_WRITE: "May change files",
         CommandTier.DESTRUCTIVE: "Destructive",
         CommandTier.BLOCKED: "Blocked",
     }[tier]
@@ -351,7 +462,171 @@ def describe_scope(scope: CommandScope) -> str:
         CommandScope.BUILDS_TESTS: "Builds & tests",
         CommandScope.DEPENDENCY_INSTALLS: "Dependency installs",
         CommandScope.GIT_ADD_COMMIT: "Git add & commit",
+        CommandScope.CODE_EXECUTION: "Runs code",
     }[scope]
+
+
+#: Flags that only print version/help text and exit. Applied to any binary
+#: before the unknown-command fallback, so `node -v` is not a workspace write.
+_INFO_FLAGS = frozenset(
+    {
+        "-v",
+        "-V",
+        "-version",
+        "--version",
+        "-h",
+        "--help",
+        "help",
+        "--help-all",
+    }
+)
+
+
+def _is_info_invocation(args: list[str]) -> bool:
+    if not args:
+        return False
+    # `node -v`, `npm --version`; not `tool -v --other` with extra work flags.
+    return args[0] in _INFO_FLAGS and len(args) <= 2
+
+
+def summarize_command(command: str | None, limit: int = 4) -> str:
+    """One short clause describing what the command will do.
+
+    Deterministic, derived from the command line, not a second model call.
+    Used as the approval card's plain-language line so the user sees intent
+    before the raw command.
+    """
+    text = (command or "").strip()
+    if not text:
+        return ""
+
+    phrases: list[str] = []
+    for segment in _split_segments(text):
+        phrase = _summarize_segment(segment)
+        if not phrase or (phrases and phrases[-1] == phrase):
+            continue
+        phrases.append(phrase)
+        if len(phrases) >= limit:
+            break
+
+    if not phrases:
+        return ""
+    if len(phrases) == 1:
+        return phrases[0]
+    return ", ".join(phrases[:-1]) + ", then " + phrases[-1]
+
+
+def _summarize_segment(segment: str) -> str:
+    tokens = _tokenize(segment)
+    stripped = _strip_prefixes(tokens)
+    if not stripped:
+        return ""
+
+    name = _binary(stripped[0])
+    args = stripped[1:]
+    positional = [arg for arg in args if not arg.startswith("-")]
+
+    if name in _SHELL_STATE_BUILTINS:
+        return ""
+    if _is_info_invocation(args):
+        return f"check the {name} version"
+    if name in {"ls", "dir"}:
+        return "list files"
+    if name in {"find", "fd"}:
+        return "search for files"
+    if name == "tree":
+        return "show the folder tree"
+    if name in {"cat", "head", "tail", "less", "more"}:
+        return "read a file"
+    if name in {"grep", "egrep", "fgrep", "rg", "ag"}:
+        return "search file contents"
+    if name in {"echo", "printf"}:
+        return "print a message"
+    if name == "pwd":
+        return "print the working directory"
+    if name in {"which", "whereis", "type"}:
+        return "locate an executable"
+    if name in {"whoami", "id", "groups"}:
+        return "check the current user"
+    if name in {"uname", "hostname", "df", "du", "ps", "top", "htop", "uptime"}:
+        return "inspect the system"
+    if name == "git":
+        return _summarize_git(positional)
+    if name in {"npm", "pnpm", "yarn", "bun"}:
+        return _summarize_node_tool(name, positional)
+    if name in {"python", "python3", "py"}:
+        return _summarize_python(args)
+    if name in {"node", "nodejs"}:
+        return _summarize_node(args)
+    if name in {"pytest", "jest", "vitest", "mocha", "playwright", "cypress"}:
+        return "run the tests"
+    if name in _BUILD_BINARIES:
+        return f"run {name}"
+    if name in _DEPENDENCY_BINARIES:
+        return "install dependencies"
+    if name in _READ_BINARIES:
+        return "read files"
+    if name in _WRITE_BINARIES:
+        return "write files"
+    if name == "make" and positional and positional[0] in _TEST_SCRIPTS:
+        return "run the tests"
+    return f"run {name}"
+
+
+def _summarize_git(positional: list[str]) -> str:
+    if not positional:
+        return "inspect git"
+    sub = positional[0]
+    if sub in {"status", "branch", "remote", "config"}:
+        return "check the git state"
+    if sub in {"diff", "log", "show", "blame"}:
+        return "inspect git history"
+    if sub == "add":
+        return "stage changes"
+    if sub == "commit":
+        return "commit changes"
+    return f"run git {sub}"
+
+
+def _summarize_node_tool(name: str, positional: list[str]) -> str:
+    if not positional:
+        return f"run {name}"
+    sub = positional[0]
+    if sub in {"test", "t"}:
+        return "run the tests"
+    if sub in _PACKAGE_WRITE_SUBCOMMANDS:
+        return "install dependencies"
+    if sub in {"run", "run-script"}:
+        script = positional[1] if len(positional) > 1 else ""
+        if script in _TEST_SCRIPTS or script.startswith(
+            ("test", "lint", "typecheck", "type-check", "check")
+        ):
+            return "run the checks"
+        return f"run the {script} script" if script else f"run {name}"
+    if sub in {"ls", "list", "view", "info", "outdated", "why", "audit"}:
+        return f"inspect the {name} project"
+    return f"run {name} {sub}"
+
+
+def _summarize_python(args: list[str]) -> str:
+    if args and args[0] == "-m":
+        module = args[1] if len(args) > 1 else ""
+        if module in _PYTHON_TEST_MODULES:
+            return "run the tests"
+        return f"run the {module} module" if module else "run a Python module"
+    if args and args[0] in {"-c", "-"}:
+        return "run a short Python snippet"
+    if args:
+        return "run a Python script"
+    return "start Python"
+
+
+def _summarize_node(args: list[str]) -> str:
+    if args and args[0] in {"-e", "-p", "--eval", "--print"}:
+        return "run a short JavaScript snippet"
+    if args:
+        return "run a JavaScript script"
+    return "start Node"
 
 
 _READ_BINARIES = frozenset(
@@ -511,9 +786,13 @@ def _classify_scopes(segment: str) -> tuple[CommandScope, ...]:
     if tier == CommandTier.BLOCKED:
         return ()
 
+    if name in _SHELL_STATE_BUILTINS:
+        return ()
     if name == "git":
         return _git_scopes(positional)
     if name in {"npm", "pnpm", "yarn", "bun"}:
+        if _is_info_invocation(args):
+            return (CommandScope.FILE_READS,)
         return _node_scopes(positional)
     if name == "npx":
         if positional and _binary(positional[0]) in _BUILD_BINARIES:
@@ -536,8 +815,20 @@ def _classify_scopes(segment: str) -> tuple[CommandScope, ...]:
         return (CommandScope.BUILDS_TESTS,)
     if name in _BUILD_BINARIES:
         return (CommandScope.BUILDS_TESTS,)
-    if name in {"python", "python3"}:
+    if name in {"python", "python3", "py"}:
         return _python_scopes(args)
+    if name in {"node", "nodejs"}:
+        return _node_runtime_scopes(args)
+    if name == "find":
+        # A `-exec` payload can write; scoping it as reads would let the
+        # write ride in on an allowlist that only granted File reads.
+        for index, arg in enumerate(args):
+            if arg in _FIND_EXEC_FLAGS:
+                inner = _find_exec_tokens(args[index + 1 :])
+                inner_scopes = classify_scopes(" ".join(inner)) if inner else ()
+                if inner_scopes:
+                    return inner_scopes
+        return (CommandScope.FILE_READS,)
     if name in _READ_BINARIES:
         return (CommandScope.FILE_READS,)
     if name in _WRITE_BINARIES:
@@ -585,25 +876,40 @@ def _node_scopes(positional: list[str]) -> tuple[CommandScope, ...]:
     return (CommandScope.BUILDS_TESTS,)
 
 
+def _node_runtime_scopes(args: list[str]) -> tuple[CommandScope, ...]:
+    if _is_info_invocation(args):
+        return (CommandScope.FILE_READS,)
+    if args and args[0] in {"--check"}:
+        return (CommandScope.FILE_READS,)
+    return (CommandScope.CODE_EXECUTION,)
+
+
 def _python_scopes(args: list[str]) -> tuple[CommandScope, ...]:
+    if _is_info_invocation(args):
+        return (CommandScope.FILE_READS,)
     for index, arg in enumerate(args):
         if arg == "-m" and index + 1 < len(args):
             module = args[index + 1].lower()
             if module in _PYTHON_TEST_MODULES:
                 return (CommandScope.BUILDS_TESTS,)
-            return (CommandScope.FILE_WRITES,)
-    return (CommandScope.FILE_WRITES,)
+            return (CommandScope.CODE_EXECUTION,)
+    return (CommandScope.CODE_EXECUTION,)
 
 
 def _split_segments(command: str) -> list[str]:
-    """Split on shell control operators, respecting quotes.
+    """Split on shell control operators, respecting quotes and heredocs.
 
     Newlines separate commands too, so a multi-line script cannot hide a
-    blocked command after a harmless first line.
+    blocked command after a harmless first line. A heredoc body is DATA for a
+    command like ``cat > script <<EOF``: it must stay attached to that command
+    instead of being parsed as a burst of separate shell commands.
     """
     segments: list[str] = []
     buf: list[str] = []
     quote: str | None = None
+    # (delimiter, strip_leading_tabs) for heredocs whose body starts on the
+    # next newline. Multiple heredocs may be queued on one command line.
+    pending_heredocs: list[tuple[str, bool]] = []
     i = 0
     while i < len(command):
         char = command[i]
@@ -623,6 +929,85 @@ def _split_segments(command: str) -> list[str]:
             quote = char
             buf.append(char)
             i += 1
+            continue
+
+        if command.startswith("<<", i) and not command.startswith("<<<", i):
+            # `<<EOF` / `<<-'EOF'`: parse the delimiter now, then consume the
+            # body on the next newline.
+            start = i
+            j = i + 2
+            strip_tabs = False
+            if j < len(command) and command[j] == "-":
+                strip_tabs = True
+                j += 1
+            while j < len(command) and command[j] in " \t":
+                j += 1
+            delimiter = ""
+            if j < len(command) and command[j] in ("'", '"'):
+                delimiter_quote = command[j]
+                j += 1
+                delimiter_chars: list[str] = []
+                while j < len(command):
+                    current = command[j]
+                    if (
+                        current == "\\"
+                        and delimiter_quote == '"'
+                        and j + 1 < len(command)
+                    ):
+                        delimiter_chars.append(command[j + 1])
+                        j += 2
+                        continue
+                    if current == delimiter_quote:
+                        j += 1
+                        break
+                    delimiter_chars.append(current)
+                    j += 1
+                delimiter = "".join(delimiter_chars)
+            else:
+                delimiter_start = j
+                while j < len(command) and command[j] not in " \t\n;|&()`":
+                    j += 1
+                delimiter = command[delimiter_start:j]
+            # A shell interpreter executes its heredoc body as commands, so
+            # keep the old behaviour for it: let the newline split the body
+            # and classify every line (a blocked `rm` inside must still
+            # latch). For `cat` / `tee` / a script runner the body is data.
+            head_tokens = _strip_prefixes(_tokenize("".join(buf)))
+            head_name = _binary(head_tokens[0]) if head_tokens else ""
+            executes_stdin = head_name in _SHELL_BINARIES or head_name in {
+                "eval",
+                "source",
+                ".",
+            }
+            buf.append(command[start:j])
+            if delimiter and not executes_stdin:
+                pending_heredocs.append((delimiter, strip_tabs))
+            i = j
+            continue
+
+        if char == "\n" and pending_heredocs:
+            buf.append("\n")
+            i += 1
+            for delimiter, strip_tabs in pending_heredocs:
+                while i < len(command):
+                    line_end = command.find("\n", i)
+                    if line_end == -1:
+                        line_end = len(command)
+                    line = command[i:line_end]
+                    candidate = line.lstrip("\t") if strip_tabs else line
+                    buf.append(line)
+                    if line_end < len(command):
+                        buf.append("\n")
+                        i = line_end + 1
+                    else:
+                        i = len(command)
+                    if candidate == delimiter:
+                        break
+            pending_heredocs.clear()
+            # The newline after the closing delimiter ends the command that
+            # owned the heredoc; the next line is a new command.
+            segments.append("".join(buf))
+            buf = []
             continue
 
         if char == "\\" and i + 1 < len(command):
@@ -782,6 +1167,8 @@ def _classify_command(
         return CommandTier.BLOCKED, "`diskutil` modifies a disk"
     if name in _DESTRUCTIVE_BINARIES:
         return CommandTier.DESTRUCTIVE, f"`{name}` can affect the host"
+    if name in _SHELL_STATE_BUILTINS:
+        return CommandTier.READ_ONLY, f"`{name}` only changes shell state"
     if name == "git":
         return _classify_git(args)
 
@@ -791,6 +1178,8 @@ def _classify_command(
         return _classify_wrapped_command(args)
     if name in {"python", "python3", "py"}:
         return _classify_python(args)
+    if name in {"node", "nodejs"}:
+        return _classify_node(args)
     if name in {"pip", "pip3", "uv", "poetry"}:
         return _classify_packages(name, args)
     if name in {"go", "cargo", "rustc"}:
@@ -862,6 +1251,8 @@ def _classify_command(
         if "--noEmit" in args:
             return CommandTier.READ_ONLY, "tsc type check"
         return CommandTier.WORKSPACE_WRITE, "tsc emits files"
+    if _is_info_invocation(args):
+        return CommandTier.READ_ONLY, f"`{name}` prints version/help"
     if name in _READ_ONLY_BINARIES:
         return CommandTier.READ_ONLY, f"`{name}` reads only"
     if name in _WRITE_BINARIES:
@@ -995,6 +1386,8 @@ def _classify_node_tool(
 ) -> tuple[CommandTier, str]:
     if not args:
         return CommandTier.READ_ONLY, f"`{name}` with no arguments"
+    if _is_info_invocation(args):
+        return CommandTier.READ_ONLY, f"`{name}` version"
     sub = args[0]
     if sub in {"test", "t"}:
         return CommandTier.READ_ONLY, f"`{name} test`"
@@ -1047,12 +1440,24 @@ def _classify_python(args: list[str]) -> tuple[CommandTier, str]:
             )
         return CommandTier.WORKSPACE_WRITE, f"`python -m {module}` may write"
     if args and args[0] in {"-c", "-"}:
-        return CommandTier.WORKSPACE_WRITE, "inline Python can write"
-    if args and args[0] in {"-V", "--version", "-h", "--help"}:
+        return CommandTier.WORKSPACE_WRITE, "runs inline Python"
+    if _is_info_invocation(args):
         return CommandTier.READ_ONLY, "python version"
     if args:
         return CommandTier.WORKSPACE_WRITE, "runs a Python script"
     return CommandTier.READ_ONLY, "python with no arguments"
+
+
+def _classify_node(args: list[str]) -> tuple[CommandTier, str]:
+    if not args:
+        return CommandTier.READ_ONLY, "node with no arguments"
+    if _is_info_invocation(args):
+        return CommandTier.READ_ONLY, "node version"
+    if args[0] == "--check":
+        return CommandTier.READ_ONLY, "node syntax check"
+    if args[0] in {"-e", "-p", "--eval", "--print"}:
+        return CommandTier.WORKSPACE_WRITE, "runs inline JavaScript"
+    return CommandTier.WORKSPACE_WRITE, "runs a JavaScript script"
 
 
 def _classify_packages(
@@ -1155,20 +1560,21 @@ def _classify_wrapped_command(args: list[str]) -> tuple[CommandTier, str]:
     return _classify_command(_binary(inner[0]), inner[1:], " ".join(inner))
 
 
+def _find_exec_tokens(tokens: list[str]) -> list[str]:
+    """Tokens of a `find -exec` payload, without `{}` / `;` placeholders."""
+    return [token for token in tokens if token not in _FIND_EXEC_TOKENS]
+
+
 def _classify_find(args: list[str]) -> tuple[CommandTier, str]:
     for index, arg in enumerate(args):
         if arg == "-delete":
             return CommandTier.BLOCKED, "`find -delete` removes files"
-        if arg in {"-exec", "-execdir", "-ok", "-okdir"}:
-            inner = []
-            for token in args[index + 1 :]:
-                if token in {"{}", ";", "+", "\\;"}:
-                    continue
-                inner.append(token)
+        if arg in _FIND_EXEC_FLAGS:
+            inner = _find_exec_tokens(args[index + 1 :])
             if inner:
                 tier, reason = _classify_command(
                     _binary(inner[0]), inner[1:], " ".join(inner)
                 )
-                if tier >= CommandTier.DESTRUCTIVE:
+                if tier > CommandTier.READ_ONLY:
                     return tier, f"`find -exec`: {reason}"
     return CommandTier.READ_ONLY, "`find` reads only"

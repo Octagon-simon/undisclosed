@@ -28,6 +28,7 @@ from app.agent.prompt import (
     append_connected_app_mcp_notice,
 )
 from app.agent.toolkit.audio_analysis_toolkit import AudioAnalysisToolkit
+from app.agent.toolkit.governance_toolkit import gate_worker_tools
 from app.agent.toolkit.human_toolkit import HumanToolkit
 
 # TODO: Remove NoteTakingToolkit and use TerminalToolkit instead
@@ -199,6 +200,12 @@ def multi_modal_agent(
     tool_names = [
         name for name in ordered_tool_names if name in available_tool_names
     ]
+    tools = gate_worker_tools(
+        tools,
+        api_task_id=options.project_id,
+        agent_name=Agents.multi_modal_agent,
+    )
+
     system_message = MULTI_MODAL_SYS_PROMPT.format(
         platform_system=platform.system(),
         platform_machine=platform.machine(),

@@ -14,11 +14,16 @@
 
 import mimetypes
 import os
+import shutil
+import time
+from contextlib import nullcontext
 from dataclasses import dataclass
+from datetime import datetime
+from glob import escape as glob_escape
 from pathlib import Path
 from typing import Literal
 
-from camel.toolkits import FileToolkit as BaseFileToolkit
+from camel.toolkits import FileToolkit as BaseFileToolkit, FunctionTool
 
 from app.agent.toolkit.abstract_toolkit import AbstractToolkit
 from app.component.environment import env
@@ -34,6 +39,7 @@ from app.utils.listen.toolkit_listen import (
     auto_listen_toolkit,
     listen_toolkit,
 )
+from app.utils.scratch_files import is_scratch_file
 from app.utils.space_overlay_client import (
     path_write_lock,
     post_overlay_write,
@@ -42,7 +48,6 @@ from app.utils.space_overlay_client import (
     sha256_of_file,
     should_record_overlay,
 )
-
 
 # ---------------------------------------------------------------------------
 # Text fast-path for read_file.
@@ -68,6 +73,9 @@ _TEXT_EXTENSIONS: frozenset[str] = frozenset(
         ".scss", ".sh", ".sql", ".svelte", ".swift", ".tf", ".tfvars",
         ".toml", ".ts", ".tsv", ".tsx", ".txt", ".vue", ".xml", ".yaml",
         ".yml", ".zsh", ".astro", ".mdx",
+        # scratch suffixes are hidden from listings but must stay readable:
+        # a .bak is the only undo when git is not available.
+        ".bak", ".orig", ".rej", ".backup", ".old",
     }
 )
 
@@ -124,6 +132,8 @@ class FileToolkit(BaseFileToolkit, AbstractToolkit):
         working_directory: str | None = None,
         timeout: float | None = None,
         default_encoding: str = "utf-8",
+        #on: a timestamped .bak is the only undo for an in-place edit.
+        #scratch suffixes keep those copies out of listings and git.
         backup_enabled: bool = True,
     ) -> None:
         if working_directory is None:
@@ -138,6 +148,29 @@ class FileToolkit(BaseFileToolkit, AbstractToolkit):
     @property
     def _encoding(self) -> str:
         return getattr(self, "default_encoding", None) or "utf-8"
+
+    def _create_backup(self, file_path: Path) -> Path | None:
+        #editing a backup would spawn backup-of-backup chains
+        if is_scratch_file(file_path.name):
+            return None
+        if not self.backup_enabled or not file_path.exists():
+            return None
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        candidate = file_path.parent / f"{file_path.name}.{timestamp}.bak"
+        #two edits in the same second must not overwrite the first restore point
+        counter = 1
+        while candidate.exists():
+            candidate = (
+                file_path.parent
+                / f"{file_path.name}.{timestamp}_{counter}.bak"
+            )
+            counter += 1
+        try:
+            shutil.copy2(file_path, candidate)
+        except OSError:
+            return None
+        return candidate
 
     def _is_explicit_text(self, path: Path) -> bool:
         r"""True when the extension/filename is a known text or code format."""
@@ -375,3 +408,264 @@ class FileToolkit(BaseFileToolkit, AbstractToolkit):
                 ),
             )
         return res
+
+    def _confined_path(self, raw: str) -> tuple[Path | None, str | None]:
+        """Resolve ``raw`` inside the workspace, or explain why it escapes."""
+        root = self.working_directory.resolve()
+        candidate = Path(raw).expanduser()
+        if not candidate.is_absolute():
+            candidate = root / candidate
+        target = candidate.resolve()
+
+        if target == root:
+            return None, "refusing to delete the workspace root"
+        if not target.is_relative_to(root):
+            return None, (
+                f"{target} is outside the workspace ({root}); deletion is "
+                "only allowed inside it"
+            )
+        if ".git" in target.relative_to(root).parts:
+            return None, "refusing to delete git metadata"
+        if target.name == ".undisclosed-workdir.json":
+            return None, "refusing to delete the workspace marker"
+        return target, None
+
+    def delete_files(
+        self, paths: str | list[str], recursive: bool = False
+    ) -> str:
+        r"""Delete files or directories inside the workspace.
+
+        Use this instead of `shell_exec("rm ...")`, which is blocked in every
+        mode. Paths are resolved against the working directory. Anything that
+        resolves outside it is refused, as are the workspace root, `.git`
+        metadata, and the workspace marker. Relative paths cannot escape with
+        `..`, and a symlink that points outside the workspace is refused.
+
+        Args:
+            paths (str | list[str]): One path or a list of paths.
+            recursive (bool): Required to delete a non-empty directory.
+
+        Returns:
+            str: One `Deleted:` or `Error:` line per path.
+        """
+        if not isinstance(paths, (str, list, tuple)):
+            return "Error: paths must be a string or a list of strings"
+        items = [paths] if isinstance(paths, str) else list(paths)
+        results: list[str] = []
+
+        for raw in items:
+            if not isinstance(raw, str) or not raw.strip():
+                results.append("Error: empty path")
+                continue
+
+            target, refusal = self._confined_path(raw)
+            if target is None:
+                results.append(f"Error: {refusal}")
+                continue
+            if not target.exists() and not target.is_symlink():
+                results.append(f"Error: {target} does not exist")
+                continue
+
+            try:
+                #hash before unlink: the overlay needs the base it replaced
+                base_hash = (
+                    sha256_of_file(target) if target.is_file() else None
+                )
+                if target.is_dir() and not target.is_symlink():
+                    if recursive:
+                        shutil.rmtree(target)
+                    else:
+                        target.rmdir()
+                else:
+                    target.unlink()
+            except OSError as exc:
+                hint = (
+                    " (pass recursive=True to remove a non-empty directory)"
+                    if target.is_dir()
+                    else ""
+                )
+                results.append(f"Error: failed to delete {target}: {exc}{hint}")
+                continue
+
+            results.append(f"Deleted: {target}")
+            self._record_overlay_delete(target, base_hash)
+
+        return "\n".join(results)
+
+    def _backups_for(self, target: Path) -> list[Path]:
+        #newest first; glob is anchored to this exact filename, not a listing
+        try:
+            pattern = f"{glob_escape(target.name)}.*.bak"
+            matches = list(target.parent.glob(pattern))
+        except OSError:
+            return []
+        return sorted(
+            (p for p in matches if p.is_file()),
+            key=lambda p: (p.stat().st_mtime, p.name),
+            reverse=True,
+        )
+
+    def list_backups(self, file_path: str) -> str:
+        r"""List the timestamped backups that exist for one file.
+
+        Every in-place edit copies the previous version to
+        ``<name>.<YYYYmmdd_HHMMSS>.bak`` before writing. Those copies are
+        hidden from directory listings, so use this to find one, then
+        `restore_backup` to put it back.
+
+        Args:
+            file_path (str): The file the backups belong to, relative to the
+                working directory or absolute.
+
+        Returns:
+            str: One line per backup, newest first, or a message saying none
+            exist.
+        """
+        target, refusal = self._confined_path(file_path)
+        if target is None:
+            return f"Error: {refusal}"
+
+        backups = self._backups_for(target)
+        if not backups:
+            return (
+                f"No backups found for {target}. Backups are only created "
+                "when an existing file is edited."
+            )
+
+        lines = [f"Backups for {target} (newest first):"]
+        for backup in backups:
+            try:
+                stat = backup.stat()
+                stamp = time.strftime(
+                    "%Y-%m-%d %H:%M:%S", time.localtime(stat.st_mtime)
+                )
+                lines.append(f"- {backup} ({stat.st_size} bytes, {stamp})")
+            except OSError:
+                lines.append(f"- {backup}")
+        return "\n".join(lines)
+
+    def restore_backup(
+        self, file_path: str, backup_path: str | None = None
+    ) -> str:
+        r"""Restore a file from one of its timestamped `.bak` copies.
+
+        With no `backup_path`, the newest backup is restored. The current
+        contents are backed up first, so the restore itself can be undone.
+        Nothing outside the workspace is touched, and the restored file is
+        reported as a normal file write.
+
+        Args:
+            file_path (str): The file to restore.
+            backup_path (str | None): A specific backup from `list_backups`.
+
+        Returns:
+            str: A `Restored:` line naming both paths, or an `Error:` line.
+        """
+        target, refusal = self._confined_path(file_path)
+        if target is None:
+            return f"Error: {refusal}"
+
+        backups = self._backups_for(target)
+        if backup_path is not None:
+            source, refusal = self._confined_path(backup_path)
+            if source is None:
+                return f"Error: {refusal}"
+            if source not in backups:
+                return (
+                    f"Error: {source} is not a backup of {target}. Use "
+                    "list_backups to see the available copies."
+                )
+        elif backups:
+            source = backups[0]
+        else:
+            return (
+                f"Error: no backups found for {target}. Nothing to restore."
+            )
+
+        try:
+            payload = source.read_bytes()
+        except OSError as exc:
+            return f"Error: failed to read backup {source}: {exc}"
+
+        context = run_context_for_task(self.api_task_id)
+        overlay = None
+        if context is not None:
+            overlay = relative_to_workdir(context, target)
+            if overlay is not None and not should_record_overlay(
+                context, overlay[1]
+            ):
+                overlay = None
+
+        lock = (
+            path_write_lock(
+                context.space_id,
+                context.project_id,
+                context.run_id,
+                overlay[0],
+            )
+            if context is not None and overlay is not None
+            else nullcontext()
+        )
+
+        existed = target.exists()
+        with lock:
+            base_hash = sha256_of_file(target) if existed else None
+            try:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                #backup the current bytes before overwriting them
+                self._create_backup(target)
+                target.write_bytes(payload)
+            except OSError as exc:
+                return f"Error: failed to restore {target}: {exc}"
+
+            if context is not None and overlay is not None:
+                rel_path, resolved = overlay
+                try:
+                    post_overlay_write(
+                        context,
+                        rel_path,
+                        resolved,
+                        base_hash=base_hash,
+                        status="modified" if existed else "added",
+                        file_hash=sha256_of_file(resolved),
+                        size=resolved.stat().st_size,
+                        mode=resolved.stat().st_mode,
+                    )
+                except OSError as exc:
+                    return (
+                        f"Restored {target} from {source}, but recording the "
+                        f"change failed: {exc}"
+                    )
+
+        return f"Restored: {target} from {source}"
+
+    def _record_overlay_delete(
+        self, target: Path, base_hash: str | None = None
+    ) -> None:
+        context = run_context_for_task(self.api_task_id)
+        if context is None:
+            return
+        overlay = relative_to_workdir(context, target)
+        if overlay is None:
+            return
+        rel_path, resolved = overlay
+        if not should_record_overlay(context, resolved):
+            return
+        post_overlay_write(
+            context,
+            rel_path,
+            resolved,
+            base_hash=base_hash,
+            status="deleted",
+            file_hash=None,
+            size=None,
+            mode=None,
+        )
+
+    def get_tools(self) -> list[FunctionTool]:
+        return [
+            *super().get_tools(),
+            FunctionTool(self.delete_files),
+            FunctionTool(self.list_backups),
+            FunctionTool(self.restore_backup),
+        ]

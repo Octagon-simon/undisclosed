@@ -493,8 +493,12 @@ class TaskLock:
     ASK mode). None until the first solve loop for this task lock creates
     one."""
     approval_scopes: dict[str, set[str]]
-    """Task-scoped suppression scopes keyed by task id. Resets when the run
-    moves to a new task, so a new turn prompts again."""
+    """Session-scoped suppression scopes keyed by the lock id. A follow-up
+    turn keeps them, so "suppress for the rest of this task" actually holds."""
+    governance_mode: str | None
+    """Session governance mode ("ask" / "auto") resolved from toolkit_config
+    at the start of a solve turn. Workers and triggers read it so they gate
+    with the same policy as the single agent."""
 
     def __init__(
         self, id: str, queue: asyncio.Queue, human_input: dict
@@ -532,6 +536,7 @@ class TaskLock:
         self._memory_finalized_runs = set()
         self.approval_manager = None
         self.approval_scopes = {}
+        self.governance_mode = None
         # Identifies the consumer currently attached to this project's queue.
         # A re-attach (resume) assigns a new id; the older consumer's loop sees
         # the mismatch and exits, so exactly one consumer drains the queue.
@@ -543,7 +548,10 @@ class TaskLock:
         )
 
     def approval_scope_key(self, task_id: str | None = None) -> str:
-        return task_id or self.current_task_id or self.id
+        # The suppression allowlist is session-scoped, not turn-scoped. A
+        # follow-up turn gets a fresh `current_task_id`; keying by it would
+        # silently drop "suppress for the rest of this task" at every turn.
+        return task_id or self.id
 
     def allowed_approval_scopes(self, task_id: str | None = None) -> set[str]:
         """Scopes already suppressed for this task. Reads are the default."""

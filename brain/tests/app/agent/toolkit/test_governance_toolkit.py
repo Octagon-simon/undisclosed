@@ -23,6 +23,7 @@ unavailable.
 
 from __future__ import annotations
 
+import copy
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -33,6 +34,12 @@ from app.agent.toolkit.governance_toolkit import (
     DENIED_DECISIONS,
     GovernanceMode,
     _call_tier,
+    _normalize_intent,
+    _with_intent_argument,
+    gate_worker_tools,
+    mode_from_toolkit_config,
+    record_session_governance_mode,
+    session_governance_mode,
     wrap_with_approval,
 )
 
@@ -63,6 +70,12 @@ async def _shell_tool(command: str) -> str:
 
 def _make_shell_tool() -> FunctionTool:
     return FunctionTool(_shell_tool)
+
+
+def _without_intent(schema: dict) -> dict:
+    cloned = copy.deepcopy(schema)
+    cloned["function"]["parameters"]["properties"].pop("intent", None)
+    return cloned
 
 
 def _patch_manager(
@@ -112,7 +125,15 @@ class TestWrapWithApproval:
         )
 
         assert gated.get_function_name() == original_name
-        assert gated.openai_tool_schema == original_schema
+        original_properties = tool.openai_tool_schema["function"]["parameters"][
+            "properties"
+        ]
+        gated_properties = gated.openai_tool_schema["function"]["parameters"][
+            "properties"
+        ]
+        assert "intent" not in original_properties
+        assert gated_properties["intent"]["type"] == "string"
+        assert _without_intent(gated.openai_tool_schema) == original_schema
 
     @pytest.mark.asyncio
     async def test_approved_call_runs_underlying_tool(self, monkeypatch):
@@ -353,6 +374,31 @@ class TestTaskAllowlist:
         manager.request_approval.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_heredoc_code_run_is_suppressed_by_runs_code(
+        self, monkeypatch
+    ):
+        # Regression: the heredoc body used to be parsed as extra shell
+        # commands, adding File writes / Builds & tests to the call. Selecting
+        # only "Runs code" could then never suppress it.
+        command = (
+            "cat > /tmp/shot.cjs <<'EOF'\n"
+            "const { chromium } = require('playwright');\n"
+            "EOF\n"
+            "node /tmp/shot.cjs"
+        )
+        manager = _patch_manager(
+            monkeypatch,
+            allowed_scopes={
+                CommandScope.FILE_READS.value,
+                CommandScope.CODE_EXECUTION.value,
+            },
+        )
+        gated = self._gated(GovernanceMode.ASK)
+
+        assert await gated.func(command=command) == f"ran {command}"
+        manager.request_approval.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_unrelated_scope_does_not_suppress_a_write(self, monkeypatch):
         manager = _patch_manager(
             monkeypatch,
@@ -382,9 +428,31 @@ class TestTaskAllowlist:
         await gated.func(command="mkdir out")
         kwargs = manager.request_approval.await_args.kwargs
         assert kwargs["tier"] == int(CommandTier.WORKSPACE_WRITE)
-        assert kwargs["tier_label"] == "Writes files"
+        assert kwargs["tier_label"] == "May change files"
         assert kwargs["scopes"] == [CommandScope.FILE_WRITES.value]
         assert "workspace" in kwargs["description"]
+
+    @pytest.mark.asyncio
+    async def test_request_explains_intent_and_keeps_long_command(
+        self, monkeypatch
+    ):
+        manager = _patch_manager(monkeypatch, allowed_scopes=set())
+        gated = self._gated(GovernanceMode.ASK)
+        command = (
+            "cd /tmp && node -v && echo start && node build.js --target "
+            "production --out-dir dist --verbose --sourcemap"
+        )
+
+        await gated.func(command=command)
+        kwargs = manager.request_approval.await_args.kwargs
+
+        assert "The agent will check the node version" in kwargs["description"]
+        assert "run a JavaScript script" in kwargs["description"]
+        assert CommandScope.FILE_WRITES.value not in kwargs["scopes"]
+        assert CommandScope.CODE_EXECUTION.value in kwargs["scopes"]
+        # The old 200-char cap cut the tail of the command.
+        assert command in kwargs["detail"]
+        assert "..." not in kwargs["detail"]
 
     @pytest.mark.asyncio
     async def test_git_push_is_destructive_through_git_write(self, monkeypatch):
@@ -402,3 +470,467 @@ class TestTaskAllowlist:
         kwargs = manager.request_approval.await_args.kwargs
         assert kwargs["tier"] == int(CommandTier.DESTRUCTIVE)
         assert kwargs["scopes"] == []
+
+    @pytest.mark.asyncio
+    async def test_cd_prefix_does_not_force_a_prompt(self, monkeypatch):
+        manager = _patch_manager(
+            monkeypatch,
+            allowed_scopes={CommandScope.FILE_READS.value},
+        )
+        gated = self._gated(GovernanceMode.ASK)
+
+        command = "cd /repo && ls"
+        assert await gated.func(command=command) == f"ran {command}"
+        manager.request_approval.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_listing_card_says_reads_only(self, monkeypatch):
+        manager = _patch_manager(monkeypatch, allowed_scopes=set())
+        gated = self._gated(GovernanceMode.AUTO)
+
+        await gated.func(command="cd /repo && find . -name '*.py'")
+        kwargs = manager.request_approval.await_args.kwargs
+        assert kwargs["tier"] == int(CommandTier.READ_ONLY)
+        assert kwargs["tier_label"] == "Read only"
+        assert kwargs["scopes"] == [CommandScope.FILE_READS.value]
+        assert kwargs["description"].endswith(
+            "It only reads your workspace."
+        )
+        assert "search for files" in kwargs["description"]
+
+    @pytest.mark.asyncio
+    async def test_model_intent_leads_the_card(self, monkeypatch):
+        manager = _patch_manager(monkeypatch, allowed_scopes=set())
+        gated = self._gated(GovernanceMode.ASK)
+
+        await gated.func(
+            command="node build.js",
+            intent="i will run the production build to check the bundle",
+        )
+        description = manager.request_approval.await_args.kwargs["description"]
+        assert description.startswith(
+            "The agent will run the production build to check the bundle."
+        )
+        assert description.endswith("It runs code, which could change files.")
+
+    @pytest.mark.asyncio
+    async def test_intent_does_not_change_the_classification(self, monkeypatch):
+        manager = _patch_manager(monkeypatch, allowed_scopes=set())
+        gated = self._gated(GovernanceMode.AUTO)
+        command = "git push origin main"
+
+        await gated.func(command=command)
+        baseline = manager.request_approval.await_args.kwargs
+        await gated.func(command=command, intent="read the git log")
+        with_intent = manager.request_approval.await_args.kwargs
+
+        assert with_intent["tier"] == baseline["tier"]
+        assert with_intent["scopes"] == baseline["scopes"]
+
+    @pytest.mark.asyncio
+    async def test_intent_is_not_forwarded_to_the_tool(self, monkeypatch):
+        _patch_manager(monkeypatch, allowed_scopes=set())
+        gated = self._gated(GovernanceMode.ASK)
+
+        assert (
+            await gated.async_call(
+                command="mkdir out", intent="create the output directory"
+            )
+            == "ran mkdir out"
+        )
+
+
+class TestIntentSchema:
+    def test_malformed_schema_is_left_alone(self):
+        schema = {"type": "function", "function": {"name": "x"}}
+        assert _with_intent_argument(schema) == schema
+
+    def test_schema_without_properties_is_left_alone(self):
+        schema = {
+            "type": "function",
+            "function": {"parameters": {"type": "object"}},
+        }
+        assert _with_intent_argument(schema) == schema
+
+    def test_non_dict_schema_is_left_alone(self):
+        assert _with_intent_argument(None) is None
+
+
+class TestIntentNormalization:
+    def test_first_person_becomes_the_agent(self):
+        assert _normalize_intent("i will run the tests") == (
+            "The agent will run the tests."
+        )
+
+    def test_whitespace_and_missing_period(self):
+        assert _normalize_intent("  Run   the tests\n") == (
+            "The agent will run the tests."
+        )
+
+    def test_empty_and_non_string(self):
+        assert _normalize_intent(None) == ""
+        assert _normalize_intent("   ") == ""
+        assert _normalize_intent(42) == ""
+
+    def test_long_intent_is_capped(self):
+        text = _normalize_intent("check " + "x" * 1000)
+        assert len(text) <= 320
+        assert text.endswith("...")
+
+
+async def shell_exec(command: str) -> str:
+    """Run a shell command.
+
+    Args:
+        command: The command line.
+    """
+    return f"ran {command}"
+
+
+async def write_to_file(path: str, content: str) -> str:
+    """Write a file.
+
+    Args:
+        path: Destination path.
+        content: File body.
+    """
+    return f"wrote {path}: {content}"
+
+
+async def shell_write_content_to_file(content: str, file_path: str) -> str:
+    """Write content to a file through the terminal toolkit.
+
+    Args:
+        content: File body.
+        file_path: Destination path.
+    """
+    return f"wrote {file_path}: {content}"
+
+
+async def shell_write_to_process(id: str, command: str) -> str:
+    """Send input to a running process.
+
+    Args:
+        id: Session id.
+        command: Text to send to stdin.
+    """
+    return f"sent {command} to {id}"
+
+
+async def edit_file(path: str, old_content: str, new_content: str) -> str:
+    """Edit a file in place.
+
+    Args:
+        path: File path.
+        old_content: Text to replace.
+        new_content: Replacement text.
+    """
+    return f"edited {path}"
+
+
+async def apply_patch(patch: str) -> str:
+    """Apply a unified diff.
+
+    Args:
+        patch: The diff text.
+    """
+    return f"patched {patch}"
+
+
+async def execute_code(code: str) -> str:
+    """Run Python code.
+
+    Args:
+        code: The source snippet.
+    """
+    return f"executed {code}"
+
+
+async def send_message_to_user(message: str) -> str:
+    """Send a message.
+
+    Args:
+        message: The message body.
+    """
+    return f"sent {message}"
+
+
+def _worker_tools() -> dict[str, FunctionTool]:
+    tools = [
+        FunctionTool(shell_exec),
+        FunctionTool(shell_write_content_to_file),
+        FunctionTool(shell_write_to_process),
+        FunctionTool(write_to_file),
+        FunctionTool(edit_file),
+        FunctionTool(apply_patch),
+        FunctionTool(execute_code),
+        FunctionTool(send_message_to_user),
+    ]
+    return {tool.get_function_name(): tool for tool in tools}
+
+
+def _worker_lock(monkeypatch, mode):
+    """Point the gate's manager lookup and the session-mode lookup at one
+    lock carrying `mode`."""
+    manager = MagicMock()
+    manager.request_approval = AsyncMock(return_value="approved")
+    task_lock = MagicMock()
+    task_lock.approval_manager = manager
+    task_lock.governance_mode = mode
+    task_lock.allowed_approval_scopes = lambda: {
+        CommandScope.FILE_READS.value
+    }
+    monkeypatch.setattr(
+        "app.agent.toolkit.governance_toolkit.get_task_lock",
+        lambda project_id: task_lock,
+    )
+    monkeypatch.setattr(
+        "app.agent.toolkit.governance_toolkit.get_task_lock_if_exists",
+        lambda project_id: task_lock,
+    )
+    return manager
+
+
+class TestTerminalWriteTools:
+    """The terminal toolkit's non-shell tools must gate like `shell_exec`.
+
+    `shell_write_content_to_file` and `shell_write_to_process` are separate
+    FunctionTools. Gating only `shell_exec` let a file write through with no
+    card in ASK mode.
+    """
+
+    def _gated(self, tool, mode):
+        return wrap_with_approval(
+            tool,
+            field_name="terminal",
+            agent_name="single_agent",
+            api_task_id="project_1",
+            mode=mode,
+        )
+
+    @pytest.mark.asyncio
+    async def test_file_write_prompts_in_ask(self, monkeypatch):
+        manager = _patch_manager(monkeypatch, allowed_scopes=set())
+        gated = self._gated(
+            FunctionTool(shell_write_content_to_file), GovernanceMode.ASK
+        )
+
+        await gated.func(content="hello\n", file_path="smoke.txt")
+        manager.request_approval.assert_awaited_once()
+        kwargs = manager.request_approval.await_args.kwargs
+        assert kwargs["tier"] == int(CommandTier.WORKSPACE_WRITE)
+        assert kwargs["scopes"] == [CommandScope.FILE_WRITES.value]
+
+    @pytest.mark.asyncio
+    async def test_file_write_skips_prompt_in_auto(self, monkeypatch):
+        manager = _patch_manager(monkeypatch)
+        gated = self._gated(
+            FunctionTool(shell_write_content_to_file), GovernanceMode.AUTO
+        )
+
+        await gated.func(content="hello\n", file_path="smoke.txt")
+        manager.request_approval.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_file_write_is_suppressed_by_file_writes_scope(
+        self, monkeypatch
+    ):
+        manager = _patch_manager(
+            monkeypatch,
+            allowed_scopes={CommandScope.FILE_WRITES.value},
+        )
+        gated = self._gated(
+            FunctionTool(shell_write_content_to_file), GovernanceMode.ASK
+        )
+
+        await gated.func(content="hello\n", file_path="smoke.txt")
+        manager.request_approval.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_write_to_process_prompts_even_in_auto(self, monkeypatch):
+        manager = _patch_manager(
+            monkeypatch,
+            allowed_scopes={scope.value for scope in CommandScope},
+        )
+        gated = self._gated(
+            FunctionTool(shell_write_to_process), GovernanceMode.AUTO
+        )
+
+        await gated.func(id="session_1", command="rm -rf /")
+        manager.request_approval.assert_awaited_once()
+        kwargs = manager.request_approval.await_args.kwargs
+        assert kwargs["tier"] == int(CommandTier.DESTRUCTIVE)
+        assert kwargs["scopes"] == []
+
+
+class TestWorkerParity:
+    def test_mutating_tools_are_wrapped_and_reads_are_not(self):
+        tools = _worker_tools()
+        gated = gate_worker_tools(
+            list(tools.values()),
+            api_task_id="project_1",
+            agent_name="developer_agent",
+        )
+        by_name = {tool.get_function_name(): tool for tool in gated}
+
+        for name in (
+            "shell_exec",
+            "shell_write_content_to_file",
+            "shell_write_to_process",
+            "write_to_file",
+            "edit_file",
+            "apply_patch",
+            "execute_code",
+        ):
+            assert by_name[name] is not tools[name]
+            assert (
+                _without_intent(by_name[name].openai_tool_schema)
+                == tools[name].openai_tool_schema
+            )
+        assert (
+            by_name["send_message_to_user"] is tools["send_message_to_user"]
+        )
+
+    def test_gating_preserves_order_and_count(self):
+        tools = list(_worker_tools().values())
+        gated = gate_worker_tools(
+            tools, api_task_id="project_1", agent_name="browser_agent"
+        )
+        assert [t.get_function_name() for t in gated] == [
+            t.get_function_name() for t in tools
+        ]
+
+    @pytest.mark.asyncio
+    async def test_worker_shell_prompts_in_ask(self, monkeypatch):
+        manager = _worker_lock(monkeypatch, "ask")
+        tools = _worker_tools()
+        gated = gate_worker_tools(
+            list(tools.values()),
+            api_task_id="project_1",
+            agent_name="developer_agent",
+        )
+        shell = next(
+            tool for tool in gated if tool.get_function_name() == "shell_exec"
+        )
+
+        assert await shell.func(command="mkdir out") == "ran mkdir out"
+        manager.request_approval.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_worker_shell_skips_prompt_in_auto(self, monkeypatch):
+        manager = _worker_lock(monkeypatch, "auto")
+        tools = _worker_tools()
+        gated = gate_worker_tools(
+            list(tools.values()),
+            api_task_id="project_1",
+            agent_name="developer_agent",
+        )
+        shell = next(
+            tool for tool in gated if tool.get_function_name() == "shell_exec"
+        )
+
+        assert await shell.func(command="mkdir out") == "ran mkdir out"
+        manager.request_approval.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_worker_code_execution_prompts_in_ask(self, monkeypatch):
+        manager = _worker_lock(monkeypatch, "ask")
+        tools = _worker_tools()
+        gated = gate_worker_tools(
+            list(tools.values()),
+            api_task_id="project_1",
+            agent_name="developer_agent",
+        )
+        code = next(
+            tool
+            for tool in gated
+            if tool.get_function_name() == "execute_code"
+        )
+
+        await code.func(code="print(1)")
+        manager.request_approval.assert_awaited_once()
+        kwargs = manager.request_approval.await_args.kwargs
+        assert kwargs["tier"] == int(CommandTier.WORKSPACE_WRITE)
+
+    @pytest.mark.asyncio
+    async def test_worker_destructive_command_prompts_even_in_auto(
+        self, monkeypatch
+    ):
+        manager = _worker_lock(monkeypatch, "auto")
+        tools = _worker_tools()
+        gated = gate_worker_tools(
+            list(tools.values()),
+            api_task_id="project_1",
+            agent_name="browser_agent",
+        )
+        shell = next(
+            tool for tool in gated if tool.get_function_name() == "shell_exec"
+        )
+
+        await shell.func(command="git push origin main")
+        manager.request_approval.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_unrecorded_mode_fails_closed_to_ask(self, monkeypatch):
+        manager = _worker_lock(monkeypatch, None)
+        tools = _worker_tools()
+        gated = gate_worker_tools(
+            list(tools.values()),
+            api_task_id="project_1",
+            agent_name="document_agent",
+        )
+        write = next(
+            tool
+            for tool in gated
+            if tool.get_function_name() == "write_to_file"
+        )
+
+        await write.func(path="a.txt", content="x")
+        manager.request_approval.assert_awaited_once()
+
+
+class TestSessionMode:
+    def test_records_coerced_mode(self, monkeypatch):
+        task_lock = MagicMock()
+        monkeypatch.setattr(
+            "app.agent.toolkit.governance_toolkit.get_task_lock_if_exists",
+            lambda project_id: task_lock,
+        )
+
+        record_session_governance_mode("project_1", "ask")
+        assert task_lock.governance_mode == "ask"
+
+        record_session_governance_mode("project_1", None)
+        assert task_lock.governance_mode == "auto"
+
+    def test_missing_lock_is_a_no_op(self, monkeypatch):
+        monkeypatch.setattr(
+            "app.agent.toolkit.governance_toolkit.get_task_lock_if_exists",
+            lambda project_id: None,
+        )
+        record_session_governance_mode("project_1", "ask")
+        assert session_governance_mode("project_1") is GovernanceMode.ASK
+
+    def test_reads_the_recorded_mode(self, monkeypatch):
+        task_lock = MagicMock()
+        task_lock.governance_mode = "ask"
+        monkeypatch.setattr(
+            "app.agent.toolkit.governance_toolkit.get_task_lock_if_exists",
+            lambda project_id: task_lock,
+        )
+        assert session_governance_mode("project_1") is GovernanceMode.ASK
+
+        task_lock.governance_mode = "auto"
+        assert session_governance_mode("project_1") is GovernanceMode.AUTO
+
+    def test_toolkit_config_parsing(self):
+        assert (
+            mode_from_toolkit_config({"governance": {"mode": "ask"}})
+            is GovernanceMode.ASK
+        )
+        assert (
+            mode_from_toolkit_config({"governance": {"mode": "auto"}})
+            is GovernanceMode.AUTO
+        )
+        assert mode_from_toolkit_config(None) is GovernanceMode.AUTO
+        assert mode_from_toolkit_config({}) is GovernanceMode.AUTO

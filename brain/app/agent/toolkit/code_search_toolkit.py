@@ -36,6 +36,10 @@ from camel.toolkits.base import BaseToolkit
 from app.agent.toolkit.abstract_toolkit import AbstractToolkit
 from app.service.task import Agents
 from app.utils.listen.toolkit_listen import auto_listen_toolkit
+from app.utils.scratch_files import (
+    SCRATCH_FILE_SUFFIXES,
+    is_scratch_file as _is_scratch_file,
+)
 
 logger = logging.getLogger("code_search_toolkit")
 
@@ -60,7 +64,13 @@ _IGNORE_DIRS = {
     "coverage",
     ".idea",
     ".vscode",
+    ".tmp",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
 }
+
+
 
 
 @auto_listen_toolkit(BaseToolkit)
@@ -171,6 +181,8 @@ class CodeSearchToolkit(BaseToolkit, AbstractToolkit):
             args.append("-F")
         for d in _IGNORE_DIRS:
             args += ["-g", f"!**/{d}/**"]
+        for suffix in SCRATCH_FILE_SUFFIXES:
+            args += ["-g", f"!*{suffix}"]
         for g in includes or []:
             args += ["-g", g]
         args += ["--", q, str(target)]
@@ -202,6 +214,8 @@ class CodeSearchToolkit(BaseToolkit, AbstractToolkit):
             args.append("-F")
         for d in _IGNORE_DIRS:
             args.append(f"--exclude-dir={d}")
+        for suffix in SCRATCH_FILE_SUFFIXES:
+            args.append(f"--exclude=*{suffix}")
         for g in includes or []:
             args.append(f"--include={g}")
         args += ["--", q, str(target)]
@@ -237,6 +251,8 @@ class CodeSearchToolkit(BaseToolkit, AbstractToolkit):
             for dirpath, dirnames, filenames in os.walk(target):
                 dirnames[:] = [d for d in dirnames if d not in _IGNORE_DIRS]
                 for fn in filenames:
+                    if _is_scratch_file(fn):
+                        continue
                     if includes and not any(
                         fnmatch.fnmatch(fn, g) for g in includes
                     ):
@@ -246,7 +262,7 @@ class CodeSearchToolkit(BaseToolkit, AbstractToolkit):
                     break
         for fp in files:
             try:
-                with open(fp, "r", encoding="utf-8", errors="ignore") as fh:
+                with open(fp, encoding="utf-8", errors="ignore") as fh:
                     for i, line in enumerate(fh, start=1):
                         hit = (
                             pattern.search(line)
@@ -302,6 +318,8 @@ class CodeSearchToolkit(BaseToolkit, AbstractToolkit):
                 if entry.is_dir():
                     dirs.append(f"{entry.name}/")
                 else:
+                    if _is_scratch_file(entry.name):
+                        continue
                     try:
                         size = entry.stat().st_size
                     except Exception:  # noqa: BLE001

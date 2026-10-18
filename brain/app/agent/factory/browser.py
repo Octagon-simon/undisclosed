@@ -29,6 +29,7 @@ from app.agent.prompt import (
     BROWSER_SYS_PROMPT,
     append_connected_app_mcp_notice,
 )
+from app.agent.toolkit.governance_toolkit import gate_worker_tools
 from app.agent.toolkit.human_toolkit import HumanToolkit
 from app.agent.toolkit.hybrid_browser_toolkit import HybridBrowserToolkit
 
@@ -411,6 +412,14 @@ def browser_agent(
     if use_terminal and terminal_toolkit:
         tools.extend(terminal_toolkit)
         tool_names.append(TerminalToolkit.toolkit_name())
+
+    # Delegate the same approval policy as the single agent: a browser worker
+    # gets a shell, so an ungated one could run what the user must approve.
+    tools = gate_worker_tools(
+        tools,
+        api_task_id=options.project_id,
+        agent_name=Agents.browser_agent,
+    )
 
     # Build external browser notice
     external_browser_notice = ""

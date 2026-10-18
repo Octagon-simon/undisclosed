@@ -35,6 +35,11 @@ todo.md
 
 # Editor/agent scratch backups (dead duplicate code — token/context noise)
 *.bak
+*.orig
+*.rej
+*.backup
+*.old
+*~
 
 # Local backups
 .tmp/

@@ -31,6 +31,9 @@ from camel.toolkits import (
     WebFetchToolkit,
 )
 
+from app.agent.toolkit.code_query_toolkit import CodeQueryToolkit
+from app.agent.toolkit.code_review_toolkit import CodeReviewToolkit
+from app.agent.toolkit.code_search_toolkit import CodeSearchToolkit
 from app.agent.toolkit.depth_limited_agent_toolkit import (
     DepthLimitedAgentToolkit,
 )
@@ -38,6 +41,7 @@ from app.agent.toolkit.diff_toolkit import (
     WRITE_TOOL_NAMES as DIFF_WRITE_TOOL_NAMES,
     DiffToolkit,
 )
+from app.agent.toolkit.figma_toolkit import FigmaToolkit
 from app.agent.toolkit.file_write_toolkit import FileToolkit
 from app.agent.toolkit.git_toolkit import (
     WRITE_TOOL_NAMES as GIT_WRITE_TOOL_NAMES,
@@ -47,36 +51,33 @@ from app.agent.toolkit.github_toolkit import (
     WRITE_TOOL_NAMES as GITHUB_WRITE_TOOL_NAMES,
     GithubToolkit,
 )
+from app.agent.toolkit.google_calendar_toolkit import GoogleCalendarToolkit
+from app.agent.toolkit.governance_toolkit import (
+    GovernanceMode,
+    gate_tool_if_named,
+    record_session_governance_mode,
+)
+from app.agent.toolkit.human_toolkit import HumanToolkit
+from app.agent.toolkit.hybrid_browser_toolkit import HybridBrowserToolkit
+from app.agent.toolkit.lark_toolkit import LarkToolkit
+from app.agent.toolkit.linkedin_toolkit import LinkedInToolkit
+from app.agent.toolkit.memory_toolkit import MemoryToolkit
 from app.agent.toolkit.mongodb_toolkit import (
     WRITE_TOOL_NAMES as MONGO_WRITE_TOOL_NAMES,
     MongoDBToolkit,
 )
-from app.agent.toolkit.governance_toolkit import (
-    GovernanceMode,
-    wrap_with_approval,
-)
-from app.agent.toolkit.human_toolkit import HumanToolkit
-from app.agent.toolkit.memory_toolkit import MemoryToolkit
-from app.agent.toolkit.project_context_toolkit import ProjectContextToolkit
-from app.agent.toolkit.code_query_toolkit import CodeQueryToolkit
-from app.agent.toolkit.code_search_toolkit import CodeSearchToolkit
-from app.agent.toolkit.hybrid_browser_toolkit import HybridBrowserToolkit
 from app.agent.toolkit.observable_todo_toolkit import ObservableTodoToolkit
-from app.agent.toolkit.screenshot_toolkit import ScreenshotToolkit
-from app.agent.toolkit.figma_toolkit import FigmaToolkit
-from app.agent.toolkit.google_calendar_toolkit import GoogleCalendarToolkit
-from app.agent.toolkit.lark_toolkit import LarkToolkit
-from app.agent.toolkit.linkedin_toolkit import LinkedInToolkit
+from app.agent.toolkit.project_context_toolkit import ProjectContextToolkit
 from app.agent.toolkit.reddit_toolkit import RedditToolkit
+from app.agent.toolkit.screenshot_toolkit import ScreenshotToolkit
 from app.agent.toolkit.search_toolkit import SearchToolkit
 from app.agent.toolkit.skill_toolkit import SkillToolkit
 from app.agent.toolkit.slack_toolkit import SlackToolkit
 from app.agent.toolkit.terminal_toolkit import TerminalToolkit
-from app.agent.toolkit.twitter_toolkit import TwitterToolkit
-from app.agent.toolkit.whatsapp_toolkit import WhatsAppToolkit
 from app.agent.toolkit.test_runner_toolkit import TestRunnerToolkit
-from app.agent.toolkit.code_review_toolkit import CodeReviewToolkit
+from app.agent.toolkit.twitter_toolkit import TwitterToolkit
 from app.agent.toolkit.web_deploy_toolkit import WebDeployToolkit
+from app.agent.toolkit.whatsapp_toolkit import WhatsAppToolkit
 from app.component.environment import env
 from app.hands.interface import IHands
 from app.model.chat import Chat
@@ -200,43 +201,6 @@ def _governance_mode(config: dict[str, Any]) -> GovernanceMode:
     value = _options(config, "governance")
     mode = value.get("mode") if isinstance(value, dict) else None
     return GovernanceMode.coerce(mode)
-
-
-def _gate_tool_if_named(
-    tools: list[FunctionTool | Callable],
-    *,
-    target_names: set[str],
-    field_name: str,
-    agent_name: str,
-    api_task_id: str,
-    mode: GovernanceMode = GovernanceMode.ASK,
-) -> list[FunctionTool | Callable]:
-    """Wrap matching risky tools with an approval gate. Returns new list."""
-    gated: list[FunctionTool | Callable] = []
-    for tool in tools:
-        if (
-            isinstance(tool, FunctionTool)
-            and tool.get_function_name() in target_names
-        ):
-            try:
-                gated.append(
-                    wrap_with_approval(
-                        tool,
-                        field_name=field_name,
-                        agent_name=agent_name,
-                        api_task_id=api_task_id,
-                        mode=mode,
-                    )
-                )
-                continue
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.error(
-                    "Failed to wrap tool %s with approval gate: %s",
-                    tool.get_function_name(),
-                    exc,
-                )
-        gated.append(tool)
-    return gated
 
 
 def _tag_tools(
@@ -506,6 +470,9 @@ async def assemble_single_agent_toolkits(
     assembly = ToolkitAssembly()
     # Resolve governance once; ASK mode gates risky tools below.
     governance_mode = _governance_mode(config)
+    # Publish the policy on the task lock: workers and triggers build their
+    # own toolkits and must gate with the same mode.
+    record_session_governance_mode(options.project_id, governance_mode)
     if governance_mode is GovernanceMode.ASK:
         logger.info(
             "Governance: ASK mode enabled - risky tools will require "
@@ -536,9 +503,15 @@ async def assemble_single_agent_toolkits(
         toolkit = message_integration.register_toolkits(toolkit)
         file_tools = toolkit.get_tools()
         if governance_mode is GovernanceMode.ASK:
-            file_tools = _gate_tool_if_named(
+            file_tools = gate_tool_if_named(
                 file_tools,
-                target_names={"write_to_file"},
+                target_names={
+                    "write_to_file",
+                    "edit_file",
+                    "notebook_edit_cell",
+                    "delete_files",
+                    "restore_backup",
+                },
                 field_name="file_write",
                 agent_name=Agents.single_agent,
                 api_task_id=options.project_id,
@@ -690,7 +663,7 @@ async def assemble_single_agent_toolkits(
         github_tools = message_integration.register_functions(github_tools)
         # Wrapped in AUTO too: these writes are tier 2, so approval is
         # independent of the flag.
-        github_tools = _gate_tool_if_named(
+        github_tools = gate_tool_if_named(
             github_tools,
             target_names=GITHUB_WRITE_TOOL_NAMES,
             field_name="github_write",
@@ -708,7 +681,7 @@ async def assemble_single_agent_toolkits(
     if mongo_tools:
         mongo_tools = message_integration.register_functions(mongo_tools)
         if governance_mode is GovernanceMode.ASK:
-            mongo_tools = _gate_tool_if_named(
+            mongo_tools = gate_tool_if_named(
                 mongo_tools,
                 target_names=MONGO_WRITE_TOOL_NAMES,
                 field_name="mongo_write",
@@ -783,9 +756,13 @@ async def assemble_single_agent_toolkits(
         toolkit = message_integration.register_toolkits(toolkit)
         terminal_tools = toolkit.get_tools()
         # Wrapped in AUTO too: tier 2 must prompt even with the flag off.
-        terminal_tools = _gate_tool_if_named(
+        terminal_tools = gate_tool_if_named(
             terminal_tools,
-            target_names={"shell_exec"},
+            target_names={
+                "shell_exec",
+                "shell_write_content_to_file",
+                "shell_write_to_process",
+            },
             field_name="terminal",
             agent_name=Agents.single_agent,
             api_task_id=options.project_id,
@@ -804,7 +781,7 @@ async def assemble_single_agent_toolkits(
         git_tools = toolkit.get_tools()
         # Wrapped in AUTO too: `git_push` is tier 2, so it prompts in every
         # mode. `git add`/`commit` stay tier 1 and only prompt in ASK.
-        git_tools = _gate_tool_if_named(
+        git_tools = gate_tool_if_named(
             git_tools,
             target_names=GIT_WRITE_TOOL_NAMES,
             field_name="git_write",
@@ -848,7 +825,7 @@ async def assemble_single_agent_toolkits(
         toolkit = message_integration.register_toolkits(toolkit)
         diff_tools = toolkit.get_tools()
         if governance_mode is GovernanceMode.ASK:
-            diff_tools = _gate_tool_if_named(
+            diff_tools = gate_tool_if_named(
                 diff_tools,
                 target_names=DIFF_WRITE_TOOL_NAMES,
                 field_name="file_write",

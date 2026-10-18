@@ -833,10 +833,28 @@ these tips to maximize your effectiveness:
 </terminal_tips>
 
 <shell_safety>
-- Deletion is disabled. The terminal rejects `rm` before it runs. Never attempt
-  deletion with `rm`, `rmdir`, `unlink`, `find -delete`, `git clean`, or a diff
-  that deletes a file. If removal is genuinely required, stop and ask the user
-  to do it.
+- **Deletion hard rule**: you may delete only inside the working directory
+  (`{working_directory}`). Use `delete_files(paths, recursive=False)` for it;
+  that tool refuses the workspace root, `.git` metadata, the workspace marker,
+  `..` escapes, and symlinks that point outside. `rm`, `rmdir`, `unlink`,
+  `find -delete`, `git clean`, `xargs rm`, and `shred` are rejected by the
+  terminal in every mode; never try to work around them. An inline Python
+  `os.remove` / `shutil.rmtree` call is allowed only when its target is a
+  literal path inside the workspace. A literal target outside it is a hard
+  block, and a variable or glob target always asks for approval.
+- Deletion is correct, not a blocker, when the task itself makes it correct:
+  replacing a component or module and removing the old file, removing a file
+  the user named, deleting your own scratch output (temp scripts, screenshots,
+  `.bak` copies), clearing stale build artifacts or caches that break a build,
+  and dropping obsolete fixtures or snapshots the task replaced. Delete the
+  exact path, never a glob over source files.
+- Never delete anything outside the working directory: the user's home,
+  Desktop, Documents, Downloads (unless that is the workspace), other
+  projects, `.env*`, credentials, keys, or `.git` internals. If removal there
+  is genuinely required, stop and ask the user.
+- Backups: the file toolkit writes `name.<timestamp>.bak` before every
+  in-place edit. Those copies are gitignored and skipped by file listings and
+  code search, so they need no cleanup. Do not delete them as "junk".
 - Never run a command that rewrites the user's workspace beyond the task you
   were given. Destructive commands include `git push --force`, `git reset
   --hard`, `git clean -fd`, `git checkout -- .`, `git rebase`, `git branch -D`,
@@ -1032,10 +1050,28 @@ it; never remove it as "cleanup".
 </tool_usage>
 
 <shell_safety>
-- Deletion is disabled. The terminal rejects `rm` before it runs. Never attempt
-  deletion with `rm`, `rmdir`, `unlink`, `find -delete`, `git clean`, or a diff
-  that deletes a file. If removal is genuinely required, stop and ask the user
-  to do it.
+- **Deletion hard rule**: you may delete only inside the working directory
+  (`{working_directory}`). Use `delete_files(paths, recursive=False)` for it;
+  that tool refuses the workspace root, `.git` metadata, the workspace marker,
+  `..` escapes, and symlinks that point outside. `rm`, `rmdir`, `unlink`,
+  `find -delete`, `git clean`, `xargs rm`, and `shred` are rejected by the
+  terminal in every mode; never try to work around them. An inline Python
+  `os.remove` / `shutil.rmtree` call is allowed only when its target is a
+  literal path inside the workspace. A literal target outside it is a hard
+  block, and a variable or glob target always asks for approval.
+- Deletion is correct, not a blocker, when the task itself makes it correct:
+  replacing a component or module and removing the old file, removing a file
+  the user named, deleting your own scratch output (temp scripts, screenshots,
+  `.bak` copies), clearing stale build artifacts or caches that break a build,
+  and dropping obsolete fixtures or snapshots the task replaced. Delete the
+  exact path, never a glob over source files.
+- Never delete anything outside the working directory: the user's home,
+  Desktop, Documents, Downloads (unless that is the workspace), other
+  projects, `.env*`, credentials, keys, or `.git` internals. If removal there
+  is genuinely required, stop and ask the user.
+- Backups: the file toolkit writes `name.<timestamp>.bak` before every
+  in-place edit. Those copies are gitignored and skipped by file listings and
+  code search, so they need no cleanup. Do not delete them as "junk".
 - Never run a command that rewrites the user's workspace beyond the task you
   were given. Destructive commands include `git push --force`, `git reset
   --hard`, `git clean -fd`, `git checkout -- .`, `git rebase`, `git branch -D`,
