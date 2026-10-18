@@ -157,9 +157,11 @@ to the model instead of running the action. Read-only calls, including
 read-only shell commands, are not gated.
 
 Commands are classified per segment by
-[`command_policy.py`](brain/app/agent/toolkit/command_policy.py), so a
-destructive command is refused in both modes, approval cannot override it, and a
-compound command is judged by its riskiest part. The mode is sent with every
+[`command_policy.py`](brain/app/agent/toolkit/command_policy.py). A hard-blocked
+command (`rm`, `sudo`, `dd`, `mkfs`, `find -delete`, `xargs rm`) is refused in
+both modes and approval cannot override it. The destructive tier (`git push`,
+`git reset`, `git clean`, GitHub writes) prompts in both modes, Auto included.
+A compound command is judged by its riskiest part. The mode is sent with every
 turn as `toolkit_config.governance.mode`; the gate wiring is in
 [`toolkit_assembler.py`](brain/app/agent/factory/toolkit_assembler.py) and the
 UI side in [`chatStore.ts`](agent-ui/src/store/chatStore.ts).
@@ -167,11 +169,13 @@ UI side in [`chatStore.ts`](agent-ui/src/store/chatStore.ts).
 ### What about integrations that can modify external resources?
 
 Integrations are credential-gated: the toolkit is only assembled when its token,
-OAuth grant, or MCP server is present. Ask mode (the default) gates GitHub
-writes, the MongoDB escape hatch, git writes and local file writes. It does
-**not** gate every third-party connector yet: Slack, Notion, Google Workspace, social and similar
-toolkits use the permissions of the token you gave them. Treat those tokens as
-granting the agent exactly what the token can do, and scope them accordingly.
+OAuth grant, or MCP server is present. Ask mode (the default) gates local file
+writes, the MongoDB escape hatch and git add/commit. GitHub writes and the
+destructive git actions (`push`, `reset`, `clean`) prompt in every mode, Auto
+included. It does **not** gate every third-party connector yet: Slack, Notion,
+Google Workspace, social and similar toolkits use the permissions of the token
+you gave them. Treat those tokens as granting the agent exactly what the token
+can do, and scope them accordingly.
 
 ### Can I see what it is about to do?
 

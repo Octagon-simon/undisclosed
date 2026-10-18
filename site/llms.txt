@@ -78,14 +78,23 @@ https://github.com/Octagon-simon/undisclosed/blob/upgrade/theia-1.76/docs/extra-
   `~/.undisclosed/memory`, and brain logs in `~/.undisclosed/logs`. Debug dumps
   are opt-in with `UNDISCLOSED_DEBUG=1`. The Memory panel can switch memory off
   or clear stored facts.
-- Approval mode defaults to Auto. An Ask-to-approve gate exists but is gated
-  behind the `VITE_ENABLE_GOVERNANCE_MODE` build flag and off by default while
-  it is finished. With the flag on, it gates terminal commands, file writes, git
-  writes, GitHub writes and MongoDB writes behind an explicit prompt that names
-  the action; a denial or five-minute timeout stops it.
-- Integrations stay unavailable until connected. Ask mode gates GitHub and
-  MongoDB writes; Slack, Notion and Google connectors are not gated yet, so
-  their tokens should be scoped to what the agent may touch.
+- Approval mode defaults to Ask. Terminal commands that change files, file
+  writes and deletions, and git add/commit wait for an explicit prompt that
+  names the action; a denial or five-minute timeout stops it. Auto is opt-in and
+  lets ordinary workspace edits run without asking.
+- Commands that can wipe data or take over the host (`rm`, `sudo`, `dd`,
+  `mkfs`, `fdisk`, `shutdown`, `find -delete`, `xargs rm`) are hard-blocked in
+  every mode, and approval cannot override the block. A script that deletes a
+  literal path outside the workspace is blocked; one whose delete target is a
+  variable or glob prompts in every mode. `git push`, `git reset`, `git clean`
+  and GitHub writes prompt in every mode.
+- Deletion inside the workspace is allowed when the task requires it: the
+  `delete_files` tool takes explicit paths and refuses the workspace root,
+  `.git`, `..` escapes and symlinks that point outside.
+- Integrations stay unavailable until connected. GitHub writes prompt in every
+  mode; the MongoDB write escape hatch is gated in Ask. Slack, Notion and Google
+  connectors are not gated yet, so their tokens should be scoped to what the
+  agent may touch.
 
 ## Reliability
 
