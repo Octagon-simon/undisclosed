@@ -18,15 +18,13 @@
  * pending `activeApproval` (set from the SSE `approval_request` event —
  * see `chatStore.ts`).
  *
- * Rendered at the `ProjectSection` level (a sibling of the query-group list),
- * right next to `FloatingAction` ("Stop Task"), and positioned with the same
- * `position: sticky` approach. This is deliberate: earlier attempts to render
- * it inline inside `UserQueryGroup` (buried in a framer-motion `motion.div`
- * whose inline transform clips/contains its descendants) or via a
+ * Rendered in the composer overlay in `ChatBox/index.tsx`, above the input and
+ * outside the transcript's scroll container. Earlier attempts to render it
+ * inline inside `UserQueryGroup` (buried in a framer-motion `motion.div` whose
+ * inline transform clips/contains its descendants) or via a
  * `document.body`/overlay-slot portal never became visible on screen. The
- * Stop button, a plain sticky element in the scroll flow at project level, is
- * the one control that reliably shows during a running task — so the approval
- * prompt mirrors it exactly.
+ * composer overlay is already the reliable, always-visible layer; the card
+ * sits in it and the composer is disabled while the card is pending.
  *
  * Takes `chatStore`/`taskId` as props, mirroring `TaskWorkLogAccordion`,
  * rather than resolving "the active chat store" independently via
@@ -44,6 +42,7 @@
 
 import { fetchPost } from '@/api/http';
 import { Button } from '@/components/ui/button';
+import { generateUniqueId } from '@/lib';
 import type { ActiveApproval, VanillaChatStore } from '@/store/chatStore';
 import { useProjectStore } from '@/store/projectStore';
 import { Check, Folder, Loader2, RotateCcw, ShieldAlert } from 'lucide-react';
@@ -72,20 +71,59 @@ const MEANINGFUL_ARG_KEYS = [
   'input',
 ];
 
+function readQuoted(raw: string, start: number, quote: string): string {
+  let out = '';
+  for (let i = start; i < raw.length; i += 1) {
+    const char = raw[i];
+    if (char === '\\' && i + 1 < raw.length) {
+      const next = raw[i + 1];
+      // Only undo the escapes repr adds for the delimiters. A shell command
+      // may legitimately contain `\n` or `\t`, so leave those alone.
+      out += next === quote || next === '\\' ? next : char + next;
+      i += 1;
+      continue;
+    }
+    if (char === quote) return out;
+    out += char;
+  }
+  return out;
+}
+
+function readBare(raw: string, start: number): string {
+  const rest = raw.slice(start);
+  const match = rest.match(/^([\s\S]*?)(?=,\s*[A-Za-z_]\w*\s*=|\s*\)\s*$)/);
+  return (match ? match[1] : rest).trim();
+}
+
 function friendlyApprovalDetail(detail: string): string {
   const raw = (detail || '').trim();
   if (!raw) return '';
   for (const key of MEANINGFUL_ARG_KEYS) {
-    // key='...' or key="..." (non-greedy to the matching quote)
-    const match = raw.match(new RegExp(`${key}\\s*=\\s*(['"])([\\s\\S]*?)\\1`));
-    if (match && match[2].trim()) return match[2];
+    // The value may be quoted (Python repr) and contain escaped delimiters.
+    // The old non-greedy regex stopped at the first inner quote, which cut
+    // commands like `node -e "const p=require('./x')"` mid-token.
+    const match = raw.match(new RegExp(`(?:^|[\\s,(])${key}\\s*=\\s*`));
+    if (!match) continue;
+    const start = (match.index ?? 0) + match[0].length;
+    const quote = raw[start];
+    const value =
+      quote === "'" || quote === '"'
+        ? readQuoted(raw, start + 1, quote)
+        : readBare(raw, start);
+    if (value.trim()) return value;
   }
   return raw;
 }
 
 export type ApprovalTier = 'read_only' | 'workspace_write' | 'destructive';
 export type ApprovalDecision = 'approve' | 'deny';
-export type ApprovalScope = 'reads' | 'writes' | 'tests' | 'installs' | 'git';
+export type ApprovalScope =
+  | 'reads'
+  | 'writes'
+  | 'tests'
+  | 'installs'
+  | 'git'
+  | 'code';
 
 const SCOPE_OPTIONS: {
   id: ApprovalScope;
@@ -113,6 +151,11 @@ const SCOPE_OPTIONS: {
     label: 'Git add & commit',
     hint: 'Stage and commit changes, but never push or reset',
   },
+  {
+    id: 'code',
+    label: 'Runs code',
+    hint: 'Run scripts and inline snippets',
+  },
 ];
 
 // Backend scope ids (see ApprovalScope in app/model/enums.py) mapped to the
@@ -123,6 +166,7 @@ const BACKEND_SCOPE_TO_CARD: Record<string, ApprovalScope> = {
   builds_tests: 'tests',
   dependency_installs: 'installs',
   git_add_commit: 'git',
+  code_execution: 'code',
 };
 
 const CARD_SCOPE_TO_BACKEND: Record<ApprovalScope, string> = {
@@ -131,11 +175,12 @@ const CARD_SCOPE_TO_BACKEND: Record<ApprovalScope, string> = {
   tests: 'builds_tests',
   installs: 'dependency_installs',
   git: 'git_add_commit',
+  code: 'code_execution',
 };
 
 const TIER_LABELS: Record<ApprovalTier, string> = {
   read_only: 'Read only',
-  workspace_write: 'Writes files',
+  workspace_write: 'May change files',
   destructive: 'Destructive',
 };
 
@@ -163,6 +208,8 @@ export interface ApprovalRequestCardViewProps {
   onApprove?: () => void;
   onDeny?: () => void;
   onRetry?: () => void;
+  /** Dismiss an expired prompt without resolving anything. */
+  onDismiss?: () => void;
   className?: string;
 }
 
@@ -185,9 +232,12 @@ export function ApprovalRequestCardView({
   onApprove,
   onDeny,
   onRetry,
+  onDismiss,
   className,
 }: ApprovalRequestCardViewProps) {
   const busy = submitting !== null;
+  const [showFull, setShowFull] = useState(false);
+  const isLongCommand = command.length > 280 || command.includes('\n');
 
   return (
     <div
@@ -222,7 +272,11 @@ export function ApprovalRequestCardView({
       </div>
 
       <div className="mx-4 mt-3 overflow-hidden rounded-lg border border-solid border-ds-border-neutral-default-default bg-ds-bg-neutral-muted-default">
-        <div className="max-h-40 overflow-y-auto px-3 py-2">
+        <div
+          className={`${
+            showFull ? 'max-h-[min(50vh,26rem)]' : 'max-h-40'
+          } overflow-y-auto px-3 py-2`}
+        >
           <pre className="m-0 flex gap-2 whitespace-pre-wrap break-all font-mono text-label-xs leading-relaxed text-ds-text-neutral-default-default">
             <span
               aria-hidden
@@ -230,9 +284,18 @@ export function ApprovalRequestCardView({
             >
               $
             </span>
-            <span className="min-w-0">{command}</span>
+            <span className="min-w-0 select-text">{command}</span>
           </pre>
         </div>
+        {isLongCommand ? (
+          <button
+            type="button"
+            onClick={() => setShowFull((value) => !value)}
+            className="w-full cursor-pointer border-0 border-t border-solid border-ds-border-neutral-default-default bg-transparent px-3 py-1 text-left text-label-xs text-ds-text-neutral-muted-default hover:text-ds-text-neutral-default-default"
+          >
+            {showFull ? 'Show less' : 'Show full command'}
+          </button>
+        ) : null}
       </div>
 
       {workingDirectory ? (
@@ -296,13 +359,13 @@ export function ApprovalRequestCardView({
             size="xs"
             buttonContent="text"
             disabled={busy}
-            onClick={onDeny}
+            onClick={expired ? onDismiss : onDeny}
             className="gap-1.5"
           >
-            {submitting === 'deny' ? (
+            {submitting === 'deny' && !expired ? (
               <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
             ) : null}
-            Deny
+            {expired ? 'Dismiss' : 'Deny'}
           </Button>
           {expired ? (
             <Button
@@ -373,9 +436,11 @@ export function ApprovalRequestCard({
   // only cleared on error, since a successful decision normally clears the
   // approval and the buttons go away. Reset it whenever the pending approval
   // changes so a fresh prompt doesn't inherit the previous one's disabled/
-  // spinner state.
+  // spinner state. Expiry resets it too: a decision POST still in flight can
+  // no longer land once the backend waiter is gone.
   const approvalId = approval?.approval_id;
   const allowedScopes = approval?.allowed_scopes;
+  const expired = approval?.expired === true;
   useEffect(() => {
     setSubmitting(null);
     setSelectedScopes(
@@ -383,12 +448,43 @@ export function ApprovalRequestCard({
         .map((scope) => BACKEND_SCOPE_TO_CARD[scope])
         .filter((scope): scope is ApprovalScope => Boolean(scope))
     );
-  }, [approvalId, allowedScopes]);
+  }, [approvalId, allowedScopes, expired]);
 
   if (!approval) return null;
 
   const showScopeRow =
     approval.tier !== 'destructive' && (approval.scopes?.length ?? 0) > 0;
+
+  const handleDismiss = () => {
+    if (taskId) chatStore.getState().setActiveApproval(taskId, null);
+  };
+
+  // The approval window elapsed and the tool never ran. The only way to
+  // actually re-run it is to ask the agent for it again: a fresh call comes
+  // back through the gate and prompts with a new approval id.
+  const handleRetry = async () => {
+    if (!activeProjectId || !taskId || submitting) return;
+    setSubmitting('approve');
+    const turnId = generateUniqueId();
+    chatStore.getState().setNextUserId(taskId, turnId);
+    const command = friendlyApprovalDetail(approval.detail);
+    try {
+      await fetchPost(`/chat/${activeProjectId}`, {
+        question:
+          `My approval request for the "${approval.tool_name}" action ` +
+          `(${command || 'no command shown'}) expired before I could ` +
+          'answer. Please try that step again now.',
+        task_id: turnId,
+        attaches: [],
+      });
+      chatStore.getState().setActiveApproval(taskId, null);
+      chatStore.getState().setIsPending(taskId, true);
+    } catch (error) {
+      console.error('Failed to ask the agent to retry:', error);
+      toast.error('Could not ask the agent to retry. Please try again.');
+      setSubmitting(null);
+    }
+  };
 
   const handleDecision = async (decision: ApprovalDecision) => {
     if (submitting) return;
@@ -413,12 +509,12 @@ export function ApprovalRequestCard({
     }
   };
 
-  // Mirror `FloatingAction` (the "Stop Task" control): a sticky element in the
-  // scroll flow, rendered at project level, pinned just above the bottom input.
-  // It sits slightly higher than the Stop pill (bottom-44 vs bottom-32) so the
-  // two don't overlap when both are visible during a running, gated task.
+  // Mounted in the composer overlay (ChatBox/index.tsx), directly above the
+  // input. It must not live in the scroll flow: scrolling the transcript used
+  // to move the prompt away, and sending from the composer underneath it reset
+  // the chat. The composer is disabled while this card is up.
   return (
-    <div className="pointer-events-none sticky bottom-44 left-0 right-0 top-2 z-30 mt-4 flex w-full justify-center px-2">
+    <div className="pointer-events-none relative z-30 mb-3 flex w-full justify-center px-1">
       <ApprovalRequestCardView
         toolName={approval.tool_name}
         command={friendlyApprovalDetail(approval.detail)}
@@ -434,8 +530,11 @@ export function ApprovalRequestCard({
           )
         }
         submitting={submitting}
+        expired={expired}
         onApprove={() => handleDecision('approve')}
         onDeny={() => handleDecision('deny')}
+        onRetry={handleRetry}
+        onDismiss={handleDismiss}
       />
     </div>
   );

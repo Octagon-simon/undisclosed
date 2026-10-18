@@ -139,7 +139,7 @@ function ScopesDemo({
   );
 }
 
-/** A package install: amber "Writes files" tier and the suppression row. */
+/** A package install: amber "May change files" tier and the suppression row. */
 export const WorkspaceWrite: Story = {
   render: (args: ApprovalRequestCardViewProps) => (
     <ScopesDemo {...args} initialScopes={["reads", "installs"]} />

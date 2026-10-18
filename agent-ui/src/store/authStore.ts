@@ -77,10 +77,10 @@ interface AuthState {
    *  (so launch resumes their last model instead of the stock default). */
   lastUsedModel: import('./projectStore').ProjectModelSelection | null;
   /**
-   * Governance gate for risky single-agent tools (terminal, file write).
-   * 'auto' runs them immediately (default); 'ask' requires an explicit
-   * approve/deny before each call executes. Read once per task at agent
-   * assembly time, so changing this only affects tasks started afterward.
+   * Governance gate for risky tools. 'ask' is the default: mutating calls wait
+   * for an explicit approve/deny. 'auto' is opt-in and runs them immediately.
+   * Read once per task at agent assembly time, so changing this only affects
+   * tasks started afterward.
    */
   governanceMode: GovernanceMode;
   /** Semantic (long-term) memory on/off. Sent to the backend in toolkit_config. */
@@ -261,7 +261,7 @@ const authStore = create<AuthState>()(
       cloud_model_type: getRandomDefaultModel(),
       codex_model_type: 'gpt-5.5',
       lastUsedModel: null,
-      governanceMode: 'auto',
+      governanceMode: 'ask',
       memoryEnabled: true,
       showThinking: true,
       codeEditorEnabled: false,
@@ -488,7 +488,10 @@ const authStore = create<AuthState>()(
       // user-id repair; a matching version skips migrate and stays unrepaired.
       // v12: retire the vendor cloud default — coerce persisted modelType
       // 'cloud' → 'custom' so existing sessions use their own BYOK provider.
-      version: 12,
+      // v13: the approval gate ships on. Any persisted 'auto' was written while
+      // the toggle was hidden, so it was never an explicit choice; reset those
+      // sessions to 'ask'. After v13 a saved 'auto' is the user's own choice.
+      version: 13,
       migrate: (persistedState, _version) => {
         const s = persistedState as
           | {
@@ -566,6 +569,10 @@ const authStore = create<AuthState>()(
           dark: s.customThemeCatalog?.dark ?? {},
         };
 
+        // v13: only versions below this one reach migrate, and those could not
+        // have chosen 'auto' (the toggle was hidden), so start them in 'ask'.
+        const governanceMode: GovernanceMode = 'ask';
+
         // Retire the vendor cloud model: a session that still defaults to
         // 'cloud' should fall back to its own BYOK provider ('custom'), so the
         // picker shows the user's model (not GPT-5.5) and sends never hit a
@@ -584,6 +591,7 @@ const authStore = create<AuthState>()(
             cloud_model_type: sanitizedCloudModelType,
             codex_model_type: sanitizedCodexModelType,
             modelType: coercedModelType,
+            governanceMode,
             authEnvironmentKey: currentEnvironmentKey,
           };
         }
@@ -597,6 +605,7 @@ const authStore = create<AuthState>()(
           cloud_model_type: sanitizedCloudModelType,
           codex_model_type: sanitizedCodexModelType,
           modelType: coercedModelType,
+          governanceMode,
           authEnvironmentKey: currentEnvironmentKey,
         } as typeof persistedState;
       },

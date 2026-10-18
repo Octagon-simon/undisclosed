@@ -30,7 +30,6 @@ import { showStorageToast } from '@/components/Toast/storageToast';
 import type { AppHost } from '@/host/types';
 import { generateUniqueId, uploadLog } from '@/lib';
 import { feDebug } from '@/lib/debug';
-import { GOVERNANCE_MODE_ENABLED } from '@/lib/featureFlags';
 import { getConnectionConfig } from '@/store/connectionStore';
 import {
   classifyError,
@@ -98,6 +97,13 @@ const API_CODE_TRIAL_LIMIT = '22';
 const CONNECTOR_GATEWAY_MCP_NAME = 'connector_gateway';
 const PROJECT_CONTEXT_MAX_CHARS = 24_000;
 const PROJECT_CONTEXT_MAX_RUNS = 8;
+// Approval outcome notices are transient acknowledgements. Clear them after a
+// few seconds so a burst of gated actions can't stack up a wall of rows.
+const APPROVAL_OUTCOME_TTL_MS = 5000;
+const approvalOutcomeDismissTimers = new Map<
+  string,
+  ReturnType<typeof setTimeout>
+>();
 // chat_history.summary is a bounded database column; an over-long value
 // makes the whole history update fail server-side, which also discards the
 // status change carried by the same request (a completed run then stays
@@ -408,6 +414,9 @@ export interface ActiveApproval {
   scopes?: string[];
   /** Scopes already suppressed for this task (backend ids). */
   allowed_scopes?: string[];
+  /** Set when the approval timed out. The card stays visible with Retry
+   *  instead of being replaced by a timeout notice. */
+  expired?: boolean;
 }
 
 interface Task {
@@ -1498,6 +1507,11 @@ const chatStore = (initial?: Partial<ChatStore>) =>
           ...s.tasks,
           [taskId]: {
             ...state,
+            // Transient approval notices never survive a reload or a cached
+            // snapshot.
+            messages: (state.messages ?? []).filter(
+              (m) => m.step !== AgentStep.APPROVAL_OUTCOME
+            ),
             // Never resurrect a task as pending / awaiting confirmation
             // from a cached snapshot — those are in-flight flags only.
             isPending: false,
@@ -1636,7 +1650,12 @@ const chatStore = (initial?: Partial<ChatStore>) =>
           const content = (message as any)?.content;
           const hasContent =
             typeof content === 'string' ? content.trim().length > 0 : !!content;
-          if (step && hasContent) {
+          if (
+            step &&
+            hasContent &&
+            // Approval outcomes are transient notices, not transcript content.
+            step !== AgentStep.APPROVAL_OUTCOME
+          ) {
             const projectId = useProjectStore.getState().activeProjectId;
             const { getAllChatStores } = useProjectStore.getState();
             const chatStores = projectId ? getAllChatStores(projectId) : [];
@@ -2479,12 +2498,8 @@ const chatStore = (initial?: Partial<ChatStore>) =>
             extra_params: apiModel.extra_params,
             auth_source: apiModel.auth_source,
             installed_mcp: connectorGatewayMcpConfig || { mcpServers: {} },
-            // Governance gate is behind VITE_ENABLE_GOVERNANCE_MODE; a stored
-            // 'ask' must not reach the brain while the flag is off.
             toolkit_config: {
-              governance: {
-                mode: GOVERNANCE_MODE_ENABLED ? governanceMode : 'auto',
-              },
+              governance: { mode: governanceMode },
               memory: { enabled: memoryEnabled },
               thinking: { enabled: showThinking },
             },
@@ -5093,34 +5108,48 @@ const chatStore = (initial?: Partial<ChatStore>) =>
               approval_id: string;
               decision: string;
               decided_by?: string | null;
+              expired?: boolean;
             };
             // Only react if this is the approval we're currently showing --
             // an approval that resolved after we'd already moved on (e.g. a
             // duplicate/late event) shouldn't clear a newer pending one.
             const current = tasks[currentTaskId]?.activeApproval;
             if (current && current.approval_id === data.approval_id) {
+              // Timed out: the tool never ran, so keep the card (and the
+              // command) on screen with Retry/Dismiss instead of collapsing
+              // it into a "timed out" notice. Cleared by those two actions or
+              // when the next approval replaces it.
+              if (data.expired === true || data.decision === 'timeout') {
+                setActiveApproval(currentTaskId, {
+                  ...current,
+                  expired: true,
+                });
+                return;
+              }
               setActiveApproval(currentTaskId, null);
               // Governance can gate many tools in a row; appending a fresh
               // outcome message per approval floods the chat with stacked
-              // '"terminal" was approved by user.' lines. Keep a single,
-              // in-place record per task (stable id) that updates to the most
-              // recent decision instead of accumulating.
+              // approval lines. Keep a single, in-place record per task
+              // (stable id) that updates to the most recent decision instead
+              // of accumulating.
               const outcomeId = `approval-outcome-${currentTaskId}`;
-              // Phrase per decision so it reads as natural English. 'timeout'
-              // is a noun ("was timeout by timeout" is wrong); approved/denied
-              // are past participles. Only name the decider when it's someone
-              // other than the current user / the timeout itself.
               const toolLabel = `"${current.tool_name}"`;
-              const by =
+              // "user" is the reader, so it needs no name; anything else
+              // (a policy, another operator) is worth calling out.
+              const otherDecider =
                 data.decided_by &&
                 data.decided_by !== 'user' &&
                 data.decided_by !== 'timeout'
-                  ? ` by ${data.decided_by}`
-                  : '';
+                  ? data.decided_by
+                  : null;
+              const decider = otherDecider
+                ? ` by ${otherDecider}`
+                : ' by user';
+              // Timeouts never reach here: they keep the card open above.
               const outcomeContent =
-                data.decision === 'timeout'
-                  ? `${toolLabel} timed out waiting for approval.`
-                  : `${toolLabel} was ${data.decision}${by}.`;
+                data.decision === 'approved'
+                  ? `Command approved${decider}. Running ${toolLabel}.`
+                  : `Command denied${decider}. ${toolLabel} did not run.`;
               const alreadyShown = tasks[currentTaskId]?.messages?.some(
                 (m: Message) => m.id === outcomeId
               );
@@ -5136,6 +5165,19 @@ const chatStore = (initial?: Partial<ChatStore>) =>
               } else {
                 addMessages(currentTaskId, outcomeMessage);
               }
+              // Transient acknowledgement, not transcript: drop it after a few
+              // seconds. A newer decision reuses the row and restarts the clock.
+              const outcomeStore = getCurrentChatStore();
+              const pendingDismiss =
+                approvalOutcomeDismissTimers.get(currentTaskId);
+              if (pendingDismiss) clearTimeout(pendingDismiss);
+              approvalOutcomeDismissTimers.set(
+                currentTaskId,
+                setTimeout(() => {
+                  approvalOutcomeDismissTimers.delete(currentTaskId);
+                  outcomeStore.removeMessage(currentTaskId, outcomeId);
+                }, APPROVAL_OUTCOME_TTL_MS)
+              );
             }
             return;
           }
@@ -5493,7 +5535,9 @@ const chatStore = (initial?: Partial<ChatStore>) =>
         // catch-all that most answer-bearing steps returned before reaching,
         // so every reloaded conversation lost its answers.
         const role = message?.role;
-        if (role === 'user' || role === 'agent') {
+        // Approval outcomes are transient UI notices, not transcript content.
+        const transientOutcome = message?.step === AgentStep.APPROVAL_OUTCOME;
+        if ((role === 'user' || role === 'agent') && !transientOutcome) {
           const ps = useProjectStore.getState();
           const { getAllChatStores } = ps;
           const hasTask = (e: { chatStore: VanillaChatStore }) =>

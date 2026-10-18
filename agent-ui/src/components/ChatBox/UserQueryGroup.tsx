@@ -736,7 +736,7 @@ export const UserQueryGroup: React.FC<UserQueryGroupProps> = ({
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.1 }}
-                className="px-6"
+                className="px-sm"
               >
                 <ApprovalOutcomeCard
                   content={message.content}

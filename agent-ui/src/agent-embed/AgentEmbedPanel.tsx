@@ -28,7 +28,6 @@ import {
   useComposerDraft,
   type ComposerSelection,
 } from '@/agent-embed/composerDraft';
-import { GOVERNANCE_MODE_ENABLED } from '@/lib/featureFlags';
 import { useProjectStore } from '@/store/projectStore';
 import { useAuthStore, type GovernanceMode } from '@/store/authStore';
 import { ArrowLeft, Bot } from 'lucide-react';
@@ -215,7 +214,7 @@ const AgentEmbedPanel = forwardRef<AgentPanelApi>((_props, ref) => {
         setBody((m) => (m === 'browser' ? 'conversation' : 'browser')),
       getGovernance: () => useAuthStore.getState().governanceMode,
       setGovernance: (mode) => setGovernanceMode(mode),
-      governanceEnabled: () => GOVERNANCE_MODE_ENABLED,
+      governanceEnabled: () => true,
       getShowThinking: () => useAuthStore.getState().showThinking,
       setShowThinking: (value) =>
         useAuthStore.getState().setShowThinking(value),

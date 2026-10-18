@@ -75,6 +75,7 @@ import { toast } from 'sonner';
 import BottomBox from './BottomBox';
 import { ContextWindowNotice } from './ContextWindowNotice';
 import { ConversationWelcome } from './ConversationWelcome';
+import { ApprovalRequestCard } from './MessageItem/ApprovalRequestCard';
 import { ProjectChatContainer } from './ProjectChatContainer';
 import { PLAN_OVERLAY_SLOT_ID } from './TaskBox/PlanTaskBox';
 
@@ -257,6 +258,13 @@ export default function ChatBox(): JSX.Element {
   const activeTask = chatStore?.activeTaskId
     ? chatStore.tasks[chatStore.activeTaskId]
     : undefined;
+  // The card subscribes to the vanilla store (`subscribe`/`getState`), not the
+  // adapter's snapshot object.
+  const approvalChatStore = projectStore.getActiveChatStore();
+  // Sending a message starts a new turn, which would discard the pending
+  // approval. Block the composer until the card is approved, denied, or
+  // dismissed.
+  const hasPendingApproval = Boolean(activeTask?.activeApproval);
   // Project mode in three forms: `inferred` is a legacy Run fallback;
   // `effective` always resolves to a concrete mode; `display` stays nullable
   // so a still-loading Project renders empty instead of the wrong mode.
@@ -729,6 +737,10 @@ export default function ChatBox(): JSX.Element {
     // If ask human is active, allow input
     if (task.activeAsk) return false;
 
+    // A pending command approval owns the run. Any new message would start a
+    // fresh turn and throw the approval away.
+    if (task.activeApproval) return true;
+
     if (isCloudUsageLimited) return true;
     if (!hasModel) return true;
     if (useCloudModelInDev) return true;
@@ -875,6 +887,13 @@ export default function ChatBox(): JSX.Element {
   ) => {
     const _taskId = taskId || chatStore.activeTaskId;
     if (message.trim() === '' && !messageStr && !composerSelection) return;
+
+    // Belt and braces with the disabled composer: Enter/queued sends must not
+    // reset a turn that is waiting on an approval.
+    if (_taskId && chatStore.tasks[_taskId]?.activeApproval) {
+      toast.error('Approve or deny the pending command first.');
+      return;
+    }
 
     if (!hasModel) {
       if (isCloudUsageLimited) {
@@ -1086,13 +1105,18 @@ export default function ChatBox(): JSX.Element {
           // Only start a new task if: pending, no messages processed yet
           // OR while or after replaying a project
           if (
-            (chatStore.tasks[_taskId as string].status ===
-              ChatTaskStatus.PENDING &&
+            // A busy task must be steered/queued, never restarted. This
+            // PENDING branch also matches the pre-RUNNING window (messages
+            // exist, no todo_state yet); taking it then called startTask,
+            // which opened a new stream and superseded (killed) the live turn.
+            (!isTaskBusy &&
+              chatStore.tasks[_taskId as string].status ===
+                ChatTaskStatus.PENDING &&
               !hasSimpleResponse &&
               !hasComplexTask &&
               !isFinished) ||
             chatStore.tasks[_taskId].type === 'replay' ||
-            hasErrorMessage
+            (!isTaskBusy && hasErrorMessage)
           ) {
             setMessage('');
             clearComposerSelection();
@@ -1162,7 +1186,11 @@ export default function ChatBox(): JSX.Element {
             // drains and the agent appears to "stop responding". Re-open a
             // resume stream (attach WITHOUT re-running a turn) so the queued
             // follow-up has somewhere to land.
-            if (!hasLiveSessionStream(targetProjectId)) {
+            // Never re-attach while the task is busy: a resume supersedes the
+            // backend consumer, and that cancels the in-flight turn. A running
+            // task still has a consumer even when the client registry lost
+            // track of it; the steer POST below is enough.
+            if (!isTaskBusy && !hasLiveSessionStream(targetProjectId)) {
               try {
                 console.debug(
                   '[handleSend] no live session stream; re-attaching before follow-up',
@@ -1736,8 +1764,16 @@ export default function ChatBox(): JSX.Element {
           <div
             ref={bottomBoxOverlayRef}
             data-bottom-box-overlay
-            className="pointer-events-none absolute inset-x-0 bottom-0 z-30 flex justify-center"
+            className="pointer-events-none absolute inset-x-0 bottom-0 z-30 flex flex-col items-center"
           >
+            {hasPendingApproval &&
+            chatStore.activeTaskId &&
+            approvalChatStore ? (
+              <ApprovalRequestCard
+                chatStore={approvalChatStore}
+                taskId={chatStore.activeTaskId}
+              />
+            ) : null}
             <div className="pointer-events-auto mx-auto w-full max-w-[600px] rounded-t-3xl bg-ds-bg-neutral-subtle-default px-2 pb-1">
               <BottomBox
                 state={getBottomBoxState()}

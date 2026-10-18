@@ -18,7 +18,6 @@ import { AgentStep } from '@/types/constants';
 import { proxyFetchGet, proxyFetchPost } from '@/api/http';
 import { motion } from 'framer-motion';
 import React from 'react';
-import { ApprovalRequestCard } from './MessageItem/ApprovalRequestCard';
 import { UserQueryGroup } from './UserQueryGroup';
 
 interface ProjectSectionProps {
@@ -224,7 +223,11 @@ export const ProjectSection = React.forwardRef<
             const others = Array.isArray(turn?.otherMessages)
               ? [...turn.otherMessages]
               : [];
-            for (const m of others) takeMessage(m, 'agent');
+            for (const m of others) {
+              // Approval outcomes are transient notices, never transcript.
+              if (m?.step === AgentStep.APPROVAL_OUTCOME) continue;
+              takeMessage(m, 'agent');
+            }
           }
           if (activeTaskId && task && changed) {
             // eslint-disable-next-line no-console
@@ -295,12 +298,6 @@ export const ProjectSection = React.forwardRef<
             />
           ))}
         </div>
-
-        {/* Governance approval prompt - positioned at project level, mirroring
-            the Stop button's sticky placement so it reliably shows on screen. */}
-        {activeTaskId && (
-          <ApprovalRequestCard chatStore={chatStore} taskId={activeTaskId} />
-        )}
 
         {/* The floating "Stop Task" pill was removed: stopping now happens
             inline via the composer's Stop button (send button flips to Stop
