@@ -335,7 +335,7 @@ export function FilesChanged({
       {/* Title row: totals on the left. (Review/Keep/Revert hidden for now.) */}
       <div
         title={`Changed files: ${fileLabel}, +${additions} -${deletions}`}
-        className="flex flex-wrap items-center justify-between gap-2 px-3 py-2"
+        className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 transition-colors hover:bg-ds-bg-neutral-muted-default"
       >
         <div className="flex items-center gap-2">
           <FileText
@@ -372,7 +372,7 @@ export function FilesChanged({
       <SectionDivider />
 
       {/* Scrollable file list. Each row expands to its own inline diff. */}
-      <div className="max-h-72 overflow-auto">
+      <div className="max-h-72 overflow-auto bg-ds-bg-neutral-subtle-default">
         {files.map((f) => {
           const patch = patchFor(f);
           const stats = statsOf(f);
@@ -387,8 +387,8 @@ export function FilesChanged({
                 {...rowInteractions(f.path)}
                 title={relativeToRoot(f.path)}
                 className={cn(
-                  'flex items-center justify-between gap-2 px-3 py-2 text-left outline-none transition-colors hover:bg-ds-bg-neutral-subtle-hover focus-visible:outline-none',
-                  open && 'bg-ds-bg-neutral-subtle-hover'
+                  'flex items-center justify-between gap-2 px-3 py-2 text-left outline-none transition-colors hover:bg-ds-bg-neutral-muted-default focus-visible:outline-none',
+                  open && 'bg-ds-bg-neutral-muted-default'
                 )}
               >
                 <span className="flex min-w-0 items-center gap-1.5 font-mono text-label-xs text-ds-text-neutral-default-default">
