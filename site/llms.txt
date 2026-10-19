@@ -60,7 +60,8 @@ brain alongside the editor.
 A skill is a folder containing a `SKILL.md` file with YAML frontmatter (name,
 description) and instructions. The agent loads a skill only when a task matches
 it, so installed skills do not inflate every prompt. Twenty skills ship with the
-app (frontend, design, accessibility, anti-slop UI, decks). More, including
+app (frontend, design, accessibility, anti-slop UI, decks); six are enabled on a
+new install and the rest are one toggle away. More, including
 HyperFrames video skills, media tools, Figma and document skills, install from
 their upstream GitHub repositories by pasting a URL into the agent. See
 https://github.com/Octagon-simon/undisclosed/blob/upgrade/theia-1.76/docs/extra-skills.md
@@ -86,7 +87,10 @@ https://github.com/Octagon-simon/undisclosed/blob/upgrade/theia-1.76/docs/extra-
   `mkfs`, `fdisk`, `shutdown`, `find -delete`, `xargs rm`) are hard-blocked in
   every mode, and approval cannot override the block. A script that deletes a
   literal path outside the workspace is blocked; one whose delete target is a
-  variable or glob prompts in every mode. `git push`, `git reset`, `git clean`
+  variable or glob prompts in every mode. Inline code that can start another
+  process (`os.system`, `subprocess`, `child_process`) prompts in every mode.
+  The classifier reads the command line, not the contents of a script file.
+  `git push`, `git reset`, `git clean`
   and GitHub writes prompt in every mode.
 - Deletion inside the workspace is allowed when the task requires it: the
   `delete_files` tool takes explicit paths and refuses the workspace root,
@@ -119,10 +123,11 @@ https://github.com/Octagon-simon/undisclosed/blob/upgrade/theia-1.76/docs/extra-
 
 ## Demo
 
-A 35 second demo shows one task end to end in the app: a request for a
-`slugify()` function, the plan card, the git diff across two files, and a pytest
-run with 9 passing tests. It is served at /demo.mp4 on this site. The video was
-cut, captioned and rendered inside Undisclosed using the HyperFrames skill.
+A 30 second demo shows one task end to end in the app: a request for a
+`slugify()` function, the files the agent reads, the edit and its added tests,
+and a pytest run with 9 passing tests. It is served at /demo.mp4 on this site.
+The video was cut, captioned and rendered inside Undisclosed using the
+HyperFrames skill.
 
 ## Common questions
 

@@ -2,16 +2,17 @@
 
 <img width="1728" height="1117" alt="Screenshot 2026-10-09 at 14 56 48" src="https://github.com/user-attachments/assets/f81c8418-601f-48f4-9613-459c2f5979e9" />
 
-**An on-device AI coding editor.** At its core it is a customized [Eclipse Theia](https://theia-ide.org/)
+**An on-device AI coding editor with enforced guardrails and receipts.** At its core it is a customized [Eclipse Theia](https://theia-ide.org/)
 editor with an AI coding agent built in as a **native panel that lives inside the
 editor** - the agent is not docked next to a separate window the way it works in
 other tools. It plans, reads, writes and runs code against your actual
 workspace, right where you edit.
 
-Everything runs locally: your code, the editor, and the agent "brain" (the model
-orchestration). Point it at a model on your own machine and nothing leaves it. Or
-bring your own key (BYOK) for a cloud model you trust, and only the request you
-send goes there.
+Local by default: your code, the editor, and the agent "brain" (the model
+orchestration) run on your machine. Point it at a model on your own machine and
+nothing leaves it. Or bring your own key (BYOK) for a cloud model you trust, and
+only the prompt the agent assembled goes there: the request, the conversation
+context, and the file contents it read.
 
 The project began as two decoupled halves: the **agent capability** is from
 [Eigent](https://eigent.ai), while the **editor shell + on-device packaging** here
@@ -29,9 +30,12 @@ model.
 
 <video src="docs/media/undisclosed-demo.mp4" width="100%" controls poster="docs/media/undisclosed-demo-poster.jpg"></video>
 
-[Watch the 35-second demo](docs/media/undisclosed-demo.mp4) (1920x1080, mp4) if your
+[Watch the 30-second demo](docs/media/undisclosed-demo.mp4) (1920x1080, mp4) if your
 viewer doesn't play it inline. The demo video was cut, captioned and rendered
-inside Undisclosed itself, with the agent driving the HyperFrames pipeline.
+inside Undisclosed itself, with the agent driving the HyperFrames pipeline. The
+task is small on purpose: the agent reads `app.py`, writes a four-step plan,
+adds `slugify()` and eight new tests, then runs pytest and all nine pass. It shows
+the loop end to end, not the ceiling.
 
 ---
 
@@ -58,7 +62,8 @@ inside Undisclosed itself, with the agent driving the HyperFrames pipeline.
 - **Installable desktop app** (Electron + frozen Python brain) for macOS / Windows /
   Linux, plus a ready-to-package release pipeline.
 - **Extensible**: Monaco/Monarch custom languages, VS Code settings + extension
-  import, git extras, and a skill system for the agent.
+  import, git extras, and a skill system for the agent (20 skills bundled, 6
+  enabled on a new install, the rest one toggle away).
 
 ---
 
@@ -102,7 +107,9 @@ Only when you choose a cloud model.
 
 - **Local model**: if the model runs on your machine (Ollama, LM Studio, Hugging
   Face, or any OpenAI-compatible server on localhost), the model call stays on the
-  machine. No Undisclosed server is in the path.
+  machine. No Undisclosed server is in the path. Local coding is still behind
+  cloud on long, multi-file work, so use the largest coding model your machine can
+  hold (14B and up if it fits) and expect to review more of the diff.
 - **Cloud model (BYOK)**: the provider you configured receives the request the
   agent assembled: the prompt, the conversation context, file contents the agent
   read, and tool results it is reasoning over. The editor and brain still run
@@ -166,6 +173,13 @@ turn as `toolkit_config.governance.mode`; the gate wiring is in
 [`toolkit_assembler.py`](brain/app/agent/factory/toolkit_assembler.py) and the
 UI side in [`chatStore.ts`](agent-ui/src/store/chatStore.ts).
 
+This is static analysis of the command line, not a sandbox. Two limits follow
+from that: the contents of a script file are not read before it runs, and inline
+code that can hand the command to another process (`os.system`, `subprocess`,
+`child_process`, `__import__`) is tier 2, so it prompts in every mode. A literal
+delete target outside the workspace is tier 3; a target the classifier cannot
+resolve statically is tier 2.
+
 ### What about integrations that can modify external resources?
 
 Integrations are credential-gated: the toolkit is only assembled when its token,
@@ -211,7 +225,9 @@ The developer prompt makes these steps mandatory before a change is called done
    ([`test_runner_toolkit.py`](brain/app/agent/toolkit/test_runner_toolkit.py)).
 
 The panel keeps the receipts: a file diff, a test-run card, and the verification
-summary for the turn.
+summary for the turn. The cards are parsed from the turn's tool activity and
+command output, not from the model's write-up, so the count on the test card is
+what the runner printed.
 
 We judge the agent on real tasks, not benchmark theatre: do the tests pass, does
 the diff match the request, how often did it need intervention, and how much

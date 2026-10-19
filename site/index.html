@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Undisclosed · the on-device AI coding editor</title>
-<meta name="description" content="Undisclosed is an open source, local-first AI coding editor. The agent plans, edits and tests inside your real workspace, on a local brain you control. Local models, DeepSeek, or your own cloud key. Apache-2.0." />
+<meta name="description" content="Undisclosed is an open source AI coding editor with enforced guardrails and receipts. The agent plans, edits and tests inside your real workspace. Local by default, cloud only when you choose it. Apache-2.0." />
 <meta name="theme-color" content="#F3F0EA" id="theme-color" />
 <meta name="color-scheme" content="light dark" />
 <script>
@@ -136,11 +136,11 @@
 <!-- Open Graph -->
 <meta property="og:type" content="website" />
 <meta property="og:title" content="Undisclosed · the on-device AI coding editor" />
-<meta property="og:description" content="Open source, local-first. The agent lives in the editor. Local models, DeepSeek, or your own key. Apache-2.0." />
+<meta property="og:description" content="Open source AI coding editor with enforced guardrails and receipts. Local by default. Local models, DeepSeek, or your own key. Apache-2.0." />
 <meta property="og:image" content="og-image.jpg" />
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="Undisclosed · the on-device AI coding editor" />
-<meta name="twitter:description" content="Open source, local-first. The agent lives in the editor. Local models, DeepSeek, or your own key." />
+<meta name="twitter:description" content="Open source AI coding editor with enforced guardrails and receipts. Local by default. Local models, DeepSeek, or your own key." />
 <meta name="twitter:image" content="og-image.jpg" />
 
 <link rel="icon" type="image/svg+xml" href="favicon.svg" />
@@ -521,6 +521,7 @@
   .skills-copy h3 span{ font-family:var(--mono); font-size:.7rem; color:var(--muted); font-weight:400; }
   .chips{ display:flex; flex-wrap:wrap; gap:7px; }
   .chip{ font-family:var(--mono); font-size:.71rem; color:var(--ink-2); border:1px solid var(--line); border-radius:999px; padding:3px 10px; background:var(--paper); }
+  .chip.on{ color:var(--ink); border-color:var(--accent); background:var(--accent-tint); }
   .skills-copy p{ margin-top:12px; font-size:.9rem; color:var(--muted); max-width:48ch; }
   @media (max-width: 900px){ .skills-grid{ grid-template-columns:1fr; } }
 
@@ -751,10 +752,10 @@
           Open source, built on Theia
         </span>
         <h1>
-          <span class="line seq" style="--d:.04s">Your code <span class="accent">never</span></span>
-          <span class="line seq" style="--d:.12s">leaves your machine.</span>
+          <span class="line seq" style="--d:.04s">Local by <span class="accent">default</span>.</span>
+          <span class="line seq" style="--d:.12s">Cloud only when you choose it.</span>
         </h1>
-        <p class="lede seq" style="--d:.30s">Undisclosed is an AI coding editor that runs on your machine. Point it at a local model and nothing leaves it. Bring your own key and only the request you send goes to the provider.</p>
+        <p class="lede seq" style="--d:.30s">Undisclosed is an AI coding editor that runs on your machine. Keep a local model and nothing leaves it. Add your own cloud key and only the prompt the agent assembled goes to that provider.</p>
         <div class="hero-actions seq" style="--d:.40s">
           <a class="btn btn-primary" id="hero-download" href="https://github.com/Octagon-simon/undisclosed/releases" target="_blank" rel="noopener" data-ga-cta="download_hero">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
@@ -799,18 +800,18 @@
             <svg viewBox="0 0 17 14" fill="currentColor" aria-hidden="true"><rect x="0" y="0" width="17" height="3.2" rx="1.6"/><rect x="0" y="5.4" width="12.5" height="3.2" rx="1.6" opacity=".8"/><rect x="0" y="10.8" width="8" height="3.2" rx="1.6" opacity=".62"/></svg>
             01 / The demo
           </span>
-          <h2>35 seconds from ask to passing tests.</h2>
+          <h2>Thirty seconds: the ask, the plan, the edit, nine passing tests.</h2>
         </div>
-        <p class="demo-lede reveal" style="--i:1">Ask for a <code>slugify()</code> function. The plan lands, the diff opens, the tests run. The model in this run is DeepSeek through a BYOK key; the editor and the brain are the local ones.</p>
+        <p class="demo-lede reveal" style="--i:1">The agent reads <code>app.py</code> and the test file, writes a four-step plan, adds <code>slugify()</code> and eight new tests, then runs pytest. All nine pass, including the existing shout test. The task is small on purpose: you can watch every step. This run uses DeepSeek through a BYOK key, so the prompt and the files the agent read went to DeepSeek; the editor and the brain stayed on the machine.</p>
       </div>
 
       <figure class="player reveal">
         <video controls playsinline preload="metadata"
                width="1920" height="1080"
                poster="demo-poster.jpg"
-               aria-label="A 35 second screen recording of Undisclosed: a request for a slugify function, the plan card, the git diff, and a pytest run with 9 passing tests.">
+               aria-label="A 30 second screen recording of Undisclosed: the agent reads app.py, writes a plan, adds slugify and its tests, and a pytest run with nine passing tests.">
           <source src="demo.mp4" type="video/mp4" />
-          <p>Your browser cannot play this video. <a href="demo.mp4">Download the 35 second demo</a> (mp4, 5 MB).</p>
+          <p>Your browser cannot play this video. <a href="demo.mp4">Download the 30 second demo</a> (mp4, 4.7 MB).</p>
         </video>
         <figcaption>
           <span><b>Recorded in Undisclosed.</b> Cut, captions and title cards built inside it too, with the agent driving the HyperFrames skill.</span>
@@ -829,7 +830,7 @@
           02 / In the panel
         </span>
         <h2>It shows its work while it works.</h2>
-        <p>The same three cards you see in the demo: a plan before the first write, a diff you can review file by file, and, when it changes code, a test receipt for the files it touched.</p>
+        <p>The test receipt and the diff card from that run, plus the plan the agent writes before it touches code. The cards are read from the run's tool activity, not from the model's write-up of it.</p>
       </div>
 
       <div class="receipt-grid">
@@ -839,25 +840,25 @@
             <ol class="plan">
               <li class="done">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
-                Read <code>app.py</code> and the existing tests
+                Plan the <code>slugify</code> contract and test cases
               </li>
               <li class="done">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
-                Add <code>slugify(text)</code> to <code>app.py</code>
+                Implement <code>slugify</code> in <code>app.py</code>
               </li>
               <li class="done">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
-                Add tests, including the empty string
+                Add the eight <code>slugify</code> tests (nine with shout)
               </li>
-              <li class="now">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8"/></svg>
-                Run <code>pytest</code>
+              <li class="done">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+                Run <code>pytest</code> and fix failures
               </li>
             </ol>
           </div>
           <div class="r-foot">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
-            Approved before the first write
+            Written before the first edit
           </div>
         </article>
 
@@ -865,11 +866,15 @@
           <div class="r-head"><span>Git diff</span><span class="r-meta">2 files</span></div>
           <div class="r-body">
             <ul class="files">
-              <li><span class="stat m">M</span><span class="fname">app.py</span><span class="delta"><b>+7</b> <i>-1</i></span></li>
-              <li><span class="stat a">A</span><span class="fname">test_app.py</span><span class="delta"><b>+37</b></span></li>
+              <li><span class="stat m">M</span><span class="fname">app.py</span><span class="delta"><b>+10</b> <i>-0</i></span></li>
+              <li><span class="stat m">M</span><span class="fname">test_app.py</span><span class="delta"><b>+34</b> <i>-1</i></span></li>
             </ul>
-            <pre class="diff"><code>+def slugify(text):
-+    return "-".join(text.lower().split())</code></pre>
+            <pre class="diff"><code>+def slugify(text: str) -> str:
++    """Lowercase the text, drop punctuation, and join words with single hyphens."""
++    text = text.lower()
++    text = re.sub(r"[\s_]+", "-", text)
++    text = re.sub(r"[^a-z0-9-]", "", text)
++    return re.sub(r"-{2,}", "-", text).strip("-")</code></pre>
           </div>
           <div class="r-foot">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
@@ -926,7 +931,7 @@
           <span class="idx">03</span>
           <div>
             <h3>The models</h3>
-            <p>Ollama, LM Studio or Hugging Face on your hardware. Or your own key for DeepSeek, Anthropic, Gemini, Mistral and anything OpenAI-compatible. Pick per task.</p>
+            <p>Ollama, LM Studio or Hugging Face on your hardware. Local coding is still behind cloud on long, multi-file work: use the largest coding model your machine holds (14B and up if it fits) and expect to review more. Or your own key for DeepSeek, Anthropic, Gemini, Mistral and anything OpenAI-compatible. Pick per task.</p>
           </div>
           <span class="fact">local + BYOK</span>
         </div>
@@ -992,19 +997,21 @@
 
         <div class="skills-copy reveal" style="--i:1">
           <div>
-            <h3>Bundled with the app <span>20 skills</span></h3>
+            <h3>Bundled with the app <span>20 skills, 6 on</span></h3>
             <div class="chips">
-              <span class="chip">antislop</span>
+              <span class="chip on">antislop</span>
+              <span class="chip on">premium-frontend-ui</span>
+              <span class="chip on">refactoring-ui</span>
+              <span class="chip on">ui-styling</span>
+              <span class="chip on">skill-creator</span>
+              <span class="chip on">skill-security-auditor</span>
               <span class="chip">antislop-ui</span>
-              <span class="chip">antislop-human</span>
               <span class="chip">antislop-code</span>
               <span class="chip">antislop-copywriting</span>
+              <span class="chip">antislop-human</span>
               <span class="chip">antislop-layoutmobile</span>
               <span class="chip">taste-skill</span>
-              <span class="chip">premium-frontend-ui</span>
-              <span class="chip">refactoring-ui</span>
               <span class="chip">uipro</span>
-              <span class="chip">ui-styling</span>
               <span class="chip">design</span>
               <span class="chip">design-system</span>
               <span class="chip">brand</span>
@@ -1012,10 +1019,8 @@
               <span class="chip">banner-design</span>
               <span class="chip">slides</span>
               <span class="chip">screenshot-to-code</span>
-              <span class="chip">skill-creator</span>
-              <span class="chip">skill-security-auditor</span>
             </div>
-            <p>Frontend, design, accessibility and deck skills, installed by default and toggleable per agent. This landing page was built with the antislop skills; the demo video was built with HyperFrames.</p>
+            <p>Installed with the app and toggleable per agent. The filled chips start enabled; the rest stay installed and are one switch away, so a new install is not 20 overlapping instructions. The antislop family is one design skill split by domain (UI, code, copy, voice, layout), so you load the one that matches the task. This landing page was built with the antislop skills; the demo video was built with HyperFrames.</p>
           </div>
           <div>
             <h3>Install on demand <span>from a URL</span></h3>
@@ -1056,7 +1061,7 @@
         </div>
         <div>
           <h3><span>03 / Shell</span>Can it run a destructive command?</h3>
-          <p>No. Commands that can wipe data or take over the host (<code>rm</code>, <code>sudo</code>, <code>dd</code>, <code>mkfs</code>, <code>fdisk</code>, <code>shutdown</code>, <code>find -delete</code>, <code>xargs rm</code>) are refused before they run, in every mode including Auto, and your approval cannot override the block. A script that deletes a path it cannot resolve statically waits for approval in every mode. <code>git push</code>, <code>git reset</code>, <code>git clean</code> and GitHub writes prompt in every mode. Inside the project, replacing a file or removing a component is allowed: Ask is the default and gates it, and deletions go through an explicit-path tool that never leaves the workspace.</p>
+          <p>No. Commands that can wipe data or take over the host (<code>rm</code>, <code>sudo</code>, <code>dd</code>, <code>mkfs</code>, <code>fdisk</code>, <code>shutdown</code>, <code>find -delete</code>, <code>xargs rm</code>) are refused before they run, in every mode including Auto, and your approval cannot override the block. This is static analysis of the command line, not a sandbox. A script that deletes a path it cannot resolve statically waits for approval in every mode, and inline code that can hand the command to another process (<code>os.system</code>, <code>subprocess</code>, <code>child_process</code>) prompts in every mode, because the classifier cannot follow it past that point. The contents of a script file are not read ahead of time. <code>git push</code>, <code>git reset</code>, <code>git clean</code> and GitHub writes prompt in every mode. Inside the project, replacing a file or removing a component is allowed: Ask is the default and gates it, and deletions go through an explicit-path tool that never leaves the workspace.</p>
         </div>
         <div>
           <h3><span>04 / Integrations</span>What can a connector change?</h3>
@@ -1083,7 +1088,7 @@
           <span class="idx">01</span>
           <div>
             <h3>Typecheck and lint</h3>
-            <p><code>run_checks</code> detects the project's TypeScript or Python checks and runs both. You get a receipt, not a claim in the transcript.</p>
+            <p><code>run_checks</code> detects the project's TypeScript or Python checks and runs both. The card is built from the command's real output, not the model's summary, so you get a receipt, not a claim in the transcript.</p>
           </div>
           <span class="fact">run_checks</span>
         </div>
@@ -1107,9 +1112,9 @@
           <span class="idx">04</span>
           <div>
             <h3>Measured on real work</h3>
-            <p>Did the tests pass, did the diff match the request, how often did you have to step in, how much did you have to correct. That is the scorecard. Tool count is not.</p>
+            <p>Did the tests pass, did the diff match the request, how often did you have to step in, how much did you have to correct. Those four are the scorecard, and tool count is not. There is no public benchmark table yet; when there is, it will be these four numbers from real runs, not a highlight reel.</p>
           </div>
-          <span class="fact">the only scorecard</span>
+          <span class="fact">the four numbers</span>
         </div>
       </div>
     </div>
@@ -1204,7 +1209,7 @@
         </details>
         <details>
           <summary>Is the download signed?</summary>
-          <p>Not yet. Builds are unsigned for now. On macOS, right-click the app and choose Open the first time. Windows and Linux builds are on the releases page.</p>
+          <p>Not yet. The macOS build is unsigned, which is real friction for a tool that asks you to trust it. That is a known gap, not a design choice, and the work is tracked in <code>docs/PACKAGING.md</code>. For now: right-click the app and choose Open the first time, or run <code>xattr -cr /Applications/Undisclosed.app</code>. Windows and Linux builds are on the releases page.</p>
         </details>
       </div>
     </div>
@@ -1624,3 +1629,4 @@
 </script>
 </body>
 </html>
+>
