@@ -351,6 +351,57 @@ _WRITE_REDIRECTS = frozenset({">", ">>", ">|", "&>", "&>>"})
 
 _DEV_NULL_TARGETS = frozenset({"/dev/null", "nul", "$null"})
 
+# Write binaries whose path arguments can leave the workspace. These stay
+# workspace writes when the target is inside the project; a target outside it
+# becomes destructive so it prompts in every mode.
+_WRITE_ALL_TARGETS = frozenset(
+    {"chmod", "chown", "mkdir", "tee", "touch", "truncate"}
+)
+_WRITE_LAST_TARGET = frozenset({"cp", "install", "ln", "mv", "rsync"})
+_WRITE_FIRST_TARGET = frozenset({"zip"})
+
+
+def _write_targets(name: str, args: list[str]) -> list[str]:
+    """Literal write targets a command names, best-effort."""
+    if name in _WRITE_ALL_TARGETS:
+        return [arg for arg in args if not arg.startswith("-")]
+    if name in {"cp", "install", "ln", "mv"}:
+        for flag in ("-t", "--target-directory"):
+            if flag in args:
+                index = args.index(flag)
+                if index + 1 < len(args):
+                    return [args[index + 1]]
+    values = [arg for arg in args if not arg.startswith("-")]
+    if name in _WRITE_LAST_TARGET:
+        return values[-1:]
+    if name in _WRITE_FIRST_TARGET:
+        return values[:1]
+    return []
+
+
+def _write_outside_workspace(segment: str, workspace: Path) -> str:
+    """First literal write target in `segment` that resolves outside."""
+    tokens = _tokenize(segment)
+    for index, token in enumerate(tokens):
+        if token not in _WRITE_REDIRECTS or index + 1 >= len(tokens):
+            continue
+        target = tokens[index + 1].strip("'\"")
+        if target in _DEV_NULL_TARGETS:
+            continue
+        if _escapes_workspace(target, workspace):
+            return target
+
+    stripped = _strip_prefixes(tokens)
+    if not stripped:
+        return ""
+    name = _binary(stripped[0])
+    for target in _write_targets(name, stripped[1:]):
+        if target in _DEV_NULL_TARGETS:
+            continue
+        if _escapes_workspace(target, workspace):
+            return target
+    return ""
+
 
 def _delete_targets(command: str) -> list[str]:
     """Literal paths a script would delete, best-effort."""
@@ -413,6 +464,18 @@ def assess_command(
         for scope in _classify_scopes(segment):
             if scope not in scopes:
                 scopes.append(scope)
+
+    if workspace and best != CommandTier.BLOCKED:
+        root = Path(workspace).expanduser().resolve()
+        for segment in segments:
+            escape = _write_outside_workspace(segment, root)
+            if escape:
+                best = max(best, CommandTier.DESTRUCTIVE)
+                reason = (
+                    f"writes {escape} outside the workspace; that needs "
+                    "approval in every mode"
+                )
+                break
 
     if workspace and best != CommandTier.BLOCKED and _DELETE_CALL.search(text):
         root = Path(workspace).expanduser().resolve()
@@ -857,10 +920,25 @@ def _classify_scopes(segment: str) -> tuple[CommandScope, ...]:
     return ()
 
 
-def _shell_inner(args: list[str]) -> str:
+def _shell_command_index(args: list[str]) -> int | None:
+    """Index of the flag that carries a shell command string.
+
+    Short flags bundle, so `bash -lc 'rm -rf /'` is the same as
+    `bash -c ...` and must be classified instead of being read as a script
+    name. `--norc` is not a command flag, so long options are excluded.
+    """
     for index, arg in enumerate(args):
-        if arg == "-c" and index + 1 < len(args):
-            return args[index + 1]
+        if arg == "--command":
+            return index
+        if arg.startswith("-") and not arg.startswith("--") and "c" in arg[1:]:
+            return index
+    return None
+
+
+def _shell_inner(args: list[str]) -> str:
+    index = _shell_command_index(args)
+    if index is not None and index + 1 < len(args):
+        return " ".join(args[index + 1 :])
     return ""
 
 
@@ -1550,12 +1628,17 @@ def _classify_docker(args: list[str]) -> tuple[CommandTier, str]:
 
 
 def _classify_shell(name: str, args: list[str]) -> tuple[CommandTier, str]:
-    if "-c" in args:
-        index = args.index("-c")
+    index = _shell_command_index(args)
+    if index is not None:
         inner = " ".join(args[index + 1 :])
+        if inner:
+            return (
+                assess_command(inner).tier,
+                f"`{name} -c` runs a nested command",
+            )
         return (
-            assess_command(inner).tier,
-            f"`{name} -c` runs a nested command",
+            CommandTier.DESTRUCTIVE,
+            f"`{name} -c` reads commands from stdin",
         )
     script = next((arg for arg in args if not arg.startswith("-")), "")
     if script:
