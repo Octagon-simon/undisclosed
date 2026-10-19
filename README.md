@@ -40,6 +40,9 @@ worker. The agent reads the tests and the modules, names the three bugs, fixes
 them in place, then runs pytest and all thirteen pass. It shows the loop end to
 end, not the ceiling.
 
+Vertical cut for TikTok, Reels and Shorts (1080x1920, 29s):
+[undisclosed-demo-9x16.mp4](docs/media/undisclosed-demo-9x16.mp4).
+
 ---
 
 ## Highlights
