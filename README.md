@@ -19,18 +19,11 @@ The project began as two decoupled halves: the **agent capability** is from
 are our own. Both are fused here into a single editor-first product - the "Antigravity"
 model.
 
-> **Branch:** this is the `upgrade/theia-1.76` branch. The editor stack here is
-> **Theia 1.76 on Node 24** (Electron 42), up from Theia 1.60 on Node 20 on `main`.
-> Upgrade notes: [`docs/plans/theia-upgrade-plan.md`](docs/plans/theia-upgrade-plan.md);
-> override register: [`docs/features/theia-overrides.md`](docs/features/theia-overrides.md).
-
 ---
 
 ## Demo
 
-https://github.com/user-attachments/assets/4856aba2-938f-4ff2-9a36-066d76b16fee
-
-<!-- <video src="https://github.com/user-attachments/assets/4856aba2-938f-4ff2-9a36-066d76b16fee" width="100%" controls poster="https://github.com/user-attachments/assets/5fba3828-4751-49ea-ae75-5555d4233a3b"></video> -->
+https://github.com/user-attachments/assets/d87c1a17-a8f5-4741-9e4a-4c59da20182a
 
 [Watch the 29-second demo](docs/media/undisclosed-demo.mp4) (1920x1080, mp4) if your
 viewer doesn't play it inline. The demo video was cut, captioned and rendered
