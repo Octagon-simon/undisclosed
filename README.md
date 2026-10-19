@@ -28,7 +28,9 @@ model.
 
 ## Demo
 
-<video src="docs/media/undisclosed-demo.mp4" width="100%" controls poster="docs/media/undisclosed-demo-poster.jpg"></video>
+https://github.com/user-attachments/assets/4856aba2-938f-4ff2-9a36-066d76b16fee
+
+<!-- <video src="https://github.com/user-attachments/assets/4856aba2-938f-4ff2-9a36-066d76b16fee" width="100%" controls poster="https://github.com/user-attachments/assets/5fba3828-4751-49ea-ae75-5555d4233a3b"></video> -->
 
 [Watch the 29-second demo](docs/media/undisclosed-demo.mp4) (1920x1080, mp4) if your
 viewer doesn't play it inline. The demo video was cut, captioned and rendered
