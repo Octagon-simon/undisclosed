@@ -77,6 +77,10 @@ brain/*.spec
 !docs/
 !docs/**/*.md
 
+# Real-work fixtures: the task prompt and README are part of the fixture.
+!benchmarks/
+!benchmarks/**/*.md
+
 # Offline cache for the Simple Icons fetch script (regenerable, not shipped).
 .cache/file-icons/
 
