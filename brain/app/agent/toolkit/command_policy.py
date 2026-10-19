@@ -330,6 +330,23 @@ _DELETE_CALL = re.compile(
 _PATH_LITERAL = re.compile(r"""Path\(\s*['"]([^'"]+)['"]\s*\)""")
 _DELETE_ARG_LITERAL = re.compile(r"""\s*(?:path\s*=\s*)?['"]([^'"]+)['"]""")
 
+# Inline code can hand the command to another process, where the static
+# patterns above never see it. `os.system("rm -rf /tmp/x")` was classified as
+# a plain workspace write and ran in Auto with no approval.
+_INLINE_PROCESS_SPAWN = re.compile(
+    r"(?:"
+    r"os\.(?:system|popen|fork|exec\w*|spawn\w*)"
+    r"|subprocess\.\w+"
+    r"|pty\.spawn"
+    r"|child_process"
+    r"|__import__\s*\("
+    r"|importlib\.import_module"
+    r")"
+)
+
+_INLINE_PYTHON_FLAGS = frozenset({"-c", "-"})
+_INLINE_NODE_FLAGS = frozenset({"-e", "-p", "--eval", "--print"})
+
 _WRITE_REDIRECTS = frozenset({">", ">>", ">|", "&>", "&>>"})
 
 _DEV_NULL_TARGETS = frozenset({"/dev/null", "nul", "$null"})
@@ -1177,9 +1194,9 @@ def _classify_command(
     if name == "npx":
         return _classify_wrapped_command(args)
     if name in {"python", "python3", "py"}:
-        return _classify_python(args)
+        return _classify_python(args, segment)
     if name in {"node", "nodejs"}:
-        return _classify_node(args)
+        return _classify_node(args, segment)
     if name in {"pip", "pip3", "uv", "poetry"}:
         return _classify_packages(name, args)
     if name in {"go", "cargo", "rustc"}:
@@ -1430,7 +1447,9 @@ def _classify_node_tool(
     return CommandTier.WORKSPACE_WRITE, f"`{name} {sub}` may write"
 
 
-def _classify_python(args: list[str]) -> tuple[CommandTier, str]:
+def _classify_python(
+    args: list[str], segment: str = ""
+) -> tuple[CommandTier, str]:
     if args and args[0] == "-m":
         module = args[1] if len(args) > 1 else ""
         if module in _PYTHON_TEST_MODULES:
@@ -1439,7 +1458,12 @@ def _classify_python(args: list[str]) -> tuple[CommandTier, str]:
                 f"`python -m {module}` checks only",
             )
         return CommandTier.WORKSPACE_WRITE, f"`python -m {module}` may write"
-    if args and args[0] in {"-c", "-"}:
+    if args and args[0] in _INLINE_PYTHON_FLAGS:
+        if _INLINE_PROCESS_SPAWN.search(segment):
+            return (
+                CommandTier.DESTRUCTIVE,
+                "runs inline Python that can start another process",
+            )
         return CommandTier.WORKSPACE_WRITE, "runs inline Python"
     if _is_info_invocation(args):
         return CommandTier.READ_ONLY, "python version"
@@ -1448,14 +1472,21 @@ def _classify_python(args: list[str]) -> tuple[CommandTier, str]:
     return CommandTier.READ_ONLY, "python with no arguments"
 
 
-def _classify_node(args: list[str]) -> tuple[CommandTier, str]:
+def _classify_node(
+    args: list[str], segment: str = ""
+) -> tuple[CommandTier, str]:
     if not args:
         return CommandTier.READ_ONLY, "node with no arguments"
     if _is_info_invocation(args):
         return CommandTier.READ_ONLY, "node version"
     if args[0] == "--check":
         return CommandTier.READ_ONLY, "node syntax check"
-    if args[0] in {"-e", "-p", "--eval", "--print"}:
+    if args[0] in _INLINE_NODE_FLAGS:
+        if _INLINE_PROCESS_SPAWN.search(segment):
+            return (
+                CommandTier.DESTRUCTIVE,
+                "runs inline JavaScript that can start another process",
+            )
         return CommandTier.WORKSPACE_WRITE, "runs inline JavaScript"
     return CommandTier.WORKSPACE_WRITE, "runs a JavaScript script"
 

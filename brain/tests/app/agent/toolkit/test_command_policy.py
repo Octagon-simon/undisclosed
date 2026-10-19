@@ -408,3 +408,57 @@ def test_inline_delete_with_a_variable_target_always_asks(tmp_path) -> None:
     assessment = assess_command(command, workspace=tmp_path)
     assert assessment.tier == CommandTier.DESTRUCTIVE
     assert "cannot scope" in assessment.reason
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'python3 -c "import os; os.system(\'rm -rf /tmp/x\')"',
+        'python3 -c "import os; os.popen(\'rm -rf /tmp/x\')"',
+        'python3 -c "import subprocess; subprocess.run([\'rm\', \'-rf\', \'/tmp/x\'])"',
+        'python3 -c "getattr(__import__(\'shutil\'), \'rmtree\')(\'/tmp/x\')"',
+        'node -e "require(\'child_process\').execSync(\'rm -rf /tmp/x\')"',
+        'node -e "require(\'node:child_process\').spawn(\'rm\', [\'-rf\', \'/tmp/x\'])"',
+    ],
+)
+def test_inline_code_that_spawns_a_process_always_asks(command: str) -> None:
+    assessment = assess_command(command)
+    assert assessment.tier == CommandTier.DESTRUCTIVE
+    assert "start another process" in assessment.reason
+
+
+def test_inline_python_heredoc_that_spawns_a_process_always_asks() -> None:
+    command = "\n".join(
+        [
+            "python3 - <<'PY'",
+            "import os",
+            "os.system('rm -rf /tmp/x')",
+            "PY",
+        ]
+    )
+    assessment = assess_command(command)
+    assert assessment.tier == CommandTier.DESTRUCTIVE
+    assert "start another process" in assessment.reason
+
+
+def test_inline_code_without_a_process_spawn_stays_a_workspace_write() -> None:
+    assert (
+        assess_command("python3 -c 'print(1)'").tier
+        == CommandTier.WORKSPACE_WRITE
+    )
+    assert (
+        assess_command("node -e 'console.log(1)'").tier
+        == CommandTier.WORKSPACE_WRITE
+    )
+
+
+def test_process_spawn_text_in_heredoc_data_is_not_execution() -> None:
+    command = "\n".join(
+        [
+            "cat > notes.py <<'PY'",
+            "import os",
+            "os.system('rm -rf /tmp/x')",
+            "PY",
+        ]
+    )
+    assert assess_command(command).tier == CommandTier.WORKSPACE_WRITE

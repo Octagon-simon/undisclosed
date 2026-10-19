@@ -542,9 +542,14 @@ def wrap_with_approval(
         )
         if suppressed:
             needs_approval = False
-        elif tier == CommandTier.READ_ONLY and scopes:
+        elif (
+            tier == CommandTier.READ_ONLY
+            and CommandScope.FILE_READS in scopes
+            and CommandScope.FILE_READS.value not in _allowed_scopes(task_lock)
+        ):
             # Privacy switch: reads prompt in every mode once the user
-            # removes File reads from this task's allowlist.
+            # removes File reads from this task's allowlist. Other read-only
+            # scopes (builds/tests, searches) must not trigger it.
             needs_approval = True
 
         if not needs_approval:

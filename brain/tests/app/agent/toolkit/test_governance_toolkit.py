@@ -363,6 +363,24 @@ class TestTaskAllowlist:
         manager.request_approval.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_build_command_does_not_prompt_when_scope_is_allowed(
+        self, monkeypatch
+    ):
+        # Regression: pytest is read-only with a builds/tests scope, so the
+        # privacy switch used to force an approval even under Auto.
+        manager = _patch_manager(
+            monkeypatch,
+            allowed_scopes={
+                CommandScope.FILE_READS.value,
+                CommandScope.BUILDS_TESTS.value,
+            },
+        )
+        gated = self._gated(GovernanceMode.AUTO)
+
+        assert await gated.func(command="pytest -q") == "ran pytest -q"
+        manager.request_approval.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_workspace_write_is_suppressed_in_ask(self, monkeypatch):
         manager = _patch_manager(
             monkeypatch,
