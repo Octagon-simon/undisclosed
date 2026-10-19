@@ -30,12 +30,13 @@ model.
 
 <video src="docs/media/undisclosed-demo.mp4" width="100%" controls poster="docs/media/undisclosed-demo-poster.jpg"></video>
 
-[Watch the 30-second demo](docs/media/undisclosed-demo.mp4) (1920x1080, mp4) if your
+[Watch the 29-second demo](docs/media/undisclosed-demo.mp4) (1920x1080, mp4) if your
 viewer doesn't play it inline. The demo video was cut, captioned and rendered
 inside Undisclosed itself, with the agent driving the HyperFrames pipeline. The
-task is small on purpose: the agent reads `app.py`, writes a four-step plan,
-adds `slugify()` and eight new tests, then runs pytest and all nine pass. It shows
-the loop end to end, not the ceiling.
+task is the `dispatchkit` work sample: three bugs in a three-file webhook delivery
+worker. The agent reads the tests and the modules, names the three bugs, fixes
+them in place, then runs pytest and all thirteen pass. It shows the loop end to
+end, not the ceiling.
 
 ---
 

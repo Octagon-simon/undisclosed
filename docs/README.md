@@ -16,6 +16,7 @@ are touching.
 | [installing.md](installing.md) | Installing and launching Undisclosed on macOS, Windows, and Linux (via GitHub Releases or the homepage download button), including the first-open steps for the current unsigned builds. |
 | [extra-skills.md](extra-skills.md) | The extra (video/media) skills that are not bundled: each skill's upstream GitHub project and how to install one by pasting its URL into the agent. |
 | [automate-your-workflow-with-triggers.md](automate-your-workflow-with-triggers.md) | A user-facing article: build a two-trigger workflow that works your tasks on a schedule, posts to Slack, and replies to Slack mentions in the same conversation. |
+| [NETWORK.md](NETWORK.md) | Every outbound connection the app can open, the trigger for each one, and how to audit or block it. |
 
 ---
 

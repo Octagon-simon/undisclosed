@@ -123,11 +123,11 @@ https://github.com/Octagon-simon/undisclosed/blob/upgrade/theia-1.76/docs/extra-
 
 ## Demo
 
-A 30 second demo shows one task end to end in the app: a request for a
-`slugify()` function, the files the agent reads, the edit and its added tests,
-and a pytest run with 9 passing tests. It is served at /demo.mp4 on this site.
-The video was cut, captioned and rendered inside Undisclosed using the
-HyperFrames skill.
+A 29 second demo shows one task end to end in the app: three bugs in a
+three-file webhook delivery worker, the files the agent reads, the three bugs it
+names, the fix across those files, and a pytest run with 13 passing tests. It is
+served at /demo.mp4 on this site. The video was cut, captioned and rendered
+inside Undisclosed using the HyperFrames skill.
 
 ## Common questions
 
