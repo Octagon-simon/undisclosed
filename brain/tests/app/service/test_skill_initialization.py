@@ -96,6 +96,7 @@ def test_skill_config_init_registers_bundled_example_skills(
         encoding="utf-8",
     )
     write_skill(example_root, "docx", "docx")
+    write_skill(example_root, "antislop", "antislop")
 
     eigent_root = tmp_path / "home" / ".undisclosed"
     monkeypatch.setenv(skill_service.EXAMPLE_SKILLS_ENV, str(example_root))
@@ -103,7 +104,9 @@ def test_skill_config_init_registers_bundled_example_skills(
 
     config = skill_config_service.skill_config_init("new_user")
 
-    assert config["skills"]["docx"]["enabled"] is True
+    # A curated set starts enabled; the rest are registered but off.
+    assert config["skills"]["antislop"]["enabled"] is True
+    assert config["skills"]["docx"]["enabled"] is False
     assert config["skills"]["docx"]["scope"] == {
         "isGlobal": True,
         "selectedAgents": [],
@@ -116,6 +119,7 @@ def test_skill_config_init_registers_bundled_example_skills(
         )
     )
     assert persisted["skills"]["docx"]["isExample"] is True
+    assert persisted["skills"]["docx"]["enabled"] is False
 
 
 def test_skill_config_load_migrates_legacy_email_config(tmp_path, monkeypatch):

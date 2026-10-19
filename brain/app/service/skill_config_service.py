@@ -32,6 +32,20 @@ logger = logging.getLogger("skill_config")
 UNDISCLOSED_ROOT = Path.home() / ".undisclosed"
 SKILL_CONFIG_FILENAME = "skills-config.json"
 
+# Bundled skills that start enabled. A new install gets a small, non-overlapping
+# set; the rest stay installed and one toggle away. Six near-duplicate design
+# skills on by default buried the agent in overlapping instructions.
+DEFAULT_ENABLED_EXAMPLE_SKILLS = frozenset(
+    {
+        "antislop",
+        "premium-frontend-ui",
+        "refactoring-ui",
+        "ui-styling",
+        "skill-creator",
+        "skill-security-auditor",
+    }
+)
+
 
 def _sanitize_identity(value: str | int | None) -> str:
     if value is None:
@@ -215,7 +229,7 @@ def skill_config_init(
                     )
                 continue
             config["skills"][skill_name] = {
-                "enabled": True,
+                "enabled": skill_dir_name in DEFAULT_ENABLED_EXAMPLE_SKILLS,
                 "scope": {"isGlobal": True, "selectedAgents": []},
                 "addedAt": int(time.time() * 1000),
                 "isExample": True,
