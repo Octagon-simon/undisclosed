@@ -25,7 +25,7 @@ model.
 
 https://github.com/user-attachments/assets/d87c1a17-a8f5-4741-9e4a-4c59da20182a
 
-[Watch the 29-second demo](docs/media/undisclosed-demo.mp4) (1920x1080, mp4) if your
+[Watch the 33-second demo](docs/media/undisclosed-demo.mp4) (1920x1080, mp4) if your
 viewer doesn't play it inline. The demo video was cut, captioned and rendered
 inside Undisclosed itself, with the agent driving the HyperFrames pipeline. The
 task is the `dispatchkit` work sample: three bugs in a three-file webhook delivery
@@ -33,7 +33,7 @@ worker. The agent reads the tests and the modules, names the three bugs, fixes
 them in place, then runs pytest and all thirteen pass. It shows the loop end to
 end, not the ceiling.
 
-Vertical cut for TikTok, Reels and Shorts (1080x1920, 29s):
+Vertical cut for TikTok, Reels and Shorts (1080x1920, 32s):
 [undisclosed-demo-9x16.mp4](docs/media/undisclosed-demo-9x16.mp4).
 
 ---
@@ -63,6 +63,26 @@ Vertical cut for TikTok, Reels and Shorts (1080x1920, 29s):
 - **Extensible**: Monaco/Monarch custom languages, VS Code settings + extension
   import, git extras, and a skill system for the agent (20 skills bundled, 6
   enabled on a new install, the rest one toggle away).
+
+---
+
+## Where it fits
+
+The shape question changed. [Cline](https://github.com/cline/cline) now ships a
+CLI and a desktop app, and [OpenCode](https://github.com/sst/opencode) has a
+desktop beta, so "extension vs terminal" no longer separates the field. What
+still separates it is whether the editor is open, whether the model can run on
+your machine, and whether a change reaches you as a diff you approve.
+
+| | What it is today | What you own, and what you give up |
+| --- | --- | --- |
+| Cline | Extension for VS Code and JetBrains, a CLI, and a desktop agent app | Open source, local models or your own key. In the editor it is still a guest inside the host's extension API |
+| OpenCode | Terminal UI, plus a desktop app in beta | Open source, local models or your own key. Fast and scriptable; diffs are reviewed in the TUI or by opening an editor |
+| [Cursor](https://cursor.com) | Closed-source VS Code fork | Polished and account-bound. The vendor is in the model path by default, and the code that reads your code is not open |
+| **Undisclosed** | The editor itself: Theia with the agent docked | Apache-2.0, a local model or your own key, and diffs, terminal, git and the test receipt in one window. Newer and smaller, and the macOS build is unsigned |
+
+Checked 20 October 2026 against each project's own README. This category moves
+fast; if a row is out of date, open an issue and we will correct it.
 
 ---
 
@@ -185,10 +205,7 @@ Integrations are credential-gated: the toolkit is only assembled when its token,
 OAuth grant, or MCP server is present. Ask mode (the default) gates local file
 writes, the MongoDB escape hatch and git add/commit. GitHub writes and the
 destructive git actions (`push`, `reset`, `clean`) prompt in every mode, Auto
-included. It does **not** gate every third-party connector yet: Slack, Notion,
-Google Workspace, social and similar toolkits use the permissions of the token
-you gave them. Treat those tokens as granting the agent exactly what the token
-can do, and scope them accordingly.
+included.
 
 ### Can I see what it is about to do?
 
