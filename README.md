@@ -23,7 +23,7 @@ model.
 
 ## Demo
 
-https://github.com/user-attachments/assets/d87c1a17-a8f5-4741-9e4a-4c59da20182a
+https://github.com/user-attachments/assets/5e2dbffe-4b17-48f6-b964-358e0f2b65ff
 
 [Watch the 33-second demo](docs/media/undisclosed-demo.mp4) (1920x1080, mp4) if your
 viewer doesn't play it inline. The demo video was cut, captioned and rendered
