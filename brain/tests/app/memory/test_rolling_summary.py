@@ -247,3 +247,31 @@ class TestStoreRoundTrip:
         updated = store.update_project_summary_json("u", "s", "p", _mutate)
         assert updated is not None
         assert json.loads(path.read_text(encoding="utf-8"))["turn_count"] == 1
+
+
+class TestGhostTurnRendering:
+    def test_render_skips_turns_with_no_outcome(self):
+        summary = RollingSummary(project_id="p1")
+        summary = append_turn(summary, _digest("r1", "you may push", "Pushed."))
+        # Same prompt, cancelled before it ran: no result, no work.
+        summary = append_turn(summary, _digest("r2", "you may push", "", status="cancelled"))
+
+        rendered = render_md(summary)
+        assert "[cancelled]" not in rendered
+        assert rendered.count("you may push") == 1
+
+    def test_render_keeps_cancelled_turn_that_did_work(self):
+        summary = RollingSummary(project_id="p1")
+        summary = append_turn(
+            summary,
+            _digest(
+                "r1",
+                "edit then push",
+                "<summary>Task stopped</summary>Task stopped by user",
+                status="cancelled",
+            ),
+        )
+
+        rendered = render_md(summary)
+        assert "[cancelled]" in rendered
+        assert "Task stopped by user" in rendered

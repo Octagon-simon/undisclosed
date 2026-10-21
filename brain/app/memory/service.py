@@ -874,18 +874,25 @@ class MemoryService:
         if not rolling_summary.enabled():
             return
 
-        prompt = (user_prompt or "").strip()
-        if not prompt:
-            # Cross-restart / no in-process history: read the Run header
-            # written at on_run_start.
+        # The Run header is authoritative: it is written once, at
+        # on_run_start, from the request that created THIS run. The in-process
+        # `user_prompt` is read off the live task lock, so a turn that ends
+        # without a queued message (stop, superseded stream) reports the
+        # PREVIOUS turn's text and mislabels the summary entry.
+        prompt = ""
+        try:
             run = self._store.read_run(
                 user_key,
                 run_context.space_id,
                 run_context.project_id,
                 run_context.run_id,
             )
-            if run is not None:
-                prompt = (run.user_prompt or "").strip()
+        except Exception:  # noqa: BLE001 — fall back to the passed prompt
+            run = None
+        if run is not None:
+            prompt = (run.user_prompt or "").strip()
+        if not prompt:
+            prompt = (user_prompt or "").strip()
 
         # Tool events enrich the digest (files touched, commands run,
         # verification evidence). Best-effort: a read failure just means a less
@@ -905,6 +912,21 @@ class MemoryService:
             resolved_files = rolling_summary.extract_touched_files(events)
         commands = rolling_summary.extract_commands(events)
         verified = rolling_summary.extract_verification(events)
+
+        # A cancelled run with no output, no tool events and no touched files
+        # is a stream artifact: the POST attached, the consumer was superseded
+        # or the socket died, and the turn never ran. Recording it writes a
+        # phantom `[cancelled]` turn into every later prompt.
+        has_work = bool(
+            (summary or "").strip()
+            or (final_result or "").strip()
+            or events
+            or resolved_files
+            or commands
+            or verified
+        )
+        if state == "cancelled" and not has_work:
+            return
 
         digest = rolling_summary.build_turn_digest(
             query_id=run_context.run_id,

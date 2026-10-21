@@ -1150,6 +1150,14 @@ async def single_agent_solve(
     agent = None
     running_turn: asyncio.Task[tuple[str, int]] | None = None
     current_task_id = options.task_id
+    #: True once this stream has actually launched a turn. A stream that never
+    #: gets that far (attach-only resume, superseded POST) must not finalize
+    #: the borrowed run context as cancelled.
+    turn_started = False
+    #: Run id this stream's turn actually ran under. A newer attach can swap
+    #: `task_lock.run_context` mid-stream; finalizing whatever is on the lock
+    #: then stamps the wrong run as cancelled.
+    active_run_id: str | None = None
 
     approval_manager = getattr(task_lock, "approval_manager", None)
     if approval_manager is None:
@@ -1574,7 +1582,11 @@ async def single_agent_solve(
 
     def _start_turn_for_improve(item: ActionImproveData):
         """Set up and launch a run_turn for an improve/follow-up item."""
-        nonlocal agent, running_turn, current_task_id
+        nonlocal agent, running_turn, current_task_id, turn_started
+        nonlocal active_run_id
+        turn_started = True
+        run_context = getattr(task_lock, "run_context", None)
+        active_run_id = getattr(run_context, "run_id", None)
         if item.new_task_id:
             current_task_id = item.new_task_id
             set_current_task_id(options.project_id, current_task_id)
@@ -2034,8 +2046,16 @@ async def single_agent_solve(
         # disconnect, stop, exception), record a cancelled run. The
         # `_memory_finalized_runs` set on task_lock makes this idempotent:
         # a prior done/failed write wins, this only catches the unfinished
-        # case.
-        _finalize_memory_for_turn(task_lock, state="cancelled")
+        # case. An attach-only stream never owned a turn, and a superseded
+        # stream can find a newer run context on the lock, so finalize only
+        # when the lock still points at the run this stream actually ran.
+        run_context = getattr(task_lock, "run_context", None)
+        if (
+            turn_started
+            and active_run_id is not None
+            and getattr(run_context, "run_id", None) == active_run_id
+        ):
+            _finalize_memory_for_turn(task_lock, state="cancelled")
         if agent is not None:
             release_cdp = getattr(agent, "_cdp_release_callback", None)
             if callable(release_cdp):

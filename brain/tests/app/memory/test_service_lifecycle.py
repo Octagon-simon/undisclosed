@@ -576,3 +576,89 @@ class TestRollingSummaryWrite:
         )
         assert payload is not None
         assert payload["turns"][0]["files"] == ["src/app.ts"]
+
+    def test_noop_cancelled_run_is_not_a_turn(self, service, run_context):
+        # A stream that attaches and detaches before a turn ran finalizes as
+        # cancelled with no output. That must not become a phantom
+        # `[cancelled]` turn in every later prompt.
+        service.on_run_start(
+            run_context=run_context,
+            space_name="W",
+            project_name="P",
+            mode="single_agent",
+            user_prompt="you may push",
+        )
+        service.on_run_end(run_context=run_context, state="cancelled")
+        payload = service.store.read_project_summary_json(
+            "user_42", run_context.space_id, run_context.project_id
+        )
+        assert payload is None or payload["turn_count"] == 0
+
+    def test_cancelled_run_with_work_is_kept(self, service, run_context):
+        from app.memory import ToolEvent
+
+        service.on_run_start(
+            run_context=run_context,
+            space_name="W",
+            project_name="P",
+            mode="single_agent",
+            user_prompt="edit then push",
+        )
+        service.store.append_tool_event(
+            "user_42",
+            run_context.space_id,
+            run_context.project_id,
+            run_context.run_id,
+            ToolEvent(
+                event_id="te1",
+                run_id=run_context.run_id,
+                timestamp="t",
+                tool_name="write_file",
+                arguments={"file_path": "src/app.ts"},
+                result_summary="ok",
+                visibility="context",
+            ),
+        )
+        service.on_run_end(run_context=run_context, state="cancelled")
+        payload = service.store.read_project_summary_json(
+            "user_42", run_context.space_id, run_context.project_id
+        )
+        assert payload is not None
+        assert payload["turns"][0]["status"] == "cancelled"
+        assert payload["turns"][0]["files"] == ["src/app.ts"]
+
+    def test_cancelled_turn_uses_its_own_prompt(self, service, run_context):
+        from dataclasses import replace
+
+        service.on_run_start(
+            run_context=run_context,
+            space_name="W",
+            project_name="P",
+            mode="single_agent",
+            user_prompt="first prompt",
+        )
+        service.on_run_end(
+            run_context=run_context, state="done", final_result="first answer"
+        )
+
+        run2 = replace(run_context, run_id="run_lifecycle_2")
+        service.on_run_start(
+            run_context=run2,
+            space_name=None,
+            project_name=None,
+            mode=None,
+            user_prompt="second prompt",
+        )
+        # A superseded stream finalizes the new run while the lock still holds
+        # the previous turn's prompt. The run header must win.
+        service.on_run_end(
+            run_context=run2,
+            state="cancelled",
+            final_result="<summary>Task stopped</summary>Task stopped by user",
+            user_prompt="first prompt",
+        )
+        payload = service.store.read_project_summary_json(
+            "user_42", run_context.space_id, run_context.project_id
+        )
+        assert payload is not None
+        assert payload["turns"][-1]["user"] == "second prompt"

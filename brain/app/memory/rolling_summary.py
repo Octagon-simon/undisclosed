@@ -237,6 +237,9 @@ def _dedupe_bounded(items: list[str], cap: int, max_chars: int) -> list[str]:
 
 # ----- Schema -----
 
+#: Placeholder written when a run ended with no assistant output.
+NO_RESULT_PLACEHOLDER = "(no result recorded)"
+
 
 @dataclass
 class TurnDigest:
@@ -395,7 +398,7 @@ def build_turn_digest(
     if not did and error:
         did = _truncate(f"failed: {_collapse(error)}", _DID_MAX_CHARS)
     if not did:
-        did = "(no result recorded)"
+        did = NO_RESULT_PLACEHOLDER
     clean_files = _dedupe_files(files or [])
     if not clean_files and did_source:
         extracted = _extract_file_mentions(did_source)
@@ -702,6 +705,23 @@ def compact_if_over_budget(
     return out
 
 
+def has_outcome(turn: TurnDigest) -> bool:
+    """True when a turn recorded something the next turn can act on.
+
+    A stream that attaches and detaches before a turn runs still finalizes a
+    run as `cancelled` with no result. Rendering that as a turn tells the model
+    a task was cancelled when nothing ever happened, so those are skipped.
+    """
+
+    return bool(
+        (turn.did and turn.did != NO_RESULT_PLACEHOLDER)
+        or turn.files
+        or turn.commands
+        or turn.verified
+        or turn.next
+    )
+
+
 def render_md(summary: RollingSummary) -> str:
     """Render the cumulative summary as bounded markdown for prompt injection."""
 
@@ -713,10 +733,11 @@ def render_md(summary: RollingSummary) -> str:
     if summary.rolling:
         lines.append("")
         lines.append(_truncate(_collapse(summary.rolling), _ROLLING_MAX_CHARS))
-    if summary.turns:
+    visible_turns = [turn for turn in summary.turns if has_outcome(turn)]
+    if visible_turns:
         lines.append("")
         lines.append("Turn history (oldest to newest):")
-        for turn in summary.turns:
+        for turn in visible_turns:
             lines.append(f"- Turn {turn.n} [{turn.status}] user: {turn.user}")
             if turn.did:
                 lines.append(f"  did: {turn.did}")
