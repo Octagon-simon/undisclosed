@@ -59,6 +59,15 @@ function portInUse(port: number): boolean {
 export class BrainLauncher implements BackendApplicationContribution {
   private proc: ChildProcess | undefined;
 
+  /**
+   * Stamped on the brain we spawn and echoed by /health. Comes from the app
+   * launch (stable across backend restarts) so a surviving brain is adopted,
+   * while one from a previous launch or older install is replaced.
+   */
+  private readonly ownerId =
+    process.env.UNDISCLOSED_APP_INSTANCE_ID ||
+    `${process.pid}-${Date.now().toString(36)}`;
+
   /** Set once onStop() begins; suppresses exit-triggered respawn. */
   private stopping = false;
   /** Pending exit-triggered respawn timer, so restart()/onStop() can cancel it
@@ -146,18 +155,18 @@ export class BrainLauncher implements BackendApplicationContribution {
     }
     const port = process.env.UNDISCLOSED_BRAIN_PORT || '5001';
 
-    // Single-owner guard: if :port already has a listener (a dev brain from
-    // scripts/brain.sh, or another instance), defer to it instead of spawning a
-    // second, detached brain. brain.sh already refuses to double-launch; this
-    // closes the reverse case the script cannot see (packaged app started
-    // second). Double-binding is what makes chat nondeterministic and leaves an
-    // orphan brain holding :5001.
+    // Single-owner guard: never double-bind :port. But "someone is listening"
+    // is not the same as "the right brain is listening": an orphan from an
+    // older install keeps the port forever, never got this build's
+    // example-skills path, and every relaunch talks to it again. Adopt only
+    // the brain WE spawned; otherwise evict the packaged binary and start ours.
     if (portInUse(Number(port))) {
       // eslint-disable-next-line no-console
       console.log(
-        `[brain-launcher] :${port} already has a listener — not spawning a ` +
-          'second brain (single-owner guard). Existing owner will serve requests.'
+        `[brain-launcher] :${port} already has a listener — checking whether ` +
+          'it is ours (single-owner guard).'
       );
+      void this.adoptOrReplace(bin, port);
       return;
     }
 
@@ -207,6 +216,7 @@ export class BrainLauncher implements BackendApplicationContribution {
     const brainEnv: NodeJS.ProcessEnv = {
       ...process.env,
       UNDISCLOSED_BRAIN_PORT: port,
+      UNDISCLOSED_BRAIN_OWNER: this.ownerId,
     };
     if (bundledExampleSkills && fs.existsSync(bundledExampleSkills)) {
       brainEnv.UNDISCLOSED_EXAMPLE_SKILLS_DIR = bundledExampleSkills;
@@ -367,6 +377,173 @@ export class BrainLauncher implements BackendApplicationContribution {
     if (!this.proc && !this.stopping) {
       this.spawnChild(bin, String(port));
     }
+  }
+
+  /**
+   * :port already has a listener. Adopt it only when /health echoes the owner
+   * id we stamp on our own child. Anything else that identifies as an
+   * undisclosed brain is a leftover from an older install (it predates both
+   * the owner id and the example-skills path) and gets replaced; a process
+   * that is not our brain at all is left strictly alone.
+   */
+  private async adoptOrReplace(bin: string, port: string): Promise<void> {
+    const info = await BrainLauncher.probeBrain(Number(port));
+    if (info?.service === 'undisclosed' && info.owner === this.ownerId) {
+      return; // already serving on behalf of this launcher
+    }
+    if (info?.service !== 'undisclosed') {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[brain-launcher] :${port} is held by a process that is not the ` +
+          'undisclosed brain — leaving it alone. Chat stays offline until ' +
+          'it releases the port.'
+      );
+      return;
+    }
+    if (!(await BrainLauncher.evictFrozenBrain(Number(port)))) {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[brain-launcher] :${port} is still held after trying to stop the ` +
+          'stale brain — not spawning a second one.'
+      );
+      return;
+    }
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[brain-launcher] replaced a stale brain on :${port} that was started ` +
+        'by an older app build.'
+    );
+    this.spawnChild(bin, port);
+    this.startWatchdog(bin, port);
+  }
+
+  /**
+   * Stop a frozen `undisclosed-brain` holding `port`. Only processes whose
+   * command line is the packaged binary are signalled, so a dev brain running
+   * under python is never touched. Returns true once the port is free.
+   */
+  private static async evictFrozenBrain(port: number): Promise<boolean> {
+    const info = await BrainLauncher.probeBrain(port);
+    const reported = info?.pid;
+    const pids =
+      typeof reported === 'number'
+        ? [reported]
+        : BrainLauncher.listenerPids(port);
+    const targets = pids.filter(
+      (pid) =>
+        pid !== process.pid && BrainLauncher.isFrozenBrainProcess(pid)
+    );
+    if (!targets.length) {
+      return !portInUse(port);
+    }
+    for (const pid of targets) {
+      try {
+        process.kill(pid, 'SIGTERM');
+      } catch {
+        /* already gone */
+      }
+    }
+    await BrainLauncher.waitForFreePort(port, 3000);
+    if (portInUse(port)) {
+      for (const pid of targets) {
+        try {
+          process.kill(pid, 'SIGKILL');
+        } catch {
+          /* already gone */
+        }
+      }
+      await BrainLauncher.waitForFreePort(port, 2000);
+    }
+    return !portInUse(port);
+  }
+
+  private static waitForFreePort(
+    port: number,
+    timeoutMs: number
+  ): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    return new Promise((resolve) => {
+      const tick = () => {
+        if (!portInUse(port) || Date.now() >= deadline) {
+          resolve();
+          return;
+        }
+        setTimeout(tick, 150);
+      };
+      tick();
+    });
+  }
+
+  private static listenerPids(port: number): number[] {
+    if (process.platform === 'win32') {
+      return [];
+    }
+    try {
+      const out = spawnSync(
+        'lsof',
+        ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'],
+        { encoding: 'utf8' }
+      ).stdout;
+      return out
+        .split('\n')
+        .map((line) => Number.parseInt(line.trim(), 10))
+        .filter((pid) => Number.isInteger(pid) && pid > 0);
+    } catch {
+      return [];
+    }
+  }
+
+  private static isFrozenBrainProcess(pid: number): boolean {
+    if (process.platform === 'win32') {
+      return false;
+    }
+    try {
+      const out =
+        spawnSync('ps', ['-p', String(pid), '-o', 'command='], {
+          encoding: 'utf8',
+        }).stdout || '';
+      return /undisclosed-brain(\.exe)?\b/i.test(out);
+    } catch {
+      return false;
+    }
+  }
+
+  /** GET /health and parse the identity fields the brain reports. */
+  private static probeBrain(
+    port: number
+  ): Promise<{ service?: string; owner?: string; pid?: number } | undefined> {
+    return new Promise((resolve) => {
+      const req = http.get(
+        { host: '127.0.0.1', port, path: '/health', timeout: 3000 },
+        (res) => {
+          if (res.statusCode !== 200) {
+            res.resume();
+            resolve(undefined);
+            return;
+          }
+          let body = '';
+          res.setEncoding('utf8');
+          res.on('data', (chunk: string) => {
+            body += chunk;
+          });
+          res.on('end', () => {
+            try {
+              const parsed = JSON.parse(body);
+              resolve(
+                parsed && typeof parsed === 'object' ? parsed : undefined
+              );
+            } catch {
+              resolve(undefined);
+            }
+          });
+        }
+      );
+      req.on('timeout', () => {
+        req.destroy();
+        resolve(undefined);
+      });
+      req.on('error', () => resolve(undefined));
+    });
   }
 
   /** One-shot /health probe against the local brain. True only on HTTP 200. */
@@ -587,16 +764,18 @@ export class BrainLauncher implements BackendApplicationContribution {
     }
     this.stopping = false; // onStop set it; clear so respawn/watchdog work again
 
-    // 2) Wait (up to ~5s) for :port to be free — an externally-owned brain the
-    //    user just stopped may take a moment to release the socket.
-    for (let i = 0; i < 25 && portInUse(Number(port)); i++) {
-      await new Promise((r) => setTimeout(r, 200));
-    }
+    // 2) Wait for :port to free up. An orphan from an older build is not our
+    //    child, so onStop could not stop it — evict the packaged binary. A
+    //    non-brain process is left alone.
+    await BrainLauncher.waitForFreePort(Number(port), 5000);
     if (portInUse(Number(port))) {
-      return {
-        ok: false,
-        detail: `:${port} is still held by another process; could not take it over.`,
-      };
+      const freed = await BrainLauncher.evictFrozenBrain(Number(port));
+      if (!freed) {
+        return {
+          ok: false,
+          detail: `:${port} is held by a process that is not the packaged brain; stop it and try again.`,
+        };
+      }
     }
 
     // 3) Spawn our frozen brain and re-arm the watchdog.

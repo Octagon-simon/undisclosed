@@ -13,6 +13,7 @@
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
 
 import logging
+import os
 
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
@@ -30,6 +31,9 @@ class HealthResponse(BaseModel):
     status: str
     service: str
     capabilities: dict | None = None
+    #pid + owner let the launcher tell its own brain from an orphan on :5001
+    pid: int | None = None
+    owner: str | None = None
 
 
 @router.get("/health", name="health check", response_model=HealthResponse)
@@ -37,7 +41,12 @@ async def health_check(detail: bool = Query(False)):
     """Health check endpoint for verifying backend
     is ready to accept requests."""
     logger.debug("Health check requested")
-    response = HealthResponse(status="ok", service="undisclosed")
+    response = HealthResponse(
+        status="ok",
+        service="undisclosed",
+        pid=os.getpid(),
+        owner=os.getenv("UNDISCLOSED_BRAIN_OWNER") or None,
+    )
     if detail:
         hands = get_environment_hands()
         capabilities = hands.get_capability_manifest()

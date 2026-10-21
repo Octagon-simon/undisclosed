@@ -56,6 +56,13 @@ const path = require('path');
   }
 })();
 
+// One id per app launch, shared by every backend generation. BrainLauncher
+// stamps it on the brain it spawns; a brain left over from a previous launch
+// (or an older install) has a different one and gets replaced.
+if (!process.env.UNDISCLOSED_APP_INSTANCE_ID) {
+  process.env.UNDISCLOSED_APP_INSTANCE_ID = `${process.pid}-${Date.now().toString(36)}`;
+}
+
 if (!process.env.THEIA_DEFAULT_PLUGINS) {
   // This file sits at the app root (Resources/app) in the packaged app, next to
   // the bundled `plugins/` dir (matches THEIA_APP_PROJECT_PATH the generated

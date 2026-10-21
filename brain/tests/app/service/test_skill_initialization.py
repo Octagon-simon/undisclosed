@@ -86,6 +86,38 @@ def test_skills_scan_updates_existing_example_skills(tmp_path, monkeypatch):
     assert (skills_root / "pdf" / skill_service.EXAMPLE_SKILL_MARKER).exists()
 
 
+def test_skills_scan_survives_example_sync_failure(tmp_path, monkeypatch):
+    skills_root = tmp_path / "home" / ".undisclosed" / "skills"
+    write_skill(skills_root, "custom", "Custom")
+
+    def boom():
+        raise PermissionError("read-only skills dir")
+
+    monkeypatch.setattr(skill_service, "sync_example_skills", boom)
+    monkeypatch.setattr(skill_service, "SKILLS_ROOT", skills_root)
+
+    skills = skill_service.skills_scan()
+
+    assert [skill["name"] for skill in skills] == ["Custom"]
+
+
+def test_frozen_brain_finds_examples_next_to_executable(
+    tmp_path, monkeypatch
+):
+    bundle = tmp_path / "Resources" / "example-skills"
+    bundle.mkdir(parents=True)
+    executable = tmp_path / "Resources" / "brain" / "undisclosed-brain"
+
+    monkeypatch.delenv(skill_service.EXAMPLE_SKILLS_ENV, raising=False)
+    monkeypatch.setattr(skill_service.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(skill_service.sys, "executable", str(executable))
+
+    roots = skill_service._candidate_example_skill_roots()
+
+    assert bundle in roots
+    assert skill_service.get_example_skills_root() == bundle
+
+
 def test_skill_config_init_registers_bundled_example_skills(
     tmp_path, monkeypatch
 ):

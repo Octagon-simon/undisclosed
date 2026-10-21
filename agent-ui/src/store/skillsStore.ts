@@ -22,6 +22,7 @@ import {
   skillsScan as brainSkillsScan,
   skillWrite as brainSkillWrite,
 } from '@/api/brain';
+import { getBaseURL } from '@/api/http';
 import {
   buildSkillMd,
   hasSkillsFsApi,
@@ -291,7 +292,16 @@ export const useSkillsStore = create<SkillsState>()(
 
       // Load skills from ~/.eigent/skills via Brain REST API
       syncFromDisk: async () => {
-        if (!hasSkillsFsApi()) return;
+        if (!hasSkillsFsApi()) {
+          // ConnectionProvider resolves the endpoint asynchronously; a panel
+          // that mounts first would otherwise skip the scan for good.
+          try {
+            await getBaseURL();
+          } catch {
+            /* no endpoint configured */
+          }
+          if (!hasSkillsFsApi()) return;
+        }
         try {
           const { userId, legacyUserId } = getSkillConfigUserIds();
 
@@ -414,8 +424,9 @@ export const useSkillsStore = create<SkillsState>()(
           diskSkills.sort((a: Skill, b: Skill) => a.name.localeCompare(b.name));
 
           set({ skills: diskSkills });
-        } catch {
-          // Ignore sync errors; keep existing state
+        } catch (error) {
+          //keep existing state, but make the failure visible in DevTools
+          console.error('[Skills] Failed to sync skills from disk:', error);
         }
       },
     }),

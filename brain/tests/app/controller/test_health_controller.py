@@ -49,3 +49,13 @@ async def test_health_detail_prefers_configured_cdp_url(monkeypatch):
     assert response.capabilities["browser_cdp_reachable"] is True
     is_cdp_url_available.assert_called_once_with("http://worker-17:9222")
     is_cdp_available.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_health_reports_launcher_owner(monkeypatch):
+    monkeypatch.setenv("UNDISCLOSED_BRAIN_OWNER", "app-launch-42")
+
+    response = await health_controller.health_check(detail=False)
+
+    assert response.owner == "app-launch-42"
+    assert response.pid == health_controller.os.getpid()

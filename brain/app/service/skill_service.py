@@ -16,6 +16,7 @@ import logging
 import os
 import re
 import shutil
+import sys
 import tempfile
 import zipfile
 from pathlib import Path
@@ -95,6 +96,19 @@ def _candidate_example_skill_roots() -> list[Path]:
     env_path = os.getenv(EXAMPLE_SKILLS_ENV)
     if env_path:
         candidates.append(Path(env_path).expanduser())
+
+    # Frozen (PyInstaller) app: __file__ lives in a temp extraction dir, so the
+    # module-relative candidates below resolve to /var/folders/... and miss.
+    # The real location is next to the executable: <Resources>/brain/undisclosed-brain
+    # with <Resources>/example-skills beside it.
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).resolve().parent
+        candidates.extend(
+            [
+                exe_dir.parent / "example-skills",
+                exe_dir / "example-skills",
+            ]
+        )
 
     backend_root = Path(__file__).resolve().parent.parent.parent
     candidates.extend(
@@ -296,7 +310,11 @@ def example_skills_metadata() -> list[dict]:
 
 def skills_scan() -> list[dict]:
     """Scan skills directory and return list of skills with metadata."""
-    sync_example_skills()
+    #a failed copy must not 500 the whole list; the user's own skills still load
+    try:
+        sync_example_skills()
+    except Exception:
+        logger.exception("Failed to sync bundled example skills")
     if not SKILLS_ROOT.exists():
         return []
     skills = []
