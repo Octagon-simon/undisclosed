@@ -46,6 +46,8 @@ export type ActivityCategory =
 export interface ActivityItem {
   id: string;
   category: ActivityCategory;
+  /** Raw tool method (e.g. `run_tests`), used by the test receipt. */
+  method?: string;
   verb: string;
   object: string;
   badge?: string;
@@ -719,6 +721,7 @@ export function classifyToolItem(item: ToolItem): ActivityItem {
   return {
     id: item.id,
     category,
+    method: item.method,
     // Present-continuous while running ("Searching…"), past tense when done.
     verb: running ? toRunningVerb(verb) : verb,
     // Search objects are already cleaned/shortened in-branch; re-`shorten`ing
@@ -1081,6 +1084,7 @@ export function toPersistedActivity(item: ActivityItem): ActivityItem {
   return {
     id: item.id,
     category: item.category,
+    method: item.method,
     verb: item.verb,
     object: item.object,
     badge: item.badge,

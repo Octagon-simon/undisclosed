@@ -67,6 +67,9 @@ _CORE_TOOLKIT_MARKERS: tuple[str, ...] = (
     # them instead of spraying shell_exec greps to find code.
     "code search",
     "search",
+    # Verification primitive: the prompt makes a coverage-gap plan mandatory
+    # after test runs, so gating it behind RAG would strand the agent mid-check.
+    "test runner",
 )
 
 

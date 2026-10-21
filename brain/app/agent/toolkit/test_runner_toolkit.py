@@ -22,8 +22,9 @@ check, which is what the testing / verification flow needs.
 Tools:
 
   - ``read_test_skill``   -- the lacuna-cli skill's SKILL.md (guidance / doc).
-  - ``coverage_gap_plan`` -- the gap plan (defaults to the changed-lines lens,
-                             ``@diff:origin/main``, like a patch-coverage gate).
+  - ``coverage_gap_plan`` -- the gap plan (defaults to the changed-lines lens
+                             against ``main``, like a patch-coverage gate; pass
+                             ``base='origin/develop'`` for another branch).
   - ``run_tests``         -- run the suite with coverage and pair it with the
                              same gap plan.
 
@@ -62,11 +63,38 @@ _GIT_TIMEOUT = 120.0
 _DEFAULT_THRESHOLD = 80
 #: How much of the suite output to echo when the run fails.
 _FAILURE_TAIL_CHARS = 1500
-#: File modes that can carry patch coverage (docs/config/lockfiles excluded).
-_SOURCE_EXT_RE = re.compile(r"\.(?:ts|tsx|js|jsx|mts|cts|mjs|cjs)$")
+#: Extensions that can carry patch coverage. Unlike lacuna (JS/TS only), the
+#: diff lens has to cover every runner this toolkit detects, or editing a
+#: `.py` file reports "nothing changed" and a vacuous 100% patch.
+_PATCH_EXTENSIONS = (
+    "ts",
+    "tsx",
+    "js",
+    "jsx",
+    "mts",
+    "cts",
+    "mjs",
+    "cjs",
+    "py",
+    "go",
+    "rs",
+    "rb",
+    "php",
+    "java",
+    "kt",
+    "kts",
+    "swift",
+    "cs",
+    "vue",
+    "svelte",
+)
+_SOURCE_EXT_RE = re.compile(rf"\.(?:{'|'.join(_PATCH_EXTENSIONS)})$")
+#: Extensions walked when looking for source files with no coverage record.
+_SOURCE_EXTENSIONS = {"." + ext for ext in _PATCH_EXTENSIONS}
+#: Test files: `foo.test.ts`, `foo.spec.ts`, `test_foo.py`, `foo_test.go`.
+_TEST_FILE_RE = re.compile(r"(?:[._](?:test|spec)\.[^.]+$)|(?:^test_[^/]+$)")
 #: Refs are interpolated into a git command -- allow only ref-shaped strings.
 _SAFE_REF_RE = re.compile(r"[\w\-./@~^{}]+")
-_JS_SOURCE_EXTENSIONS = {".ts", ".tsx", ".js", ".jsx", ".mts", ".cts"}
 
 
 # --------------------------------------------------------------------------- #
@@ -211,9 +239,12 @@ class _GitDiffError(Exception):
 
 
 def _truncate(text: str, limit: int = _MAX_OUTPUT_CHARS) -> str:
+    """Keep the head AND the tail: runner summaries and failures live at the end."""
     if len(text) <= limit:
         return text
-    return text[:limit] + "\n… [output truncated]"
+    head = limit // 2
+    tail = limit - head
+    return text[:head] + "\n\n… [middle truncated] …\n\n" + text[-tail:]
 
 
 def _read_text(path: Path) -> str | None:
@@ -332,11 +363,21 @@ def _has_project_extension(root: Path, extensions: tuple[str, ...]) -> bool:
         return False
 
 
-def _parse_scope(scope: str, root: Path) -> tuple[Path | None, bool, str | None]:
-    """Split a scope string into (dir, want_diff, ref)."""
+def _parse_scope(
+    scope: str, root: Path
+) -> tuple[Path | None, bool, str | None, str | None]:
+    """Split a scope string into (dir, want_diff, ref, unknown_path).
+
+    A bare token that is not an existing path is kept as a possible ref (a
+    branch name) and returned as ``unknown_path`` too, so the caller can either
+    treat it as a base branch or fail loudly. Lacuna errors on a missing path;
+    silently scoping to a directory that does not exist is how you get a fake
+    "no gaps" answer.
+    """
     scope_dir: Path | None = None
     want_diff = False
     ref: str | None = None
+    unknown: str | None = None
     for token in scope.split():
         if token == "@diff":
             want_diff = True
@@ -344,10 +385,13 @@ def _parse_scope(scope: str, root: Path) -> tuple[Path | None, bool, str | None]
             want_diff = True
             ref = token[len("@diff:"):] or None
         else:
-            path = Path(token)
+            path = Path(token).expanduser()
             full = path if path.is_absolute() else (root / token)
-            scope_dir = full.parent if full.is_file() else full
-    return scope_dir, want_diff, ref
+            if full.exists():
+                scope_dir = full.parent if full.is_file() else full
+            else:
+                unknown = token
+    return (scope_dir.resolve() if scope_dir else None), want_diff, ref, unknown
 
 
 # --------------------------------------------------------------------------- #
@@ -550,6 +594,14 @@ _IGNORE_DIRS = {
     ".venv",
     "venv",
     "env",
+    "site-packages",
+    "dist-packages",
+    ".tox",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".pytest_cache",
+    "Pods",
+    "DerivedData",
     "tmp",
     "temp",
     "fixtures",
@@ -636,9 +688,82 @@ def _walk_sources(directory: Path) -> list[Path]:
         if entry.is_dir():
             if entry.name.lower() not in _IGNORE_DIRS:
                 out.extend(_walk_sources(entry))
-        elif entry.suffix in _JS_SOURCE_EXTENSIONS:
+        elif entry.suffix in _SOURCE_EXTENSIONS:
             out.append(entry)
     return out
+
+
+def _is_test_file(path: Path) -> bool:
+    return bool(_TEST_FILE_RE.search(path.name))
+
+
+def _parse_pass_count(output: str) -> int:
+    """Passing tests per the runner footer; 0 when nothing was collected.
+
+    Ported from lacuna's ``parsePassCount``. Never reads the vitest
+    "Test Files 1 passed" line, which would make a 15-test run look like 1.
+    """
+    clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+    summary = re.search(r"^\s*Tests\b[^\n]*?(\d+)\s+passed", clean, re.MULTILINE)
+    if summary:
+        return int(summary.group(1))
+    for line in clean.splitlines():
+        if re.search(r"Test\s+Files", line, re.IGNORECASE):
+            continue
+        match = re.search(r"(\d+)\s+passed", line)
+        if match:
+            return int(match.group(1))
+    return 0
+
+
+def _align_report_to_changed(
+    report: _Report, changed: dict[str, set[int]], base: Path
+) -> _Report:
+    """Realign package-relative report paths onto absolute git-diff paths.
+
+    A vitest workspace reports ``src/foo.ts`` for a package at
+    ``packages/api`` while ``git diff`` yields the repo-root absolute path. Left
+    alone, the same file keys two ways and every changed line looks uncovered
+    (a spurious 0%). Only rewrites on a single unambiguous suffix match.
+    """
+    changed_abs = [p.replace("\\", "/") for p in changed]
+    changed_set = set(changed_abs)
+    touched = False
+    files: list[_FileCoverage] = []
+    for file in report.files:
+        abs_path = _norm_abs(file.path, base).replace("\\", "/")
+        if abs_path in changed_set:
+            # Matches already; still rewrite so a package-relative path is
+            # keyed absolutely everywhere downstream.
+            touched = touched or file.path != abs_path
+            files.append(
+                _FileCoverage(
+                    abs_path,
+                    file.lines,
+                    file.functions,
+                    file.line_rate,
+                    file.function_rate,
+                )
+            )
+            continue
+        rel = file.path.replace("\\", "/").lstrip("./")
+        matches = [c for c in changed_abs if c.endswith("/" + rel)]
+        if len(matches) == 1:
+            touched = True
+            files.append(
+                _FileCoverage(
+                    matches[0],
+                    file.lines,
+                    file.functions,
+                    file.line_rate,
+                    file.function_rate,
+                )
+            )
+        else:
+            files.append(file)
+    if not touched:
+        return report
+    return _Report(files, report.total_line_rate, report.total_function_rate)
 
 
 # --------------------------------------------------------------------------- #
@@ -702,7 +827,7 @@ class TestRunnerToolkit(BaseToolkit, AbstractToolkit):
                 "working_directory is required for TestRunnerToolkit; coverage "
                 "runs within the task's project directory."
             )
-        self.working_directory = str(Path(working_directory).expanduser())
+        self.working_directory = str(Path(working_directory).expanduser().resolve())
 
     # ------------------------------------------------------------------ #
     # Internals
@@ -761,16 +886,18 @@ class TestRunnerToolkit(BaseToolkit, AbstractToolkit):
         )
 
     def _detect_env(self, config: _Config) -> _Env:
+        root = Path(self.working_directory)
         if config.test_runner and config.test_runner in _RUNNERS:
             spec = _RUNNERS[config.test_runner]
             return _Env(
                 spec.test_runner,
                 spec.language,
-                config.coverage_command or spec.coverage_command,
-                config.test_command or spec.test_command,
+                self._localize(
+                    config.coverage_command or spec.coverage_command, root
+                ),
+                self._localize(config.test_command or spec.test_command, root),
             )
 
-        root = Path(self.working_directory)
         pkg = _read_json(root / "package.json")
         deps: dict[str, object] = {}
         if isinstance(pkg, dict):
@@ -800,9 +927,22 @@ class TestRunnerToolkit(BaseToolkit, AbstractToolkit):
         return _Env(
             detected.test_runner,
             detected.language,
-            config.coverage_command or detected.coverage_command,
-            config.test_command or detected.test_command,
+            self._localize(
+                config.coverage_command or detected.coverage_command, root
+            ),
+            self._localize(config.test_command or detected.test_command, root),
         )
+
+    def _localize(self, command: str, root: Path) -> str:
+        """Use the project's venv python for Python runners when one exists."""
+        if not command.startswith(("python ", "python3 ")):
+            return command
+        for candidate in (root / ".venv/bin/python", root / "venv/bin/python"):
+            if candidate.is_file():
+                return command.replace("python3 ", f"{candidate} ", 1).replace(
+                    "python ", f"{candidate} ", 1
+                )
+        return command
 
     def _detect_non_node(self, root: Path) -> _RunnerSpec | None:
         gemfile = _read_text(root / "Gemfile")
@@ -849,19 +989,24 @@ class TestRunnerToolkit(BaseToolkit, AbstractToolkit):
                     f"first: git fetch origin {explicit.replace('origin/', '')}"
                 )
             return explicit
+        # Default is main, per the product contract: patch coverage is measured
+        # against the mainline unless the user names another branch.
+        for candidate in ("origin/main", "main"):
+            if self._ref_exists(candidate):
+                return candidate
         head = self._git(["rev-parse", "--abbrev-ref", "origin/HEAD"])
         head_ref = head.stdout.strip()
         if head.returncode == 0 and head_ref and head_ref != "origin/HEAD":
             return head_ref
-        for candidate in ("main", "master"):
-            if self._ref_exists(f"refs/heads/{candidate}"):
-                return candidate
+        if self._ref_exists("master"):
+            return "master"
         if self._ref_exists("HEAD~1"):
             return "HEAD~1"
         raise _GitDiffError(
-            "Could not resolve a base ref for @diff: no origin/HEAD, no local "
-            "main/master, and no parent commit. Pass one explicitly, e.g. "
-            "'@diff:origin/main'."
+            "Could not resolve a base branch for patch coverage: no origin/main, "
+            "no main/master, and no parent commit. Fetch the branch "
+            "(git fetch origin main) or pass one explicitly, e.g. "
+            "coverage_gap_plan(base='develop')."
         )
 
     def _resolve_diff(
@@ -896,7 +1041,31 @@ class TestRunnerToolkit(BaseToolkit, AbstractToolkit):
             ]
         )
         changed = _parse_unified_diff(diff.stdout, repo_root) if diff.stdout else {}
+        # `git diff` never reports untracked files, and a brand-new source file
+        # is exactly what patch coverage must judge. Treat every line of an
+        # untracked (non-ignored) source file as changed.
+        for path, lines in self._untracked_lines(repo_root).items():
+            changed.setdefault(path, set()).update(lines)
         return base_ref, changed
+
+    def _untracked_lines(self, repo_root: str) -> dict[str, set[int]]:
+        listed = self._git(
+            ["ls-files", "--others", "--exclude-standard", "--full-name"]
+        )
+        if listed.returncode != 0:
+            return {}
+        root = Path(repo_root)
+        out: dict[str, set[int]] = {}
+        for rel in listed.stdout.splitlines():
+            rel = rel.strip()
+            if not rel or not _SOURCE_EXT_RE.search(rel):
+                continue
+            path = root / rel
+            text = _read_text(path)
+            if text is None:
+                continue
+            out[str(path)] = set(range(1, len(text.splitlines()) + 1))
+        return out
 
     def _run_command(self, command: str, timeout: float) -> tuple[bool, str]:
         """Run a shell command in the project dir; return (ok, output)."""
@@ -962,16 +1131,33 @@ class TestRunnerToolkit(BaseToolkit, AbstractToolkit):
             )
         return gaps
 
+    def _find_test_files(self, scope_dir: Path | None = None) -> list[Path]:
+        root = Path(self.working_directory)
+        search = [scope_dir] if scope_dir is not None else [root]
+        found: list[Path] = []
+        seen: set[str] = set()
+        for directory in search:
+            for path in _walk_sources(directory):
+                key = str(path)
+                if key in seen:
+                    continue
+                seen.add(key)
+                if _is_test_file(path):
+                    found.append(path)
+        return found
+
     def _find_untouched(
         self, report: _Report, config: _Config, scope_dir: Path | None
     ) -> list[_Gap]:
         root = Path(self.working_directory)
         report_paths = {_norm_abs(f.path, root) for f in report.files}
-        search_dirs = (
-            [scope_dir]
-            if scope_dir is not None
-            else [root / d for d in config.source_dir]
-        )
+        if scope_dir is not None:
+            search_dirs = [scope_dir]
+        else:
+            # A configured source dir that does not exist (the default "src" in
+            # a Python/Go repo) would silently find nothing; fall back to root.
+            configured = [root / d for d in config.source_dir]
+            search_dirs = [d for d in configured if d.is_dir()] or [root]
         candidates: list[_Gap] = []
         for directory in search_dirs:
             for path in _walk_sources(directory):
@@ -1005,52 +1191,61 @@ class TestRunnerToolkit(BaseToolkit, AbstractToolkit):
             return f"[skill read error]: {exc}"
         return _truncate(text)
 
-    def coverage_gap_plan(self, scope: str = "", threshold: int = 0) -> str:
+    def coverage_gap_plan(
+        self, scope: str = "", threshold: int = 0, base: str = ""
+    ) -> str:
         """Report coverage gaps (read-only); defaults to the changed-lines lens.
 
         Detects the project's test runner, runs the suite WITH coverage, parses
         the coverage report, and lists the uncovered files/lines/functions. Runs
         no model and needs no `lacuna` install.
 
-        The default scope is the Codecov-style diff lens (``@diff:origin/main``),
-        so the plan reports the *changed* lines that are uncovered, matching how
-        a PR coverage gate judges a patch. Falls back to a whole-repo analysis
-        when no base ref is available.
+        The default scope is the Codecov-style diff lens against ``main``: the
+        plan reports the *changed* lines that are uncovered (and the patch
+        coverage of the changed files), matching how a PR coverage gate judges
+        a patch. Falls back to a whole-repo analysis when no base branch exists.
 
         Args:
-            scope (str): '' (defaults to @diff:origin/main), a path to narrow to,
-                or '@diff[:<ref>]' (optionally with a path, e.g.
-                '@diff:origin/main packages/api').
-            threshold (int): Minimum line-coverage % (defaults to the project's
-                configured threshold, else 80).
+            scope (str): '' (defaults to the changed-lines lens), a path to
+                narrow to, or '@diff[:<ref>]' (optionally with a path, e.g.
+                '@diff:develop packages/api').
+            threshold (int): Minimum line-coverage % for whole-repo mode
+                (defaults to the project's configured threshold, else 80).
+                Diff mode ignores it and keeps every changed file with any
+                uncovered line, like a patch gate.
+            base (str): Branch/ref to diff against instead of ``main``
+                (e.g. 'origin/develop'). Only used by the diff lens.
 
         Returns:
             str: A coverage-gap plan, or a clear error message.
         """
-        return self._run_and_plan(scope, threshold, include_output=False)
+        return self._run_and_plan(scope, threshold, include_output=False, base=base)
 
-    def run_tests(self, scope: str = "") -> str:
+    def run_tests(self, scope: str = "", base: str = "") -> str:
         """Run the suite with coverage and pair it with the gap plan.
 
         Runs the detected coverage command (which executes the tests) and
         returns its output together with the coverage-gap plan, so a run always
-        surfaces what it does not cover.
+        surfaces what it does not cover. The output starts with the exact
+        command (the UI reads it for the test receipt) and ends with the suite
+        output, summary included.
 
         Args:
             scope (str): Coverage scope for the gap plan (see
                 `coverage_gap_plan`); default is the changed-lines lens.
+            base (str): Branch/ref to diff against instead of ``main``.
 
         Returns:
             str: The suite output plus the coverage-gap plan.
         """
-        return self._run_and_plan(scope, 0, include_output=True)
+        return self._run_and_plan(scope, 0, include_output=True, base=base)
 
     # ------------------------------------------------------------------ #
     # Core
     # ------------------------------------------------------------------ #
 
     def _run_and_plan(
-        self, scope: str, threshold: int, include_output: bool
+        self, scope: str, threshold: int, include_output: bool, base: str = ""
     ) -> str:
         config = self._load_config()
         env_ = self._detect_env(config)
@@ -1063,44 +1258,27 @@ class TestRunnerToolkit(BaseToolkit, AbstractToolkit):
                 + "."
             )
 
-        explicit = bool(scope.strip())
-        scope_dir, want_diff, ref = _parse_scope(
-            scope if explicit else "@diff:origin/main", Path(self.working_directory)
-        )
+        root = Path(self.working_directory)
+        explicit = bool(scope.strip() or base.strip())
+        requested = scope.strip()
+        if not requested:
+            requested = f"@diff:{base.strip()}" if base.strip() else "@diff"
+        scope_dir, want_diff, ref, unknown = _parse_scope(requested, root)
+
+        if unknown:
+            if not want_diff and self._ref_exists(unknown):
+                # `coverage_gap_plan(scope="develop")` -- a branch, not a path.
+                want_diff, ref = True, unknown
+            else:
+                return (
+                    f"[coverage error]: path not found: {unknown}. Pass an "
+                    "existing directory, or a base branch via base='...'."
+                )
+
         threshold = threshold if threshold else config.threshold
 
-        ok, output = self._run_command(
-            env_.coverage_command, config.coverage_timeout
-        )
-        report = self._load_report(config)
-        if report is None:
-            if not ok:
-                return (
-                    "[coverage error]: the coverage command failed and no "
-                    f"coverage report was found under '{config.coverage_dir}/'."
-                    "\n\n" + _truncate(output[-_FAILURE_TAIL_CHARS:])
-                )
-            return (
-                "[coverage error]: the coverage command succeeded but no report "
-                f"(lcov.info / *.lcov / coverage-final.json / "
-                f"coverage-summary.json) was found under "
-                f"'{config.coverage_dir}/'. Check the runner's coverage "
-                "reporter config and `coverageDir`/`coverageFormat`."
-            )
-
-        if scope_dir is not None:
-            report = _Report(
-                [f for f in report.files if _is_within(_norm_abs(f.path, Path(self.working_directory)), scope_dir)],
-                report.total_line_rate,
-                report.total_function_rate,
-            )
-
-        gaps = self._filter_testable(
-            self._extract_gaps(report, threshold), False, config.ignore
-        )
-        untouched = self._find_untouched(report, config, scope_dir)
-
-        patch_pct: float | None = None
+        # Resolve the diff before running anything: a docs-only diff is free.
+        patch: tuple[float, int, int] | None = None
         base_ref: str | None = None
         changed: dict[str, set[int]] = {}
         diff_active = False
@@ -1110,51 +1288,187 @@ class TestRunnerToolkit(BaseToolkit, AbstractToolkit):
             except _GitDiffError as exc:
                 if explicit:
                     return f"[coverage error]: {exc}"
-                # Default diff ref unavailable (e.g. no origin/main) -> whole repo.
+                # Default branch unavailable -> whole-repo analysis.
                 changed = {}
             else:
                 if scope_dir is not None:
                     changed = {
-                        p: lines
-                        for p, lines in changed.items()
-                        if _is_within(p, scope_dir)
+                        path: lines
+                        for path, lines in changed.items()
+                        if _is_within(path, scope_dir)
                     }
-                gaps, assume_uncovered = self._narrow_to_diff(
-                    gaps, changed, report, config.ignore
-                )
-                untouched = []
-                patch_pct = self._patch_coverage(
-                    report, changed, assume_uncovered
-                )
                 diff_active = True
+
+        if diff_active and not changed:
+            return "\n".join(
+                [
+                    "COVERAGE-GAP PLAN (read-only, no model, no lacuna CLI)",
+                    f"Detected:   {env_.test_runner} ({env_.language})",
+                    f"Scope:      changed lines vs {base_ref}",
+                    f"No changed source files in the diff vs {base_ref} -- "
+                    "nothing to cover.",
+                ]
+            )
+
+        has_tests = bool(self._find_test_files(scope_dir))
+        ok = True
+        output = ""
+        report: _Report | None = None
+        if has_tests:
+            ok, output = self._run_command(
+                env_.coverage_command, config.coverage_timeout
+            )
+            report = self._load_report(config)
+            if report is None:
+                if not ok:
+                    missing = re.search(
+                        r"unrecognized arguments:.*--cov|"
+                        r"No module named '?(?:pytest_cov|coverage)'?",
+                        output,
+                        re.IGNORECASE,
+                    )
+                    if missing:
+                        return (
+                            "[coverage error]: the coverage plugin is missing "
+                            f"({missing.group(0)}). Install it "
+                            "(`python -m pip install pytest-cov`) or set "
+                            "`coverageCommand` in .lacuna.json to the project's "
+                            "own coverage script."
+                        )
+                    return (
+                        "[coverage error]: the coverage command failed and no "
+                        f"coverage report was found under '{config.coverage_dir}/'."
+                        "\n\n" + _truncate(output[-_FAILURE_TAIL_CHARS:])
+                    )
+                return (
+                    "[coverage error]: the coverage command succeeded but no report "
+                    f"(lcov.info / *.lcov / coverage-final.json / "
+                    f"coverage-summary.json) was found under "
+                    f"'{config.coverage_dir}/'. Check the runner's coverage "
+                    "reporter config and `coverageDir`/`coverageFormat`."
+                )
+            # A run that collected zero passing tests measured nothing; every
+            # changed line would look uncovered. That phantom 0% is the classic
+            # monorepo trap (root command skips a package's prerequisites).
+            zero_evidence = bool(
+                re.search(
+                    r"no tests ran|No test files found|No tests found|"
+                    r"collected 0 items|Tests:\s+0 total|Executed 0 tests",
+                    output,
+                    re.IGNORECASE,
+                )
+            )
+            countable = env_.test_runner in {
+                "vitest",
+                "jest",
+                "pytest",
+                "cargo-test",
+                "mocha",
+            }
+            failed_any = bool(re.search(r"\d+\s+(?:failed|error)", output))
+            zero_tests = zero_evidence or (
+                countable
+                and ok
+                and not failed_any
+                and _parse_pass_count(output) == 0
+            )
+            if diff_active and zero_tests:
+                abort = re.search(
+                    r"Unhandled Error|Configuration property .*? is not defined|"
+                    r"globalSetup\b|No test files found|Cannot find (?:module|package)",
+                    output,
+                )
+                hint = (
+                    f'\nThe suite aborted before running: "{abort.group(0)}".'
+                    if abort
+                    else ""
+                )
+                return (
+                    "[coverage error]: the suite executed 0 tests, so patch "
+                    f"coverage vs {base_ref} would be a phantom 0%.{hint}\n"
+                    "In a monorepo the root coverage command often skips a "
+                    "package's build step or config/env and exits with an empty "
+                    "report. Run it the way the package's `test:cov` script does, "
+                    "or point `coverageDir` at that package's report."
+                )
+        else:
+            report = _Report([], 0.0, 0.0)
+
+        if diff_active:
+            # Reports in a monorepo often key files package-relative; realign
+            # them onto the absolute git-diff paths before comparing.
+            report = _align_report_to_changed(report, changed, root)
+        elif scope_dir is not None:
+            report = _Report(
+                [
+                    f
+                    for f in report.files
+                    if _is_within(_norm_abs(f.path, root), scope_dir)
+                ],
+                report.total_line_rate,
+                report.total_function_rate,
+            )
+
+        # Diff mode keeps every file with ANY uncovered line (threshold 101)
+        # and keeps files that already have tests: a 94%-covered file can still
+        # have uncovered CHANGED lines. The per-file threshold is whole-repo only.
+        gap_threshold = 101 if diff_active else threshold
+        include_existing = diff_active or scope_dir is not None
+        gaps = self._filter_testable(
+            self._extract_gaps(report, gap_threshold), include_existing, config.ignore
+        )
+        untouched = self._find_untouched(report, config, scope_dir)
+
+        if diff_active:
+            gaps, assume_uncovered = self._narrow_to_diff(
+                gaps, changed, report, config.ignore
+            )
+            untouched = []
+            patch = self._patch_coverage(report, changed, assume_uncovered)
 
         scope_label = "whole project"
         if diff_active:
-            scope_label = "changed lines"
+            scope_label = (
+                f"changed lines vs {base_ref} ({len(changed)} file(s), "
+                f"{sum(len(v) for v in changed.values())} line(s))"
+            )
         elif scope_dir is not None:
             scope_label = _relative(str(scope_dir), self.working_directory)
 
         header = [
             "COVERAGE-GAP PLAN (read-only, no model, no lacuna CLI)",
             f"Detected:   {env_.test_runner} ({env_.language})",
+            f"Command:    {env_.coverage_command}",
             f"Scope:      {scope_label}",
             f"Threshold:  {threshold}%",
             f"Coverage:   lines {report.total_line_rate * 100:.1f}% | "
             f"functions {report.total_function_rate * 100:.1f}%",
-            f"Suite:      {'passed' if ok else 'FAILED'}",
+            (
+                f"Suite:      {'passed' if ok else 'FAILED'}"
+                if has_tests
+                else "Suite:      not run (no test files yet)"
+            ),
         ]
+        if patch is not None:
+            pct, covered, total = patch
+            header.append(
+                f"Patch:      {pct:.1f}% ({covered}/{total} changed executable lines)"
+            )
         if not ok and output:
             header.append("Suite tail: " + output[-_FAILURE_TAIL_CHARS:].strip())
-        if diff_active and base_ref is not None:
-            header.append(
-                f"Diff:       vs {base_ref} ({len(changed)} file(s), "
-                f"{sum(len(v) for v in changed.values())} line(s))"
-            )
 
-        body = self._render_gaps(
-            gaps, untouched, patch_pct, Path(self.working_directory)
+        parts = ["\n".join(header)]
+        details = (
+            self._changed_file_details(
+                report, changed, assume_uncovered if diff_active else set(), root
+            )
+            if diff_active
+            else []
         )
-        text = "\n".join(header) + "\n" + body
+        if details:
+            parts.append("Changed files:\n" + "\n".join(details))
+        parts.append(self._render_gaps(gaps, untouched, root))
+        text = "\n\n".join(parts)
         if include_output:
             text += f"\n\nSuite output:\n{_truncate(output)}"
         return text
@@ -1206,7 +1520,8 @@ class TestRunnerToolkit(BaseToolkit, AbstractToolkit):
         report: _Report,
         changed: dict[str, set[int]],
         assume_uncovered: set[str],
-    ) -> float:
+    ) -> tuple[float, int, int]:
+        """Codecov-style patch coverage: covered/total changed executable lines."""
         root = Path(self.working_directory)
         hits = {
             _norm_abs(f.path, root): {ln.line: ln.hit for ln in f.lines}
@@ -1229,32 +1544,74 @@ class TestRunnerToolkit(BaseToolkit, AbstractToolkit):
                 total += 1
                 if hit > 0:
                     covered += 1
-        return 100.0 if total == 0 else (covered / total) * 100.0
+        return (100.0 if total == 0 else (covered / total) * 100.0), covered, total
+
+    def _changed_file_details(
+        self,
+        report: _Report,
+        changed: dict[str, set[int]],
+        assume_uncovered: set[str],
+        root: Path,
+    ) -> list[str]:
+        """One line per changed file: whole-file line rate + changed-line patch."""
+        hits = {
+            _norm_abs(f.path, root): (f.line_rate, {ln.line: ln.hit for ln in f.lines})
+            for f in report.files
+        }
+        lines: list[str] = []
+        for abs_path in sorted(changed):
+            changed_lines = changed[abs_path]
+            rel = _relative(abs_path, str(root))
+            entry = hits.get(abs_path)
+            if entry is None:
+                if abs_path in assume_uncovered:
+                    lines.append(
+                        f"  {rel}: no coverage record ({len(changed_lines)} "
+                        "changed line(s) uncovered)"
+                    )
+                else:
+                    lines.append(
+                        f"  {rel}: not counted (no testable code to instrument)"
+                    )
+                continue
+            line_rate, file_hits = entry
+            covered = sum(
+                1 for ln in changed_lines if file_hits.get(ln, 0) > 0
+            )
+            executable = sum(1 for ln in changed_lines if ln in file_hits)
+            lines.append(
+                f"  {rel}: {line_rate * 100:.1f}% lines | patch "
+                f"{covered}/{executable}"
+            )
+            if len(lines) >= 20:
+                remaining = len(changed) - 20
+                if remaining > 0:
+                    lines.append(f"  … and {remaining} more changed file(s)")
+                break
+        return lines
 
     def _render_gaps(
         self,
         gaps: list[_Gap],
         untouched: list[_Gap],
-        patch_pct: float | None,
         root: Path,
     ) -> str:
         lines: list[str] = []
-        if patch_pct is not None:
-            lines.append(f"Patch coverage: {patch_pct:.1f}%")
         if not gaps and not untouched:
             lines.append("No coverage gaps found. Nothing uncovered in scope.")
             return "\n".join(lines)
 
-        lines.append(f"Gaps ({len(gaps)}):")
-        for gap in gaps:
-            rel = _relative(gap.file_path, str(root))
-            if gap.uncovered_lines:
-                target = "lines " + _collapse_ranges(gap.uncovered_lines)
-            else:
-                target = "whole file (no coverage record)"
-            if gap.uncovered_functions:
-                target += "; fns " + ", ".join(gap.uncovered_functions[:10])
-            lines.append(f"  {rel}: {target}")
+        if gaps:
+            lines.append(f"Gaps ({len(gaps)}):")
+            for gap in gaps:
+                rel = _relative(gap.file_path, str(root))
+                if gap.uncovered_lines:
+                    target = "lines " + _collapse_ranges(gap.uncovered_lines)
+                else:
+                    target = "whole file (no coverage record)"
+                if gap.uncovered_functions:
+                    target += "; fns " + ", ".join(gap.uncovered_functions[:10])
+                lines.append(f"  {rel}: {target}")
 
         if untouched:
             lines.append(f"Untouched source files ({len(untouched)}):")

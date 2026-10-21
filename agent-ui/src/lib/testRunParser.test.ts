@@ -51,15 +51,49 @@ describe('parseTestRun', () => {
     expect(run?.duration).toBe('0.04s');
   });
 
-  it('falls back to totals when pytest prints dots only', () => {
+  it('reads test files from pytest progress when it prints dots', () => {
     const run = parseTestRun({
       command: '.venv/bin/python -m pytest test_app.py',
       output: PYTEST_DOTS,
     });
 
-    expect(run?.tests).toEqual([]);
+    expect(run?.tests).toEqual([{ name: 'test_app.py', status: 'passed' }]);
     expect(run?.totals).toEqual({ passed: 9, failed: 0, skipped: 0 });
     expect(run?.duration).toBe('0.01s');
+  });
+
+  it('marks a pytest file failed when its progress line has failures', () => {
+    const run = parseTestRun({
+      command: '.venv/bin/python -m pytest',
+      output: [
+        'tests/test_calc.py ..F                                               [ 66%]',
+        '',
+        '===== 2 passed, 1 failed in 0.02s =====',
+      ].join('\n'),
+    });
+
+    expect(run?.tests).toEqual([
+      { name: 'tests/test_calc.py', status: 'failed' },
+    ]);
+    expect(run?.totals).toEqual({ passed: 2, failed: 1, skipped: 0 });
+  });
+
+  it('reads jest file verdicts', () => {
+    const run = parseTestRun({
+      command: 'npx jest --coverage',
+      output: [
+        'PASS src/lib/testRunParser.test.ts',
+        'FAIL src/lib/legacy.test.ts',
+        '',
+        'Tests:       2 failed, 9 passed, 11 total',
+      ].join('\n'),
+    });
+
+    expect(run?.tests).toEqual([
+      { name: 'src/lib/testRunParser.test.ts', status: 'passed' },
+      { name: 'src/lib/legacy.test.ts', status: 'failed' },
+    ]);
+    expect(run?.totals).toEqual({ passed: 9, failed: 2, skipped: 0 });
   });
 
   it('reads vitest marks', () => {
@@ -126,6 +160,35 @@ describe('testRunFromActivity', () => {
     const run = testRunFromActivity(activity);
     expect(run?.command).toBe('.venv/bin/python -m pytest test_app.py');
     expect(run?.totals?.passed).toBe(9);
+    expect(run?.tests).toEqual([{ name: 'test_app.py', status: 'passed' }]);
+  });
+
+  it('reads a coverage-toolkit run from its plan header', () => {
+    const run = testRunFromActivity({
+      id: 'tool-1',
+      category: 'other',
+      method: 'run_tests',
+      verb: 'run tests',
+      object: 'Test Runner Toolkit',
+      running: false,
+      input: '{"scope": "", "base": ""}',
+      output: [
+        'COVERAGE-GAP PLAN (read-only, no model, no lacuna CLI)',
+        'Command:    npx vitest run --coverage',
+        'Patch:      100.0% (4/4 changed executable lines)',
+        '',
+        'Suite output:',
+        ' ✓ src/lib/card.test.ts (3 tests) 8ms',
+        '',
+        ' Tests  3 passed (3)',
+      ].join('\n'),
+    });
+
+    expect(run?.command).toBe('npx vitest run --coverage');
+    expect(run?.tests).toEqual([
+      { name: 'src/lib/card.test.ts (3 tests)', status: 'passed' },
+    ]);
+    expect(run?.totals).toEqual({ passed: 3, failed: 0, skipped: 0 });
   });
 
   const edit: ActivityItem = {
@@ -199,6 +262,29 @@ describe('testRunFromActivity', () => {
       output: '412 passed in 8.20s',
     };
     expect(latestTestRun([edit, fullSuite])).toBeNull();
+  });
+
+  it('keeps the coverage toolkit full-suite run as the receipt', () => {
+    const toolkitRun: ActivityItem = {
+      id: 'tool-2',
+      category: 'other',
+      method: 'run_tests',
+      verb: 'run tests',
+      object: 'Test Runner Toolkit',
+      running: false,
+      input: '{"scope": ""}',
+      output: [
+        'Command:    .venv/bin/python -m pytest --cov',
+        '',
+        'Suite output:',
+        'tests/test_app.py ..                    [100%]',
+        '2 passed in 0.01s',
+      ].join('\n'),
+    };
+
+    expect(latestTestRun([edit, toolkitRun])?.tests).toEqual([
+      { name: 'tests/test_app.py', status: 'passed' },
+    ]);
   });
 
   it('prefers the scoped run over a later full-suite run', () => {

@@ -7,8 +7,10 @@
  * The shell tool already sends the exact command and its output, so a turn
  * needs no new event to light up the card: `testRunFromActivity` parses the
  * pair and the panel renders the receipt. Runners that print per-test lines
- * (pytest -v, vitest, jest, go test) fill the rows; a default pytest run only
- * prints dots, so it falls back to the summary counts.
+ * (pytest -v, vitest) fill the rows; non-verbose pytest prints one progress
+ * line per file, and Jest prints `PASS`/`FAIL` per file, so both still produce
+ * a file-level roster instead of falling back to bare counts. The coverage
+ * toolkit's `run_tests` feeds the same shape through its `Command:` header.
  */
 
 import type { ActivityItem } from '@/lib/activityClassifier';
@@ -40,6 +42,18 @@ function commandFromInput(input: string): string {
   if (match) return match[1] ?? match[2] ?? '';
   return isTestCommand(input) ? input.trim() : '';
 }
+
+/**
+ * The coverage toolkit (`run_tests`) sends no command in its input; the plan
+ * header carries it so the receipt can show what actually ran.
+ */
+function commandFromOutput(output: string): string {
+  const match = output.match(/^(?:\$\s+|Command:\s+)(.+)$/m);
+  return match ? match[1].trim() : '';
+}
+
+/** Toolkit methods that run the suite and should feed the receipt. */
+const TEST_TOOL_METHOD = /^(?:run[ _]tests|coverage[ _]gap[ _]plan)$/i;
 
 const TEST_FILE = /\.(?:[cm]?[jt]sx?|py|go|rs|rb|php|java|kt|swift|cs)$/i;
 /** Flags that narrow the run by name/marker instead of running everything. */
@@ -99,6 +113,10 @@ export function isFullSuiteCommand(command: string): boolean {
 }
 
 const PYTEST_LINE = /^\s*(\S.*?)\s+(PASSED|FAILED|SKIPPED|ERROR|XFAIL|XPASS)\b/;
+/** Non-verbose pytest progress: `test_calc.py ..F  [ 66%]`. */
+const PYTEST_PROGRESS = /^\s*(\S+\.py)\s+([.sFExX]+)\s*(?:\[\s*\d+%\s*\])?\s*$/;
+/** Jest's file-level verdict: `PASS src/app.test.ts`. */
+const JEST_LINE = /^\s*(PASS|FAIL)\s+(\S+)/;
 const MARK_LINE = /^\s*[✓✔×✕✗○◯√]\s+(.+?)\s*$/;
 const GO_LINE = /^\s*---\s+(PASS|FAIL|SKIP):\s+(\S+)/;
 
@@ -136,6 +154,21 @@ function collectNamedTests(output: string): TestCase[] {
         go[2],
         go[1] === 'PASS' ? 'passed' : go[1] === 'FAIL' ? 'failed' : 'skipped'
       );
+      continue;
+    }
+
+    const progress = line.match(PYTEST_PROGRESS);
+    if (progress) {
+      byName.set(
+        progress[1],
+        /[FExX]/.test(progress[2]) ? 'failed' : 'passed'
+      );
+      continue;
+    }
+
+    const jest = line.match(JEST_LINE);
+    if (jest) {
+      byName.set(jest[2], jest[1] === 'PASS' ? 'passed' : 'failed');
       continue;
     }
 
@@ -221,8 +254,10 @@ export function parseTestRun({
 export function testRunFromActivity(
   item: ActivityItem
 ): TestRunSnapshot | null {
-  if (item.category !== 'shell') return null;
-  const command = commandFromInput(item.input);
+  const fromToolkit = TEST_TOOL_METHOD.test(item.method ?? '');
+  if (item.category !== 'shell' && !fromToolkit) return null;
+  const command =
+    commandFromInput(item.input) || commandFromOutput(item.output);
   if (!command) return null;
   return parseTestRun({ command, output: item.output, running: item.running });
 }
@@ -250,7 +285,14 @@ export function latestTestRun(
 
   for (let i = items.length - 1; i > lastEdit; i--) {
     const run = testRunFromActivity(items[i]);
-    if (run && !isFullSuiteCommand(run.command)) return run;
+    if (!run) continue;
+    // The coverage toolkit always runs the whole suite (patch coverage needs
+    // it), and it is the turn's verification receipt, so keep it.
+    if (
+      TEST_TOOL_METHOD.test(items[i].method ?? '') ||
+      !isFullSuiteCommand(run.command)
+    )
+      return run;
   }
   return null;
 }

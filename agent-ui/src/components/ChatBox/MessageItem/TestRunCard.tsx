@@ -89,7 +89,7 @@ async function copyToClipboard(text: string): Promise<boolean> {
 
 export function TestRunCard({
   command,
-  tests,
+  tests = [],
   totals,
   duration,
   provenance,

@@ -463,6 +463,26 @@ _ANNOUNCE_MARKERS: tuple[str, ...] = (
     "let me now",
 )
 
+# Plan/design narration: a status message about what is coming, not a report.
+_PLAN_MARKERS: tuple[str, ...] = (
+    "here's the plan",
+    "here's my plan",
+    "here's what i'm building",
+    "here's what i'll build",
+    "i'm building against",
+    "reading this as",
+    "design read",
+    "before i start",
+    "say go",
+    "standing by",
+    "ready to start",
+)
+
+# Past this length a reply is only narration when it is explicitly a plan;
+# otherwise it is an answer and must never be nudged.
+_MAX_ANNOUNCE_CHARS = 1200
+_PLAIN_ANSWER_CHARS = 400
+
 # Requests that are chat, not work — never nudge these even if the reply is short.
 _CHATTY_MESSAGES: frozenset[str] = frozenset(
     {
@@ -494,13 +514,16 @@ def _looks_like_announce_and_stop(content: str, question: str) -> bool:
     if not content:
         return False
     c = content.strip().lower()
-    if not c or len(c) > 400:  # a substantive answer isn't announce-and-stop
+    if not c or len(c) > _MAX_ANNOUNCE_CHARS:
         return False
     has_marker = any(m in c for m in _ANNOUNCE_MARKERS)
+    has_plan = any(m in c for m in _PLAN_MARKERS)
+    if len(c) > _PLAIN_ANSWER_CHARS:
+        if not has_plan:
+            return False
     # Also catch fragmentary "about to do the next step" preambles that trail
     # off into a colon, e.g. "Now the host side:" — very short, ends with ':'.
-    colon_fragment = c.endswith(":") and len(c) < 90
-    if not (has_marker or colon_fragment):
+    elif not (has_marker or has_plan or (c.endswith(":") and len(c) < 90)):
         return False
     q = (question or "").strip().lower().rstrip("!.")
     if q in _CHATTY_MESSAGES or len(q) < 3:
@@ -519,6 +542,7 @@ def _should_auto_continue(
     *,
     tool_called: bool,
     answer_from_fallback: bool,
+    todo_in_progress: bool = False,
 ) -> bool:
     """Decide whether a finished turn should be nudged to keep going.
 
@@ -527,6 +551,10 @@ def _should_auto_continue(
     * ``tool_called=False`` — the model replied with ONLY an intent preamble
       ("I'll start by looking at the files…") and ended with zero tool calls.
       This is the original announce-and-stop case.
+
+    * ``todo_in_progress`` — the turn ended with an unfinished todo. This
+      holds regardless of ``tool_called`` / ``answer_from_fallback`` and does
+      not depend on how the message is phrased.
 
     * ``tool_called=True`` AND ``answer_from_fallback`` — the model DID run
       tools but its trailing segment (the text after the last tool call) was
@@ -540,7 +568,17 @@ def _should_auto_continue(
     chit-chat, so a real answer that merely happens to start with "I'll" is
     never nudged.
     """
-    if not _looks_like_announce_and_stop(content, question):
+    body = (content or "").strip()
+    if not body:
+        return False
+    q = (question or "").strip().lower().rstrip("!.")
+    if q in _CHATTY_MESSAGES or len(q) < 3:
+        return False
+    # An open todo is proof the task is unfinished, however many tools ran and
+    # however long the message was. This is the case the prose guard missed.
+    if todo_in_progress and "?" not in body[-200:]:
+        return True
+    if not _looks_like_announce_and_stop(body, question):
         return False
     # No tool run at all → classic announce-and-stop.
     if not tool_called:
@@ -1461,25 +1499,48 @@ async def single_agent_solve(
         # to re-prompt. Nudge it (bounded) to actually act / report. Guarded so
         # it can never loop forever, never fires on greetings/short chats, and
         # never fires on an errored turn.
+        def _todo_in_progress() -> bool:
+            toolkit = getattr(turn_agent, "_observable_todo_toolkit", None)
+            if toolkit is None:
+                return False
+            try:
+                return any(
+                    str(item.get("status", "")).strip().lower()
+                    in ("in_progress", "in-progress")
+                    for item in toolkit.serialized_todos()
+                )
+            except Exception:
+                return False
+
         for _attempt in range(_MAX_ANNOUNCE_NUDGES):
             if not _should_auto_continue(
                 content,
                 question,
                 tool_called=_tool_called,
                 answer_from_fallback=answer_from_fallback,
+                todo_in_progress=_todo_in_progress(),
             ):
                 break
             logger.info(
                 "announce-and-stop detected (tool_calls=%s, fallback=%s, "
-                "attempt %d/%d); auto-continuing",
+                "todo_open=%s, attempt %d/%d); auto-continuing",
                 _tool_called,
                 answer_from_fallback,
+                _todo_in_progress(),
                 _attempt + 1,
                 _MAX_ANNOUNCE_NUDGES,
                 extra={"task_id": task_id},
             )
             try:
-                if _attempt == 0:
+                if _attempt == 0 and _todo_in_progress():
+                    nudge = (
+                        "Your todo list still has an unfinished item, and your "
+                        "last message described the plan instead of doing it. "
+                        "Continue now: run the next step with your tools, then "
+                        "update the todos with what actually changed. Do NOT "
+                        "restate the plan."
+                    )
+                elif _attempt == 0:
                     nudge = (
                         "Continue now. Actually perform the action you just "
                         "described, using your tools — do NOT restate the plan. "

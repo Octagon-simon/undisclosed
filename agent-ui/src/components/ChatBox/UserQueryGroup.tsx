@@ -717,9 +717,9 @@ export const UserQueryGroup: React.FC<UserQueryGroupProps> = ({
               {...testRun}
               running={Boolean(liveTestRun && summaryRunning && testRun.running)}
               animate={Boolean(liveTestRun && summaryRunning && testRun.running)}
-              // Folded by default: the header already carries `9 passed in
-              // 0.01s`, and an open roster would push the answer below the fold.
-              defaultOpen={false}
+              // Open when there is a roster to show: the demo reads as evidence
+              // (files ticking), and a counts-only card has nothing to expand.
+              defaultOpen={(testRun.tests?.length ?? 0) > 0}
               className="mt-2"
             />
           ) : null}

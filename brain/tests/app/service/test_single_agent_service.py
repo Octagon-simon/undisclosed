@@ -299,3 +299,84 @@ class TestAnnounceAndStopRecovery:
         )
         assert not _looks_like_announce_and_stop(answer, "fix the tests")
 
+
+class TestAnnounceAndStopStateGate:
+    """A turn that ends with an unfinished todo is not done, whatever the
+    message says and however many tools ran. Regression for the design-read
+    stall in .brain.log:16839 (152 tool rounds, 409-char plan, turn ended).
+    """
+
+    STALLED = (
+        "I've got the design read and the current structure. Here's what "
+        "I'm building against:\n\n**Reading this as:** a hospitality SaaS "
+        "landing for restaurant owners in Nigeria, with a warm print-menu "
+        "language, leaning toward paper and ink, one terracotta accent, and "
+        "a serif display face. Dials: `VARIANCE 7 / MOTION 3 / DENSITY 4`. "
+        "The menu page keeps each brand's theme tokens but gets the same "
+        "editorial structure."
+    )
+
+    def test_detects_plan_after_work_when_a_todo_is_open(self):
+        from app.service.single_agent_service import _should_auto_continue
+
+        # 409 chars: over the old 400 cap, under the new one.
+        assert 400 < len(self.STALLED) <= 1200
+        assert _should_auto_continue(
+            self.STALLED,
+            "use this skill for the ui and menu page",
+            tool_called=True,
+            answer_from_fallback=False,
+            todo_in_progress=True,
+        )
+
+    def test_plan_after_work_with_no_open_todo_is_left_alone(self):
+        from app.service.single_agent_service import _should_auto_continue
+
+        closing = "Added 3 tests. I'll push once you approve."
+        assert not _should_auto_continue(
+            closing,
+            "add tests for the new files",
+            tool_called=True,
+            answer_from_fallback=False,
+            todo_in_progress=False,
+        )
+
+    def test_open_todo_does_not_nudge_a_clarifying_question(self):
+        from app.service.single_agent_service import _should_auto_continue
+
+        assert not _should_auto_continue(
+            "Which processor should I use, Paystack or Payaza?",
+            "wire up checkout",
+            tool_called=True,
+            answer_from_fallback=False,
+            todo_in_progress=True,
+        )
+
+    def test_plain_answer_over_400_chars_is_not_narrated(self):
+        from app.service.single_agent_service import _should_auto_continue
+
+        answer = "The bug is a stale closure. " + ("detail " * 30) + (
+            "I'll note the fix in the plan file."
+        )
+        assert not _should_auto_continue(
+            answer,
+            "explain the bug",
+            tool_called=True,
+            answer_from_fallback=False,
+            todo_in_progress=False,
+        )
+
+    def test_open_todo_does_not_nudge_when_the_tail_asks_something(self):
+        from app.service.single_agent_service import _should_auto_continue
+
+        waiting = (
+            "I've done the first two sections. Before I rewrite the menu page, "
+            "should I keep the brand theme tokens or drop them?"
+        )
+        assert not _should_auto_continue(
+            waiting,
+            "redo the menu page",
+            tool_called=True,
+            answer_from_fallback=False,
+            todo_in_progress=True,
+        )
