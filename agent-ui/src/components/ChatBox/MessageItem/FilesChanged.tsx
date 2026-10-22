@@ -21,11 +21,12 @@
  * file's real unified diff inline, git-style, with up/down arrows to step
  * through the hunks (`@@` blocks) so a long patch stays navigable.
  *
- * Diffs come from `lib/gitDiff.fetchFileDiff` — `git diff HEAD` for tracked
- * files, `/dev/null` for untracked ones — fetched for every changed file on
- * mount so the `+N/-M` totals are real (the classifier can't always carry
- * them). When the host can't provide a diff (web host, non-repo folder) the row
- * falls back to the classifier's own counts and shows "No diff available".
+ * Diffs come from `lib/gitDiff.fetchFileChange` — `git diff HEAD` for tracked
+ * files, `/dev/null` for untracked ones, and the last commit's patch when the
+ * turn already committed its work — fetched for every changed file on mount so
+ * the `+N/-M` totals are real (the classifier can't always carry them). When the
+ * host can't provide a diff (web host, non-repo folder) the row falls back to
+ * the classifier's own counts and shows "No diff available".
  *
  * File paths are rendered RELATIVE to the open folder root, never absolute.
  *
@@ -37,7 +38,12 @@
 
 import { Badge } from '@/components/ui/badge';
 import type { ChangedFile } from '@/lib/activityClassifier';
-import { fetchFileDiff } from '@/lib/gitDiff';
+import {
+  fetchFileChange,
+  statusFromPatch,
+  type FileChange,
+  type FileChangeStatus,
+} from '@/lib/gitDiff';
 import { getOpenFolderRoot } from '@/lib/openFolder';
 import { cn } from '@/lib/utils';
 import {
@@ -73,14 +79,16 @@ function countPatch(patch: string): { added: number; removed: number } {
 }
 
 /**
- * Best-effort git status. The classifier carries no status, so we read the diff
- * shape: additions only looks Added, deletions only looks Deleted, everything
- * else Modified.
+ * Git status for a row. Prefer what `git status` reported; when the fetch is
+ * unavailable or the worktree is clean, read the patch's new/deleted markers.
+ * Never infer from add/remove counts: a modification that only deleted lines
+ * is still `M`, and only a real deletion is `D`.
  */
-function fileStatus(stats: { added: number; removed: number }): 'M' | 'A' | 'D' {
-  if (stats.removed === 0 && stats.added > 0) return 'A';
-  if (stats.added === 0 && stats.removed > 0) return 'D';
-  return 'M';
+function fileStatus(
+  f: ChangedFile,
+  change: FileChange | null
+): FileChangeStatus {
+  return change?.status ?? statusFromPatch(change?.patch || f.patch || '') ?? 'M';
 }
 
 /**
@@ -264,7 +272,7 @@ export function FilesChanged({
   const paths = files.map((f) => f.path);
   const pathKey = paths.join('\n');
 
-  const [diffs, setDiffs] = useState<Record<string, string | null>>({});
+  const [diffs, setDiffs] = useState<Record<string, FileChange | null>>({});
   const [loading, setLoading] = useState(false);
   const [openPath, setOpenPath] = useState<string | null>(null);
 
@@ -281,7 +289,7 @@ export function FilesChanged({
     void Promise.all(
       pathKey
         .split('\n')
-        .map(async (p) => [p, await fetchFileDiff(p)] as const)
+        .map(async (p) => [p, await fetchFileChange(p)] as const)
     ).then((entries) => {
       if (cancelled) return;
       setDiffs(Object.fromEntries(entries));
@@ -299,7 +307,7 @@ export function FilesChanged({
   const fetchedReady = (f: ChangedFile) =>
     Object.prototype.hasOwnProperty.call(diffs, f.path);
   const patchFor = (f: ChangedFile): string | null =>
-    diffs[f.path] || f.patch || null;
+    diffs[f.path]?.patch || f.patch || null;
 
   // Prefer the patch's stats; fall back to the classifier's.
   const statsOf = (f: ChangedFile) => {
@@ -395,9 +403,9 @@ export function FilesChanged({
                   <Badge
                     size="xs"
                     variant="secondary"
-                    tone={statusTone(fileStatus(stats))}
+                    tone={statusTone(fileStatus(f, diffs[f.path] ?? null))}
                   >
-                    {fileStatus(stats)}
+                    {fileStatus(f, diffs[f.path] ?? null)}
                   </Badge>
                   <span className="truncate">{relativeToRoot(f.path)}</span>
                 </span>
