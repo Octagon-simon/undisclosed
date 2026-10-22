@@ -246,6 +246,37 @@ class TestAnnounceAndStopRecovery:
             answer_from_fallback=True,
         )
 
+    def test_detects_announce_after_tools_without_fallback(self):
+        from app.service.single_agent_service import _should_auto_continue
+
+        # The exact stall from the cheflymenu design turn: 32 tool rounds ran,
+        # then the model closed on a promise to measure and reported nothing.
+        stalled = (
+            "I pulled both components apart rather than guessing. Before I "
+            "give you a verdict, one hard number matters: how far down the "
+            "first dish sits on a phone in each version. Let me measure it "
+            "properly."
+        )
+        assert _should_auto_continue(
+            stalled,
+            "i'm not sure about this design. the main one we have in "
+            "cheflymenu.app still beats this one that looks like paper. "
+            "what do u think?",
+            tool_called=True,
+            answer_from_fallback=False,
+        )
+
+    def test_signoff_with_let_me_know_is_not_a_stall(self):
+        from app.service.single_agent_service import _should_auto_continue
+
+        assert not _should_auto_continue(
+            "The v2 type scale is too tight. Let me know if you want it "
+            "loosened.",
+            "what do u think of the v2 type scale?",
+            tool_called=True,
+            answer_from_fallback=False,
+        )
+
     def test_does_not_nudge_real_closing_answer_after_tools(self):
         from app.service.single_agent_service import _should_auto_continue
 
@@ -355,9 +386,10 @@ class TestAnnounceAndStopStateGate:
     def test_plain_answer_over_400_chars_is_not_narrated(self):
         from app.service.single_agent_service import _should_auto_continue
 
-        answer = "The bug is a stale closure. " + ("detail " * 30) + (
+        answer = "The bug is a stale closure. " + ("detail " * 60) + (
             "I'll note the fix in the plan file."
         )
+        assert len(answer) > 400
         assert not _should_auto_continue(
             answer,
             "explain the bug",

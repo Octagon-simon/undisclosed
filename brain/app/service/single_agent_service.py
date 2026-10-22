@@ -66,6 +66,7 @@ from app.service.task import (
 )
 from app.service.turn_end_guard import (
     TurnEndState,
+    claims_completion,
     classify_tool_records,
     evaluate_turn_end,
     outstanding_reasons,
@@ -469,6 +470,18 @@ _ANNOUNCE_MARKERS: tuple[str, ...] = (
     "let me now",
 )
 
+# Announcements of a follow-up the USER must trigger ("I'll push once you
+# approve"). A legitimate hand-back, not a stall, so never nudge these.
+_HAND_BACK_MARKERS: tuple[str, ...] = (
+    "let me know",
+    "once you",
+    "when you",
+    "if you want",
+    "if you'd like",
+    "your call",
+    "your go",
+)
+
 # Plan/design narration: a status message about what is coming, not a report.
 _PLAN_MARKERS: tuple[str, ...] = (
     "here's the plan",
@@ -522,6 +535,8 @@ def _looks_like_announce_and_stop(content: str, question: str) -> bool:
     c = content.strip().lower()
     if not c or len(c) > _MAX_ANNOUNCE_CHARS:
         return False
+    if any(m in c for m in _HAND_BACK_MARKERS):
+        return False
     has_marker = any(m in c for m in _ANNOUNCE_MARKERS)
     has_plan = any(m in c for m in _PLAN_MARKERS)
     if len(c) > _PLAIN_ANSWER_CHARS:
@@ -569,6 +584,10 @@ def _should_auto_continue(
       checking…" and the turn ends, even though work was done. Without this
       branch the recovery was silently skipped because a tool had run.
 
+    * ``tool_called=True`` AND no completion claim — the model wrote its own
+      closing message, but that message only promises the next step
+      ("...Let me measure it properly.") and reports no result.
+
     Deliberately conservative: the content must still look like an intent
     preamble (short + future-intent phrasing) and the request must not be
     chit-chat, so a real answer that merely happens to start with "I'll" is
@@ -589,9 +608,10 @@ def _should_auto_continue(
     # No tool run at all → classic announce-and-stop.
     if not tool_called:
         return True
-    # Tools ran but the reported answer is a resurrected pre-tool preamble →
-    # the model ended without a closing message. Nudge it to report.
-    return answer_from_fallback
+    # Tools ran. A resurrected pre-tool preamble is always a stall. A genuine
+    # trailing message stalls too when it only announces the next step and
+    # reports no result ("...Let me measure it properly.").
+    return answer_from_fallback or not claims_completion(body)
 
 
 _ACK_INSTRUCTION = (
