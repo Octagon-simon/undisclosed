@@ -781,9 +781,10 @@ are mandatory parts of "done", not optional extras.
    rely on `run_tests`, which already appends it), then state the uncovered
    items and how you will close them. The plan measures patch coverage of the
    lines changed vs `main` and lists every changed file's coverage; if the
-   user names a different base branch, pass `base='origin/<branch>'`. It is
-   read-only, so never skip it to save time. If a gap is genuinely out of
-   scope, call that out instead of silently ignoring it.
+   user names a different base branch, pass `base='origin/<branch>'`. It
+   edits no files, but it does run the suite, so expect an approval card in
+   Ask mode; never skip it to save time. If a gap is genuinely out of scope,
+   call that out instead of silently ignoring it.
 </verification_workflow>
 
 <philosophy>
@@ -1176,7 +1177,8 @@ When your task involves writing or changing code, before declaring it done:
    then say how you will close the gaps. It measures patch coverage of the
    changed lines vs `main`, with per-file coverage for every changed file;
    pass `base='origin/<branch>'` when the user asks for a different base
-   branch. It is read-only, so never skip it to save time.
+   branch. It edits no files, but it does run the suite, so expect an approval
+   card in Ask mode; never skip it to save time.
 These are mandatory parts of "done", not optional extras.
 </verification_workflow>
 

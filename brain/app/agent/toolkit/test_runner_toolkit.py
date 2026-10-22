@@ -933,6 +933,11 @@ class TestRunnerToolkit(BaseToolkit, AbstractToolkit):
             self._localize(config.test_command or detected.test_command, root),
         )
 
+    def governance_command(self) -> str:
+        """The coverage command `run_tests` and `coverage_gap_plan` execute."""
+        config = self._load_config()
+        return self._detect_env(config).coverage_command or ""
+
     def _localize(self, command: str, root: Path) -> str:
         """Use the project's venv python for Python runners when one exists."""
         if not command.startswith(("python ", "python3 ")):

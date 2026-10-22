@@ -67,6 +67,10 @@ from app.service.task import get_task_lock, get_task_lock_if_exists
 #: solve turn by the single agent and read by every worker/trigger.
 SESSION_MODE_ATTR = "governance_mode"
 
+#: Test-runner tools shell out to the project's own coverage command, so they
+#: go through the command policy instead of being treated as pure reads.
+TEST_RUNNER_TOOL_NAMES = frozenset({"run_tests", "coverage_gap_plan"})
+
 #: Worker tool groups that mirror the single agent's gated surface. Workers
 #: build their own toolkits, so without this they could run what the single
 #: agent must ask for.
@@ -83,6 +87,7 @@ WORKER_GATE_GROUPS: tuple[tuple[str, frozenset[str]], ...] = (
             }
         ),
     ),
+    ("test_runner", TEST_RUNNER_TOOL_NAMES),
     (
         "file_write",
         frozenset(
@@ -143,6 +148,24 @@ def _command_from(name: str, args: tuple, kwargs: dict) -> str:
     return str(next((arg for arg in args if isinstance(arg, str)), ""))
 
 
+def _test_runner_command(tool: FunctionTool | Callable) -> str:
+    """The suite command a test-runner tool will run, or "" when unknown.
+
+    The toolkit resolves the command from project config, so the gate asks it
+    instead of guessing from the tool arguments.
+    """
+    func = getattr(tool, "func", None)
+    owner = getattr(func, "__self__", None)
+    getter = getattr(owner, "governance_command", None)
+    if not callable(getter):
+        return ""
+    try:
+        command = getter()
+    except Exception:  # pragma: no cover - defensive
+        return ""
+    return command if isinstance(command, str) else ""
+
+
 def workspace_for_task(api_task_id: str) -> str | None:
     """The run's working directory, when the task lock knows it."""
     task_lock = get_task_lock_if_exists(api_task_id)
@@ -156,6 +179,8 @@ def _call_tier(
     args: tuple,
     kwargs: dict,
     workspace: str | None = None,
+    *,
+    tool_command: str = "",
 ) -> CommandTier:
     """Resolve the tier of one tool call from its live arguments."""
     if name in _TERMINAL_TOOL_TIERS:
@@ -164,6 +189,14 @@ def _call_tier(
         return assess_command(
             _command_from(name, args, kwargs), workspace
         ).tier
+    if field_name == "test_runner":
+        # Running the suite executes project code even when the command is
+        # classified read-only, so it never drops below WORKSPACE_WRITE. A
+        # destructive or blocked coverage command keeps its higher tier.
+        return max(
+            assess_command(tool_command, workspace).tier,
+            CommandTier.WORKSPACE_WRITE,
+        )
     if field_name == "git_write" and name == "git_push":
         return CommandTier.DESTRUCTIVE
     return _TIER_BY_FIELD.get(field_name, CommandTier.WORKSPACE_WRITE)
@@ -175,6 +208,8 @@ def _call_scopes(
     args: tuple,
     kwargs: dict,
     workspace: str | None = None,
+    *,
+    tool_command: str = "",
 ) -> tuple[CommandScope, ...]:
     """Resolve the suppression scopes of one tool call."""
     if name == "shell_write_content_to_file":
@@ -185,6 +220,10 @@ def _call_scopes(
         return assess_command(
             _command_from(name, args, kwargs), workspace
         ).scopes
+    if field_name == "test_runner":
+        if not tool_command:
+            return ()
+        return assess_command(tool_command, workspace).scopes
     if field_name == "git_write" and name == "git_push":
         return ()
     scope = _SCOPE_BY_FIELD.get(field_name)
@@ -498,8 +537,19 @@ def wrap_with_approval(
     async def _gated(*args: Any, **kwargs: Any) -> str:
         intent = kwargs.pop(INTENT_ARG, None)
         workspace = workspace_for_task(api_task_id)
-        tier = _call_tier(field_name, name, args, kwargs, workspace)
-        scopes = _call_scopes(field_name, name, args, kwargs, workspace)
+        tool_command = (
+            _test_runner_command(tool)
+            if field_name == "test_runner"
+            else ""
+        )
+        tier = _call_tier(
+            field_name, name, args, kwargs, workspace,
+            tool_command=tool_command,
+        )
+        scopes = _call_scopes(
+            field_name, name, args, kwargs, workspace,
+            tool_command=tool_command,
+        )
         # Resolved per call, not at construction: a worker may be built
         # before its turn's mode is recorded, and the mode can change
         # between turns on a reused agent.
@@ -587,6 +637,16 @@ def wrap_with_approval(
             )
 
         detail = _describe_call(name, args, kwargs)
+        if tool_command:
+            detail = (
+                f"{detail}\ncommand: "
+                f"{_shorten(tool_command, _VERBATIM_LIMIT)}"
+            )
+        card_command = tool_command
+        if not card_command and (
+            field_name == "terminal" or name == "shell_exec"
+        ):
+            card_command = _command_from(name, args, kwargs)
         decision = await manager.request_approval(
             tool_name=field_name,
             detail=detail,
@@ -597,9 +657,7 @@ def wrap_with_approval(
             description=_describe_for_card(
                 tier,
                 scopes,
-                _command_from(name, args, kwargs)
-                if field_name == "terminal" or name == "shell_exec"
-                else "",
+                card_command,
                 intent=intent,
                 tool_name=name,
             ),

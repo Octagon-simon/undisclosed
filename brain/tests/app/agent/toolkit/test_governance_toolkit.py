@@ -33,8 +33,10 @@ from app.agent.toolkit.command_policy import CommandScope, CommandTier
 from app.agent.toolkit.governance_toolkit import (
     DENIED_DECISIONS,
     GovernanceMode,
+    _call_scopes,
     _call_tier,
     _normalize_intent,
+    _test_runner_command,
     _with_intent_argument,
     gate_worker_tools,
     mode_from_toolkit_config,
@@ -321,6 +323,107 @@ class TestCallTier:
         assert _call_tier(
             "github_write", "create_issue", (), {}
         ) == CommandTier.DESTRUCTIVE
+
+
+class _FakeTestRunner:
+    def __init__(self, command: str) -> None:
+        self.command = command
+
+    def governance_command(self) -> str:
+        return self.command
+
+    async def run_tests(self, scope: str = "", base: str = "") -> str:
+        """Run the suite with coverage.
+
+        Args:
+            scope: Coverage scope.
+            base: Base branch.
+        """
+        return f"ran {self.command}"
+
+
+class TestTestRunnerGate:
+    """The coverage tools shell out, so they go through the command policy."""
+
+    def _tool(self, command: str) -> FunctionTool:
+        return FunctionTool(_FakeTestRunner(command).run_tests)
+
+    def test_command_is_read_from_the_toolkit(self):
+        assert _test_runner_command(self._tool("pytest -q")) == "pytest -q"
+
+    def test_suite_runs_never_drop_below_workspace_write(self):
+        assert (
+            _call_tier(
+                "test_runner", "run_tests", (), {}, tool_command="pytest -q"
+            )
+            == CommandTier.WORKSPACE_WRITE
+        )
+
+    def test_destructive_command_keeps_its_tier(self):
+        assert (
+            _call_tier(
+                "test_runner",
+                "run_tests",
+                (),
+                {},
+                tool_command="git push origin main",
+            )
+            == CommandTier.DESTRUCTIVE
+        )
+
+    def test_blocked_command_stays_blocked(self):
+        assert (
+            _call_tier(
+                "test_runner", "run_tests", (), {}, tool_command="rm -rf /"
+            )
+            == CommandTier.BLOCKED
+        )
+
+    def test_scopes_come_from_the_command(self):
+        assert _call_scopes(
+            "test_runner",
+            "coverage_gap_plan",
+            (),
+            {},
+            tool_command="pytest -q --cov",
+        ) == (CommandScope.BUILDS_TESTS,)
+
+    @pytest.mark.asyncio
+    async def test_ask_prompts_with_the_resolved_command(self, monkeypatch):
+        manager = _patch_manager(monkeypatch, allowed_scopes=set())
+        gated = wrap_with_approval(
+            self._tool("pytest -q --cov"),
+            field_name="test_runner",
+            agent_name="single_agent",
+            api_task_id="project_1",
+            mode=GovernanceMode.ASK,
+        )
+
+        await gated.func(scope="", base="")
+
+        manager.request_approval.assert_awaited_once()
+        kwargs = manager.request_approval.await_args.kwargs
+        assert kwargs["tier"] == int(CommandTier.WORKSPACE_WRITE)
+        assert kwargs["scopes"] == [CommandScope.BUILDS_TESTS.value]
+        assert "pytest -q --cov" in kwargs["detail"]
+
+    @pytest.mark.asyncio
+    async def test_blocked_command_never_prompts_and_never_runs(
+        self, monkeypatch
+    ):
+        manager = _patch_manager(monkeypatch)
+        gated = wrap_with_approval(
+            self._tool("rm -rf /"),
+            field_name="test_runner",
+            agent_name="single_agent",
+            api_task_id="project_1",
+            mode=GovernanceMode.AUTO,
+        )
+
+        result = await gated.func()
+
+        assert "blocked by policy" in result
+        manager.request_approval.assert_not_awaited()
 
 
 async def git_push(branch: str) -> str:

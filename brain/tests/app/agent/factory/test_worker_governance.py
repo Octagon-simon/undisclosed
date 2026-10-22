@@ -65,7 +65,9 @@ def _patch_side_effects(monkeypatch, tmp_path, project_id):
     monkeypatch.setenv("browser_port", "9222")
 
 
-def _chat(sample_chat_data: dict) -> Chat:
+def _chat(
+    sample_chat_data: dict, toolkit_config: dict | None = None
+) -> Chat:
     return Chat(
         **{
             **sample_chat_data,
@@ -74,7 +76,7 @@ def _chat(sample_chat_data: dict) -> Chat:
             "api_key": "test_key",
             "api_url": "https://bedrock.local/v1",
             "installed_mcp": {"mcpServers": {}},
-            "toolkit_config": None,
+            "toolkit_config": toolkit_config,
         }
     )
 
@@ -165,3 +167,47 @@ async def test_worker_shell_and_file_tools_are_gated(
     for name in ("write_to_file", "edit_file", "notebook_edit_cell"):
         if name in tools:
             assert tools[name]._governance_field == "file_write"
+
+
+@pytest.mark.asyncio
+async def test_developer_coverage_tools_are_gated(
+    sample_chat_data, monkeypatch, tmp_path
+):
+    options = _chat(sample_chat_data)
+    _patch_side_effects(monkeypatch, tmp_path, options.project_id)
+
+    tools = _by_name(
+        await _build_worker(
+            "app.agent.factory.developer",
+            "developer_agent",
+            options,
+            tmp_path,
+            monkeypatch,
+        )
+    )
+
+    assert tools["run_tests"]._governance_field == "test_runner"
+    assert tools["coverage_gap_plan"]._governance_field == "test_runner"
+
+
+@pytest.mark.asyncio
+async def test_developer_honours_disabled_test_runner(
+    sample_chat_data, monkeypatch, tmp_path
+):
+    options = _chat(
+        sample_chat_data, {"test_runner": {"enabled": False}}
+    )
+    _patch_side_effects(monkeypatch, tmp_path, options.project_id)
+
+    tools = _by_name(
+        await _build_worker(
+            "app.agent.factory.developer",
+            "developer_agent",
+            options,
+            tmp_path,
+            monkeypatch,
+        )
+    )
+
+    assert "run_tests" not in tools
+    assert "coverage_gap_plan" not in tools

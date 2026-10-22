@@ -53,6 +53,7 @@ from app.agent.toolkit.github_toolkit import (
 )
 from app.agent.toolkit.google_calendar_toolkit import GoogleCalendarToolkit
 from app.agent.toolkit.governance_toolkit import (
+    TEST_RUNNER_TOOL_NAMES,
     GovernanceMode,
     gate_tool_if_named,
     record_session_governance_mode,
@@ -187,6 +188,15 @@ def _enabled(config: dict[str, Any], name: str, default: bool = True) -> bool:
     if isinstance(value, dict):
         return bool(value.get("enabled", default))
     return bool(value)
+
+
+def toolkit_enabled(options: Chat, name: str, default: bool = True) -> bool:
+    """Whether `name` is enabled in this session's merged toolkit config.
+
+    Workers build their own toolkits, so they read the same config as the
+    single agent instead of ignoring a toolkit the user turned off.
+    """
+    return _enabled(_merged_config(options), name, default)
 
 
 def _options(config: dict[str, Any], name: str) -> dict[str, Any]:
@@ -799,8 +809,18 @@ async def assemble_single_agent_toolkits(
             **_options(config, "test_runner"),
         )
         toolkit = message_integration.register_toolkits(toolkit)
-        # Read-only now (native coverage analysis; no generate/fix): no gate.
-        assembly.add_tools(toolkit.get_tools(), TestRunnerToolkit.toolkit_name())
+        # Both tools shell out to the project's coverage command, so they get
+        # the `shell_exec` treatment: blocked commands are refused in every
+        # mode, destructive ones always prompt, and ASK gates the rest.
+        test_tools = gate_tool_if_named(
+            toolkit.get_tools(),
+            target_names=TEST_RUNNER_TOOL_NAMES,
+            field_name="test_runner",
+            agent_name=Agents.single_agent,
+            api_task_id=options.project_id,
+            mode=governance_mode,
+        )
+        assembly.add_tools(test_tools, TestRunnerToolkit.toolkit_name())
 
     if _enabled(config, "code_review"):
         toolkit = CodeReviewToolkit(

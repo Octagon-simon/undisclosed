@@ -22,6 +22,7 @@ from app.agent.agent_model import agent_model
 from app.agent.factory.remote_sub_agent import (
     attach_remote_sub_agent_if_enabled,
 )
+from app.agent.factory.toolkit_assembler import toolkit_enabled
 from app.agent.listen_chat_agent import logger
 from app.agent.prompt import (
     DEVELOPER_SYS_PROMPT,
@@ -103,31 +104,47 @@ async def developer_agent(
 
     # Specialized developer toolkits (diff/patch, test runner, code execution)
     # so the workforce developer worker is as equipped for real engineering as
-    # the single agent — previously it only had terminal/notes/search.
-    diff_toolkit = message_integration.register_toolkits(
-        DiffToolkit(
-            options.project_id,
-            Agents.developer_agent,
-            working_directory=working_directory,
+    # the single agent, which previously only had terminal/notes/search. Each
+    # honours the same `toolkit_config` key as the single agent, so turning one
+    # off there also turns it off here.
+    specialized_tools = []
+    specialized_names = []
+    if toolkit_enabled(options, "diff"):
+        diff_toolkit = message_integration.register_toolkits(
+            DiffToolkit(
+                options.project_id,
+                Agents.developer_agent,
+                working_directory=working_directory,
+            )
         )
-    )
-    test_runner_toolkit = message_integration.register_toolkits(
-        TestRunnerToolkit(
-            options.project_id,
-            Agents.developer_agent,
-            working_directory=working_directory,
+        specialized_tools.extend(diff_toolkit.get_tools())
+        specialized_names.append(DiffToolkit.toolkit_name())
+    if toolkit_enabled(options, "test_runner"):
+        test_runner_toolkit = message_integration.register_toolkits(
+            TestRunnerToolkit(
+                options.project_id,
+                Agents.developer_agent,
+                working_directory=working_directory,
+            )
         )
-    )
-    code_review_toolkit = message_integration.register_toolkits(
-        CodeReviewToolkit(
-            options.project_id,
-            Agents.developer_agent,
-            working_directory=working_directory,
+        specialized_tools.extend(test_runner_toolkit.get_tools())
+        specialized_names.append(TestRunnerToolkit.toolkit_name())
+    if toolkit_enabled(options, "code_review"):
+        code_review_toolkit = message_integration.register_toolkits(
+            CodeReviewToolkit(
+                options.project_id,
+                Agents.developer_agent,
+                working_directory=working_directory,
+            )
         )
-    )
-    code_execution_toolkit = message_integration.register_toolkits(
-        CodeExecutionToolkit(options.project_id)
-    )
+        specialized_tools.extend(code_review_toolkit.get_tools())
+        specialized_names.append(CodeReviewToolkit.toolkit_name())
+    if toolkit_enabled(options, "code_execution"):
+        code_execution_toolkit = message_integration.register_toolkits(
+            CodeExecutionToolkit(options.project_id)
+        )
+        specialized_tools.extend(code_execution_toolkit.get_tools())
+        specialized_names.append(CodeExecutionToolkit.toolkit_name())
     # GitHub tools are only available when a token is configured (returns [] if
     # not), so this stays a no-op for users without GITHUB_ACCESS_TOKEN.
     github_tools = GithubToolkit.get_can_use_tools(options.project_id)
@@ -152,10 +169,7 @@ async def developer_agent(
         *screenshot_toolkit.get_tools(),
         *skill_toolkit.get_tools(),
         *search_tools,
-        *diff_toolkit.get_tools(),
-        *test_runner_toolkit.get_tools(),
-        *code_review_toolkit.get_tools(),
-        *code_execution_toolkit.get_tools(),
+        *specialized_tools,
         *github_tools,
         *mongo_tools,
     ]
@@ -165,10 +179,7 @@ async def developer_agent(
         WebDeployToolkit.toolkit_name(),
         ScreenshotToolkit.toolkit_name(),
         SkillToolkit.toolkit_name(),
-        DiffToolkit.toolkit_name(),
-        TestRunnerToolkit.toolkit_name(),
-        CodeReviewToolkit.toolkit_name(),
-        CodeExecutionToolkit.toolkit_name(),
+        *specialized_names,
     ]
     if search_tools:
         tool_names.append(SearchToolkit.toolkit_name())
