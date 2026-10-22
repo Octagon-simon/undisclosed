@@ -17,12 +17,15 @@ import type { ActivityItem } from '@/lib/activityClassifier';
 import type {
   TestCase,
   TestCaseStatus,
+  TestFileResult,
   TestRunTotals,
 } from '@/components/ChatBox/MessageItem/TestRunCard';
 
 export interface TestRunSnapshot {
   command: string;
   tests: TestCase[];
+  /** Per-file verdicts, for the file roster at the top of the card. */
+  files?: TestFileResult[];
   totals?: TestRunTotals;
   duration?: string;
   running?: boolean;
@@ -112,11 +115,22 @@ export function isFullSuiteCommand(command: string): boolean {
   return true;
 }
 
+const ANSI = new RegExp(
+  `${String.fromCharCode(27)}\\[[0-9;]*[A-Za-z]`,
+  'g'
+);
 const PYTEST_LINE = /^\s*(\S.*?)\s+(PASSED|FAILED|SKIPPED|ERROR|XFAIL|XPASS)\b/;
 /** Non-verbose pytest progress: `test_calc.py ..F  [ 66%]`. */
 const PYTEST_PROGRESS = /^\s*(\S+\.py)\s+([.sFExX]+)\s*(?:\[\s*\d+%\s*\])?\s*$/;
 /** Jest's file-level verdict: `PASS src/app.test.ts`. */
-const JEST_LINE = /^\s*(PASS|FAIL)\s+(\S+)/;
+const JEST_LINE = /^\s*(PASS|FAIL)\s+(.+?)(?:\s+\([\d.]+\s*s\))?\s*$/;
+/**
+ * Vitest's file roster: `✓ src/foo.test.ts (3 tests) 23ms` or
+ * `❯ src/foo.test.ts (2 tests | 1 failed) 45ms`.
+ */
+const VITEST_FILE_LINE =
+  /^\s*([✓✔×✕✗✖✘❌❯↓])\s+([\w./\\@[\]()-]+\.(?:test|spec)\.[cm]?[jt]sx?)\s*(.*)$/;
+const VITEST_COUNTS = /\((\d+)\s+tests?(?:\s*\|\s*(\d+)\s+failed)?\)/;
 const MARK_LINE = /^\s*[✓✔×✕✗○◯√]\s+(.+?)\s*$/;
 const GO_LINE = /^\s*---\s+(PASS|FAIL|SKIP):\s+(\S+)/;
 
@@ -138,10 +152,17 @@ function stripTiming(name: string): string {
   return name.replace(/\s+\d+(?:\.\d+)?\s*(?:ms|s)$/, '').trim();
 }
 
+function markStatus(mark: string): TestCaseStatus {
+  if (mark === '↓') return 'skipped';
+  return /[×✕✗✖✘❌❯]/.test(mark) ? 'failed' : 'passed';
+}
+
 function collectNamedTests(output: string): TestCase[] {
   const byName = new Map<string, TestCaseStatus>();
 
-  for (const line of output.split('\n')) {
+  for (const raw of output.split('\n')) {
+    const line = raw.replace(ANSI, '').replace(/\r/g, '');
+
     const pytest = line.match(PYTEST_LINE);
     if (pytest && pytest[1].includes('::')) {
       byName.set(pytestName(pytest[1]), PYTEST_STATUS[pytest[2]] ?? 'failed');
@@ -157,30 +178,120 @@ function collectNamedTests(output: string): TestCase[] {
       continue;
     }
 
-    const progress = line.match(PYTEST_PROGRESS);
-    if (progress) {
-      byName.set(
-        progress[1],
-        /[FExX]/.test(progress[2]) ? 'failed' : 'passed'
-      );
+    // File verdicts belong to `collectTestFiles`; a mark followed by a test-file
+    // path is a file row, not a test name.
+    if (VITEST_FILE_LINE.test(line)) continue;
+
+    const mark = line.match(MARK_LINE);
+    if (mark) {
+      byName.set(stripTiming(mark[1]), markStatus(line.trim()[0]));
+    }
+  }
+
+  return [...byName.entries()].map(([name, status]) => ({ name, status }));
+}
+
+function normalizePath(path: string): string {
+  return path.replace(/^\.\//, '');
+}
+
+/**
+ * Per-file verdicts, ported from lacuna's coverage spinner: vitest prints one
+ * line per file with its counts and duration, jest prints `PASS`/`FAIL` per
+ * file, and pytest prints either a dot progress line per file or one row per
+ * test that groups up to its file. Jest repeats a failing `FAIL` line in its
+ * own recap, so the first line per path wins.
+ */
+function collectTestFiles(output: string): TestFileResult[] {
+  const byPath = new Map<string, TestFileResult>();
+  const pytest = new Map<
+    string,
+    { passed: number; failed: number; skipped: number; seen: Set<string> }
+  >();
+
+  for (const raw of output.split('\n')) {
+    const line = raw.replace(ANSI, '').replace(/\r/g, '');
+
+    const vitest = line.match(VITEST_FILE_LINE);
+    if (vitest) {
+      const path = normalizePath(vitest[2]);
+      if (byPath.has(path)) continue;
+      const status = markStatus(vitest[1]);
+      const counts = vitest[3].match(VITEST_COUNTS);
+      const total = counts ? Number(counts[1]) : 0;
+      const failed = counts ? Number(counts[2] ?? 0) : 0;
+      const duration = vitest[3].match(/\b(\d+(?:\.\d+)?\s*(?:ms|s))\b/)?.[1];
+      byPath.set(path, {
+        path,
+        status,
+        // A failing line without its own `N failed` clause carries no split.
+        ...(total && (failed > 0 || status === 'passed')
+          ? { passed: Math.max(0, total - failed), failed }
+          : {}),
+        ...(duration ? { duration } : {}),
+      });
       continue;
     }
 
     const jest = line.match(JEST_LINE);
     if (jest) {
-      byName.set(jest[2], jest[1] === 'PASS' ? 'passed' : 'failed');
+      const path = normalizePath(jest[2].trim());
+      if (!byPath.has(path)) {
+        byPath.set(path, {
+          path,
+          status: jest[1] === 'PASS' ? 'passed' : 'failed',
+        });
+      }
       continue;
     }
 
-    const mark = line.match(MARK_LINE);
-    if (mark) {
-      const status: TestCaseStatus =
-        /[×✕✗]/.test(line.trim()[0]) ? 'failed' : 'passed';
-      byName.set(stripTiming(mark[1]), status);
+    const progress = line.match(PYTEST_PROGRESS);
+    if (progress) {
+      const path = normalizePath(progress[1]);
+      if (byPath.has(path)) continue;
+      const marks = progress[2];
+      const failed = (marks.match(/[FExX]/g) ?? []).length;
+      const skipped = (marks.match(/s/g) ?? []).length;
+      byPath.set(path, {
+        path,
+        status: failed ? 'failed' : skipped ? 'skipped' : 'passed',
+        passed: (marks.match(/\./g) ?? []).length,
+        failed,
+        skipped,
+      });
+      continue;
+    }
+
+    const node = line.match(PYTEST_LINE);
+    if (node && node[1].includes('::')) {
+      const path = normalizePath(node[1].split('::')[0]);
+      const status = PYTEST_STATUS[node[2]] ?? 'failed';
+      let acc = pytest.get(path);
+      if (!acc) {
+        acc = { passed: 0, failed: 0, skipped: 0, seen: new Set() };
+        pytest.set(path, acc);
+      }
+      // pytest repeats failing tests in its short summary; count each node once.
+      if (acc.seen.has(node[1])) continue;
+      acc.seen.add(node[1]);
+      if (status === 'passed') acc.passed += 1;
+      else if (status === 'skipped') acc.skipped += 1;
+      else acc.failed += 1;
     }
   }
 
-  return [...byName.entries()].map(([name, status]) => ({ name, status }));
+  for (const [path, acc] of pytest) {
+    if (byPath.has(path)) continue;
+    byPath.set(path, {
+      path,
+      status: acc.failed ? 'failed' : acc.passed ? 'passed' : 'skipped',
+      passed: acc.passed,
+      failed: acc.failed,
+      skipped: acc.skipped,
+    });
+  }
+
+  return [...byPath.values()];
 }
 
 function lastMatch(output: string, re: RegExp): RegExpMatchArray | null {
@@ -238,13 +349,15 @@ export function parseTestRun({
 }): TestRunSnapshot | null {
   if (!isTestCommand(command)) return null;
 
+  const files = collectTestFiles(output);
   const tests = collectNamedTests(output);
   const totals = totalsFromText(output);
-  if (!tests.length && !totals) return null;
+  if (!tests.length && !files.length && !totals) return null;
 
   return {
     command,
     tests,
+    files,
     totals: totals ?? undefined,
     duration: durationFromText(output),
     running,

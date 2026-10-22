@@ -4,10 +4,11 @@
 /**
  * The end-of-turn test run, as the agent panel should show it.
  *
- * A shell-styled card: the command that ran, one row per test with a checkbox
- * that fills in as the run progresses, and a verdict footer (`9 passed in
- * 0.01s`). The rows exist to show *what* was covered, not just the total, so a
- * turn that wrote its own tests reads as evidence instead of a claim.
+ * A shell-styled card: the command that ran, the test files the runner named,
+ * one row per test with a checkbox that fills in as the run progresses, and a
+ * verdict footer (`9 passed in 0.01s`). The rows exist to show *what* was
+ * covered, not just the total, so a turn that wrote its own tests reads as
+ * evidence instead of a claim.
  *
  * The card is presentational. The agent's shell tool already carries the
  * command and its output; `testRunFromActivity` in `@/lib/testRunParser` turns
@@ -16,6 +17,7 @@
  */
 
 import { Checkbox } from "@/components/ui/checkbox";
+import { splitPathTail } from "@/lib/pathLabel";
 import { cn } from "@/lib/utils";
 import { AnimatePresence, motion } from "framer-motion";
 import { Check, ChevronDown, Copy, Minus, X } from "lucide-react";
@@ -28,6 +30,19 @@ export interface TestCase {
   status: TestCaseStatus;
 }
 
+/**
+ * One test file's verdict. Vitest prints these as `✓ path (3 tests) 23ms`,
+ * jest as `PASS path`, and pytest groups its `path::test` rows by file.
+ */
+export interface TestFileResult {
+  path: string;
+  status: TestCaseStatus;
+  passed?: number;
+  failed?: number;
+  skipped?: number;
+  duration?: string;
+}
+
 export interface TestRunTotals {
   passed: number;
   failed: number;
@@ -38,6 +53,8 @@ export interface TestRunCardProps {
   /** The exact command, e.g. `.venv/bin/python -m pytest test_app.py`. */
   command: string;
   tests: TestCase[];
+  /** Per-file verdicts, when the runner prints a file roster. */
+  files?: TestFileResult[];
   /**
    * Runner totals for output without per-test lines (pytest's default dots).
    * Derived from `tests` when omitted.
@@ -87,9 +104,19 @@ async function copyToClipboard(text: string): Promise<boolean> {
   }
 }
 
+/** Right-aligned per-file counts, or the file's duration when it has no counts. */
+function fileDetail(file: TestFileResult): string {
+  const parts: string[] = [];
+  if (file.failed) parts.push(`${file.failed} failed`);
+  if (file.passed) parts.push(`${file.passed} passed`);
+  if (file.skipped) parts.push(`${file.skipped} skipped`);
+  return parts.length ? parts.join(", ") : (file.duration ?? "");
+}
+
 export function TestRunCard({
   command,
   tests = [],
+  files = [],
   totals,
   duration,
   provenance,
@@ -99,14 +126,44 @@ export function TestRunCard({
   tooltip,
   className,
 }: TestRunCardProps) {
-  const passed =
-    totals?.passed ?? tests.filter((t) => t.status === "passed").length;
-  const failed =
-    totals?.failed ?? tests.filter((t) => t.status === "failed").length;
+  // Without per-test rows the file rows are the only counts available (jest,
+  // and pytest without -v), so the footer reads those instead of reporting 0.
+  const fileTotals = files.reduce(
+    (acc, file) => ({
+      passed: acc.passed + (file.passed ?? (file.status === "passed" ? 1 : 0)),
+      failed: acc.failed + (file.failed ?? (file.status === "failed" ? 1 : 0)),
+      skipped:
+        acc.skipped + (file.skipped ?? (file.status === "skipped" ? 1 : 0)),
+    }),
+    { passed: 0, failed: 0, skipped: 0 },
+  );
+  const counts =
+    totals ??
+    (tests.length > 0
+      ? {
+          passed: tests.filter((t) => t.status === "passed").length,
+          failed: tests.filter((t) => t.status === "failed").length,
+          skipped: tests.filter((t) => t.status === "skipped").length,
+        }
+      : fileTotals);
+  const passed = counts.passed;
+  const failed = counts.failed;
   const total = totals
     ? totals.passed + totals.failed + totals.skipped
-    : tests.length;
-  const testKey = useMemo(() => tests.map((t) => t.name).join("\n"), [tests]);
+    : tests.length > 0
+      ? tests.length
+      : files.length;
+  const unitNoun = tests.length > 0 ? "test" : "file";
+  // Files render above tests and tick in first, so the stagger walks both lists.
+  const unitCount = files.length + tests.length;
+  const testKey = useMemo(
+    () =>
+      [
+        ...files.map((f) => `f:${f.path}`),
+        ...tests.map((t) => `t:${t.name}`),
+      ].join("\n"),
+    [files, tests],
+  );
   const [revealed, setRevealed] = useState(0);
   const [open, setOpen] = useState(defaultOpen);
   const [copied, setCopied] = useState(false);
@@ -133,17 +190,17 @@ export function TestRunCard({
   useEffect(() => {
     if (!animate) return;
     const timers = [window.setTimeout(() => setRevealed(0), 0)];
-    for (let i = 0; i < tests.length; i += 1) {
+    for (let i = 0; i < unitCount; i += 1) {
       timers.push(
         window.setTimeout(() => setRevealed(i + 1), STAGGER_MS * (i + 1)),
       );
     }
     return () => timers.forEach((id) => window.clearTimeout(id));
-  }, [animate, tests.length, testKey]);
+  }, [animate, unitCount, testKey]);
 
   // Without the stagger every row is settled on the first paint.
-  const visible = animate ? Math.min(revealed, tests.length) : tests.length;
-  const settled = !running && visible >= tests.length;
+  const visible = animate ? Math.min(revealed, unitCount) : unitCount;
+  const settled = !running && visible >= unitCount;
   const failedRun = failed > 0;
 
   const verdictText = failedRun
@@ -152,7 +209,7 @@ export function TestRunCard({
   const cardTooltip =
     tooltip ??
     (total
-      ? `Test run: ${total} test${total === 1 ? "" : "s"}, ${
+      ? `Test run: ${total} ${unitNoun}${total === 1 ? "" : "s"}, ${
           settled
             ? `${verdictText}${duration ? ` in ${duration}` : ""}`
             : running
@@ -277,7 +334,7 @@ export function TestRunCard({
             </span>
           ) : (
             <span className="font-mono text-label-xs tracking-[0.16em] text-ds-text-status-completed-default-default">
-              {total === 1 ? `${total} TEST` : `${total} TESTS`}
+              {`${total} ${unitNoun.toUpperCase()}${total === 1 ? "" : "S"}`}
             </span>
           )}
           <ChevronDown
@@ -300,13 +357,85 @@ export function TestRunCard({
             transition={{ duration: 0.15 }}
             className="overflow-hidden"
           >
-            {tests.length ? (
+            {unitCount ? (
               // Capped like the Execution Summary's groups: a 40-test file
               // must not push the answer off-screen. No `overscroll-contain`,
               // so the wheel chains to the panel once the roster hits its edge.
               <ul className="max-h-96 overflow-y-auto py-1 px-0">
-                {tests.map((test, index) => {
+                {files.map((file, index) => {
                   const done = index < visible;
+                  const failedFile = done && file.status === "failed";
+                  const skippedFile = done && file.status === "skipped";
+                  const detail = fileDetail(file);
+                  const label = splitPathTail(file.path);
+                  return (
+                    <li
+                      key={file.path}
+                      className="flex h-9 items-center gap-2.5 px-3 font-mono text-label-xs"
+                    >
+                      {failedFile ? (
+                        <span
+                          className="flex h-4 w-4 shrink-0 items-center justify-center rounded border border-ds-border-status-error-default-default"
+                          style={{
+                            backgroundColor:
+                              "var(--ds-bg-status-error-default-active)",
+                          }}
+                        >
+                          <X
+                            className="h-3 w-3"
+                            style={{ color: "white" }}
+                            aria-hidden
+                          />
+                        </span>
+                      ) : skippedFile ? (
+                        <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded border border-ds-border-neutral-default-default text-ds-text-neutral-subtle-default">
+                          <Minus className="h-3 w-3" aria-hidden />
+                        </span>
+                      ) : (
+                        <span className="flex h-4 w-4 shrink-0 items-center justify-center">
+                          <Check
+                            className="h-3.5 w-3.5"
+                            style={{
+                              color:
+                                "var(--ds-text-status-completed-default-default)",
+                            }}
+                            aria-hidden
+                          />
+                        </span>
+                      )}
+                      <span
+                        title={file.path}
+                        className={cn(
+                          "flex min-w-0 flex-1 items-baseline transition-colors",
+                          done
+                            ? "text-ds-text-neutral-default-default"
+                            : "text-ds-text-neutral-subtle-default",
+                          skippedFile && "line-through opacity-60",
+                        )}
+                      >
+                        {label.head ? (
+                          <span className="min-w-0 truncate">{label.head}</span>
+                        ) : null}
+                        <span className="max-w-full shrink-0 truncate">
+                          {label.tail}
+                        </span>
+                      </span>
+                      {detail ? (
+                        <span className="shrink-0 text-ds-text-neutral-subtle-default">
+                          {detail}
+                        </span>
+                      ) : null}
+                    </li>
+                  );
+                })}
+                {files.length && tests.length ? (
+                  <li
+                    aria-hidden
+                    className="mx-3 my-1 h-px bg-ds-border-neutral-subtle-default"
+                  />
+                ) : null}
+                {tests.map((test, index) => {
+                  const done = files.length + index < visible;
                   const failedRow = done && test.status === "failed";
                   const skippedRow = done && test.status === "skipped";
                   return (

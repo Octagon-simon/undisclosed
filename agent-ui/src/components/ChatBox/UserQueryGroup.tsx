@@ -719,7 +719,9 @@ export const UserQueryGroup: React.FC<UserQueryGroupProps> = ({
               animate={Boolean(liveTestRun && summaryRunning && testRun.running)}
               // Open when there is a roster to show: the demo reads as evidence
               // (files ticking), and a counts-only card has nothing to expand.
-              defaultOpen={(testRun.tests?.length ?? 0) > 0}
+              defaultOpen={
+                (testRun.files?.length ?? 0) + (testRun.tests?.length ?? 0) > 0
+              }
               className="mt-2"
             />
           ) : null}

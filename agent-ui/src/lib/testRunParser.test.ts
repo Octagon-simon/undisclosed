@@ -57,7 +57,16 @@ describe('parseTestRun', () => {
       output: PYTEST_DOTS,
     });
 
-    expect(run?.tests).toEqual([{ name: 'test_app.py', status: 'passed' }]);
+    expect(run?.tests).toEqual([]);
+    expect(run?.files).toEqual([
+      {
+        path: 'test_app.py',
+        status: 'passed',
+        passed: 9,
+        failed: 0,
+        skipped: 0,
+      },
+    ]);
     expect(run?.totals).toEqual({ passed: 9, failed: 0, skipped: 0 });
     expect(run?.duration).toBe('0.01s');
   });
@@ -72,8 +81,15 @@ describe('parseTestRun', () => {
       ].join('\n'),
     });
 
-    expect(run?.tests).toEqual([
-      { name: 'tests/test_calc.py', status: 'failed' },
+    expect(run?.tests).toEqual([]);
+    expect(run?.files).toEqual([
+      {
+        path: 'tests/test_calc.py',
+        status: 'failed',
+        passed: 2,
+        failed: 1,
+        skipped: 0,
+      },
     ]);
     expect(run?.totals).toEqual({ passed: 2, failed: 1, skipped: 0 });
   });
@@ -89,9 +105,10 @@ describe('parseTestRun', () => {
       ].join('\n'),
     });
 
-    expect(run?.tests).toEqual([
-      { name: 'src/lib/testRunParser.test.ts', status: 'passed' },
-      { name: 'src/lib/legacy.test.ts', status: 'failed' },
+    expect(run?.tests).toEqual([]);
+    expect(run?.files).toEqual([
+      { path: 'src/lib/testRunParser.test.ts', status: 'passed' },
+      { path: 'src/lib/legacy.test.ts', status: 'failed' },
     ]);
     expect(run?.totals).toEqual({ passed: 9, failed: 2, skipped: 0 });
   });
@@ -116,6 +133,39 @@ describe('parseTestRun', () => {
     ]);
     expect(run?.totals).toEqual({ passed: 2, failed: 1, skipped: 0 });
     expect(run?.duration).toBe('1.42s');
+  });
+
+  it('reads vitest per-file verdicts, counts, and durations', () => {
+    const run = parseTestRun({
+      command: 'npx vitest run src/lib',
+      output: [
+        ' ✓ src/lib/card.test.ts (3 tests) 23ms',
+        ' ❯ src/lib/legacy.spec.ts (2 tests | 1 failed) 45ms',
+        '   ✓ renders',
+        '',
+        ' Test Files  1 failed | 1 passed (2)',
+        '      Tests  1 failed | 4 passed (5)',
+      ].join('\n'),
+    });
+
+    expect(run?.files).toEqual([
+      {
+        path: 'src/lib/card.test.ts',
+        status: 'passed',
+        passed: 3,
+        failed: 0,
+        duration: '23ms',
+      },
+      {
+        path: 'src/lib/legacy.spec.ts',
+        status: 'failed',
+        passed: 1,
+        failed: 1,
+        duration: '45ms',
+      },
+    ]);
+    expect(run?.tests).toEqual([{ name: 'renders', status: 'passed' }]);
+    expect(run?.totals).toEqual({ passed: 4, failed: 1, skipped: 0 });
   });
 
   it('ignores commands that are not test runs', () => {
@@ -160,7 +210,15 @@ describe('testRunFromActivity', () => {
     const run = testRunFromActivity(activity);
     expect(run?.command).toBe('.venv/bin/python -m pytest test_app.py');
     expect(run?.totals?.passed).toBe(9);
-    expect(run?.tests).toEqual([{ name: 'test_app.py', status: 'passed' }]);
+    expect(run?.files).toEqual([
+      {
+        path: 'test_app.py',
+        status: 'passed',
+        passed: 9,
+        failed: 0,
+        skipped: 0,
+      },
+    ]);
   });
 
   it('reads a coverage-toolkit run from its plan header', () => {
@@ -185,8 +243,15 @@ describe('testRunFromActivity', () => {
     });
 
     expect(run?.command).toBe('npx vitest run --coverage');
-    expect(run?.tests).toEqual([
-      { name: 'src/lib/card.test.ts (3 tests)', status: 'passed' },
+    expect(run?.tests).toEqual([]);
+    expect(run?.files).toEqual([
+      {
+        path: 'src/lib/card.test.ts',
+        status: 'passed',
+        passed: 3,
+        failed: 0,
+        duration: '8ms',
+      },
     ]);
     expect(run?.totals).toEqual({ passed: 3, failed: 0, skipped: 0 });
   });
@@ -282,8 +347,14 @@ describe('testRunFromActivity', () => {
       ].join('\n'),
     };
 
-    expect(latestTestRun([edit, toolkitRun])?.tests).toEqual([
-      { name: 'tests/test_app.py', status: 'passed' },
+    expect(latestTestRun([edit, toolkitRun])?.files).toEqual([
+      {
+        path: 'tests/test_app.py',
+        status: 'passed',
+        passed: 2,
+        failed: 0,
+        skipped: 0,
+      },
     ]);
   });
 

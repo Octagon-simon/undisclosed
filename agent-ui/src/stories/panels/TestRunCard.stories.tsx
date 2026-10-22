@@ -201,6 +201,72 @@ export const LongRun: Story = {
   },
 };
 
+/** Vitest's per-file roster above the individual tests. */
+export const VitestFiles: Story = {
+  args: {
+    command: 'npx vitest run src/lib',
+    files: [
+      {
+        path: 'src/lib/card.test.ts',
+        status: 'passed',
+        passed: 3,
+        failed: 0,
+        duration: '23ms',
+      },
+      {
+        path: 'src/lib/legacy.spec.ts',
+        status: 'failed',
+        passed: 1,
+        failed: 1,
+        duration: '45ms',
+      },
+      { path: 'src/lib/skip.spec.ts', status: 'skipped', skipped: 2 },
+    ],
+    tests: [],
+    totals: { passed: 4, failed: 1, skipped: 2 },
+    duration: '1.42s',
+    provenance: 'VITEST OUTPUT FROM THE CAPTURED RUN',
+  },
+};
+
+/**
+ * Deep monorepo paths: the head is elided and the file name stays legible,
+ * which end-truncation would have eaten.
+ */
+export const LongFilePaths: Story = {
+  args: {
+    command:
+      'cd packages/business-web && npx vitest run src/screens/SignupWizard/steps/__tests__/DateOfBirthStep.test.tsx',
+    files: [
+      {
+        path: 'packages/business-web/src/screens/SignupWizard/steps/__tests__/DateOfBirthStep.test.tsx',
+        status: 'passed',
+        passed: 6,
+        failed: 0,
+        duration: '38ms',
+      },
+      {
+        path: 'packages/business-web/src/screens/SignupWizard/steps/__tests__/DateOfBirthStep.validation.test.tsx',
+        status: 'failed',
+        passed: 2,
+        failed: 1,
+        duration: '41ms',
+      },
+      {
+        path: 'packages/business-web/src/components/__tests__/DateOfBirth.helpers.test.ts',
+        status: 'passed',
+        passed: 4,
+        failed: 0,
+        duration: '12ms',
+      },
+    ],
+    tests: [],
+    totals: { passed: 12, failed: 1, skipped: 0 },
+    duration: '1.08s',
+    provenance: 'VITEST OUTPUT FROM THE CAPTURED RUN',
+  },
+};
+
 /** The agent contract: a shell activity in, card props out. */
 export const ParsedFromActivity: Story = {
   render: () => {
