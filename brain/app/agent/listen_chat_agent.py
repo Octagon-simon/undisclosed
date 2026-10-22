@@ -100,6 +100,11 @@ class SegmentAccumulator:
     def is_empty(self) -> bool:
         return not self._current and not self._final
 
+    @property
+    def from_fallback(self) -> bool:
+        """True when the trailing segment was empty and an earlier one was kept."""
+        return not self._current.strip() and bool(self._final.strip())
+
     def answer(self) -> str:
         return self._current if self._current.strip() else self._final
 

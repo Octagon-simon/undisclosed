@@ -24,6 +24,7 @@ from app.service.turn_end_guard import (
     evaluate_turn_end,
     looks_like_action_request,
     outstanding_reasons,
+    should_auto_continue,
 )
 
 
@@ -215,3 +216,75 @@ class TestEvaluateTurnEnd:
         state = self._state(announce_continue=True, todo_open=True)
         assert outstanding_reasons(state) == ("todo_open",)
         assert outstanding_reasons(self._state()) == ()
+
+    def test_explicit_non_work_request_skips_the_zero_tool_rule(self) -> None:
+        # A workforce worker's prompt is a structured task, not the user's
+        # message, so it opts out of the "no tool ran" rule.
+        decision = evaluate_turn_end(
+            self._state(
+                tool_rounds=0,
+                answer="Here is the design.",
+                action_request=False,
+            )
+        )
+        assert not decision.continue_turn
+
+
+class TestShouldAutoContinue:
+    def test_no_tool_run_and_a_preamble_nudges(self) -> None:
+        assert should_auto_continue(
+            "Let me measure it properly.",
+            "measure the dish on a phone",
+            tool_called=False,
+            answer_from_fallback=False,
+        )
+
+    def test_real_report_after_tools_is_accepted(self) -> None:
+        assert not should_auto_continue(
+            "Added the guard and 3 tests; all 40 pass.",
+            "add the guard to workforce",
+            tool_called=True,
+            answer_from_fallback=False,
+        )
+
+    def test_resurrected_preamble_after_tools_nudges(self) -> None:
+        assert should_auto_continue(
+            "Let me read the file.",
+            "fix the bug",
+            tool_called=True,
+            answer_from_fallback=True,
+        )
+
+    def test_closing_preamble_without_a_result_nudges(self) -> None:
+        assert should_auto_continue(
+            "I pulled both components apart rather than guessing. Let me "
+            "measure it properly.",
+            "compare the two versions",
+            tool_called=True,
+            answer_from_fallback=False,
+        )
+
+    def test_hand_back_is_accepted(self) -> None:
+        assert not should_auto_continue(
+            "Let me know if you want me to push.",
+            "fix the bug",
+            tool_called=True,
+            answer_from_fallback=False,
+        )
+
+    def test_chat_is_never_nudged(self) -> None:
+        assert not should_auto_continue(
+            "Let me check.",
+            "thanks",
+            tool_called=False,
+            answer_from_fallback=False,
+        )
+
+    def test_open_todo_nudges_regardless_of_wording(self) -> None:
+        assert should_auto_continue(
+            "Coverage is measured per changed line.",
+            "measure coverage",
+            tool_called=True,
+            answer_from_fallback=False,
+            todo_in_progress=True,
+        )

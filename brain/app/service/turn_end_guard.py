@@ -12,12 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
-"""Turn-end validation for the single agent.
+"""Turn-end validation for an agent turn.
 
 The question a turn answers is not "did the model stop talking?" but "is any
 execution still owed?" This module derives that from runtime state: open todos,
 tool rounds, tool results, and whether the request asked for work at all. The
 legacy preamble detector is passed in as one signal instead of being the rule.
+
+Shared by the single agent and by workforce workers, so both accept or nudge a
+turn on the same rules.
 
 Pure functions only, so the policy is testable without an agent or a model.
 """
@@ -193,6 +196,16 @@ class TurnEndState:
     todo_open: bool = False
     announce_continue: bool = False
     outcomes: tuple[ToolOutcome, ...] = ()
+    # None means "derive it from the question". A workforce worker sets False:
+    # its prompt is a structured task, not the user's message, so the
+    # zero-tool rule would misfire on a legitimate answer from knowledge.
+    action_request: bool | None = None
+
+    @property
+    def wants_work(self) -> bool:
+        if self.action_request is not None:
+            return self.action_request
+        return looks_like_action_request(self.question)
 
     @property
     def failures(self) -> tuple[ToolOutcome, ...]:
@@ -350,6 +363,175 @@ def claims_completion(answer: str) -> bool:
     return False
 
 
+_ANNOUNCE_MARKERS: tuple[str, ...] = (
+    "i'll ",
+    "i will ",
+    "let me ",
+    "let me start",
+    "let me look",
+    "let me check",
+    "let me take a look",
+    "i'll start",
+    "i'll begin",
+    "i'll take a look",
+    "i'll look",
+    "i'll check",
+    "i'm going to",
+    "i am going to",
+    "first, i'll",
+    "let's start",
+    "going to start by",
+    "now let me",
+    "now i'll",
+    "now i will",
+    "now i'm going",
+    "now, let me",
+    "next, i'll",
+    "next i'll",
+    "let me now",
+)
+
+# Announcements of a follow-up the USER must trigger ("I'll push once you
+# approve"). A legitimate hand-back, not a stall, so never nudge these.
+_HAND_BACK_MARKERS: tuple[str, ...] = (
+    "let me know",
+    "once you",
+    "when you",
+    "if you want",
+    "if you'd like",
+    "your call",
+    "your go",
+)
+
+# Plan/design narration: a status message about what is coming, not a report.
+_PLAN_MARKERS: tuple[str, ...] = (
+    "here's the plan",
+    "here's my plan",
+    "here's what i'm building",
+    "here's what i'll build",
+    "i'm building against",
+    "reading this as",
+    "design read",
+    "before i start",
+    "say go",
+    "standing by",
+    "ready to start",
+)
+
+# Past this length a reply is only narration when it is explicitly a plan;
+# otherwise it is an answer and must never be nudged.
+_MAX_ANNOUNCE_CHARS = 1200
+_PLAIN_ANSWER_CHARS = 400
+
+# Requests that are chat, not work — never nudge these even if the reply is short.
+_CHATTY_MESSAGES: frozenset[str] = frozenset(
+    {
+        "hi",
+        "hii",
+        "hey",
+        "hello",
+        "yo",
+        "how are you",
+        "how are you?",
+        "thanks",
+        "thank you",
+        "ok",
+        "okay",
+        "cool",
+        "nice",
+        "great",
+    }
+)
+
+#: Corrective continuations allowed before a turn is committed anyway.
+MAX_TURN_CONTINUATIONS = 2
+
+
+def looks_like_announce_and_stop(content: str, question: str) -> bool:
+    """True when a turn produced ONLY an intent preamble (e.g. "I'll start by
+    looking at the files…") with no work delivered, on a message that asked for
+    work. Used to auto-continue ONCE instead of stalling until the user
+    re-prompts. Conservative on purpose: short reply + future-intent phrasing +
+    a non-chatty request. An error reply (e.g. a 429 dump) won't match the
+    markers, so we never nudge on errors."""
+    if not content:
+        return False
+    c = content.strip().lower()
+    if not c or len(c) > _MAX_ANNOUNCE_CHARS:
+        return False
+    if any(m in c for m in _HAND_BACK_MARKERS):
+        return False
+    has_marker = any(m in c for m in _ANNOUNCE_MARKERS)
+    has_plan = any(m in c for m in _PLAN_MARKERS)
+    if len(c) > _PLAIN_ANSWER_CHARS:
+        if not has_plan:
+            return False
+    # Also catch fragmentary "about to do the next step" preambles that trail
+    # off into a colon, e.g. "Now the host side:" — very short, ends with ':'.
+    elif not (has_marker or has_plan or (c.endswith(":") and len(c) < 90)):
+        return False
+    q = (question or "").strip().lower().rstrip("!.")
+    if q in _CHATTY_MESSAGES or len(q) < 3:
+        return False
+    return True
+
+
+def should_auto_continue(
+    content: str,
+    question: str,
+    *,
+    tool_called: bool,
+    answer_from_fallback: bool,
+    todo_in_progress: bool = False,
+) -> bool:
+    """Decide whether a finished turn should be nudged to keep going.
+
+    Two failure shapes are covered:
+
+    * ``tool_called=False`` — the model replied with ONLY an intent preamble
+      ("I'll start by looking at the files…") and ended with zero tool calls.
+      This is the original announce-and-stop case.
+
+    * ``todo_in_progress`` — the turn ended with an unfinished todo. This
+      holds regardless of ``tool_called`` / ``answer_from_fallback`` and does
+      not depend on how the message is phrased.
+
+    * ``tool_called=True`` AND ``answer_from_fallback`` — the model DID run
+      tools but its trailing segment (the text after the last tool call) was
+      empty, so the caller resurrected the last non-empty segment, which was a
+      pre-tool-call PREAMBLE. The user sees "Let me start by checking…" and the
+      turn ends, even though work was done.
+
+    * ``tool_called=True`` AND no completion claim — the model wrote its own
+      closing message, but that message only promises the next step
+      ("...Let me measure it properly.") and reports no result.
+
+    Deliberately conservative: the content must still look like an intent
+    preamble (short + future-intent phrasing) and the request must not be
+    chit-chat, so a real answer that merely happens to start with "I'll" is
+    never nudged.
+    """
+    body = (content or "").strip()
+    if not body:
+        return False
+    q = (question or "").strip().lower().rstrip("!.")
+    if q in _CHATTY_MESSAGES or len(q) < 3:
+        return False
+    # An open todo is proof the task is unfinished, however many tools ran and
+    # however long the message was. This is the case the prose guard missed.
+    if todo_in_progress and "?" not in body[-200:]:
+        return True
+    if not looks_like_announce_and_stop(body, question):
+        return False
+    # No tool run at all → classic announce-and-stop.
+    if not tool_called:
+        return True
+    # Tools ran. A resurrected pre-tool preamble is always a stall. A genuine
+    # trailing message stalls too when it only announces the next step and
+    # reports no result ("...Let me measure it properly.").
+    return answer_from_fallback or not claims_completion(body)
+
+
 def _open_obligations(state: TurnEndState) -> list[str]:
     reasons: list[str] = []
     if state.todo_open:
@@ -361,7 +543,7 @@ def _open_obligations(state: TurnEndState) -> list[str]:
         and claims_completion(state.answer)
     ):
         reasons.append("completion_claim_unsupported")
-    if state.tool_rounds == 0 and looks_like_action_request(state.question):
+    if state.tool_rounds == 0 and state.wants_work:
         # A turn that ends by asking the user something is a legitimate stop:
         # the model is waiting on a decision, not dodging the work.
         if "?" not in state.answer.strip()[-200:]:

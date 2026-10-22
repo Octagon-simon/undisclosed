@@ -683,3 +683,120 @@ class TestSingleAgentWorkerErrorCases:
             assert result == TaskState.DONE
             assert task.additional_info["token_usage"]["total_tokens"] == 0
             mock_return_agent.assert_called_once_with(mock_worker_agent)
+
+
+@pytest.mark.unit
+class TestWorkerTurnEndGuard:
+    """A worker that stops on an intent preamble must be nudged, not reported."""
+
+    def _worker(self, *, structured: bool) -> SingleAgentWorker:
+        mock_worker = MagicMock(spec=ListenChatAgent)
+        mock_worker.agent_id = "test_agent_123"
+        mock_worker.role_name = "test_worker"
+        mock_worker.agent_name = "test_worker"
+        return SingleAgentWorker(
+            description="Test worker",
+            worker=mock_worker,
+            use_structured_output_handler=structured,
+        )
+
+    @staticmethod
+    def _response(content: str, tokens: int, parsed=None) -> MagicMock:
+        response = MagicMock()
+        response.msg.content = content
+        response.msg.parsed = parsed
+        response.info = {"usage": {"total_tokens": tokens}}
+        return response
+
+    @pytest.mark.asyncio
+    async def test_preamble_is_nudged_and_the_real_answer_is_reported(self):
+        worker = self._worker(structured=False)
+        agent = AsyncMock()
+        agent.astep.side_effect = [
+            self._response(
+                "I pulled both components apart. Let me measure it properly.",
+                10,
+            ),
+            self._response(
+                "Measured: the dish sits 52px lower on a phone.",
+                7,
+                TaskResult(
+                    content="Measured: the dish sits 52px lower on a phone.",
+                    failed=False,
+                ),
+            ),
+        ]
+        task = Task(content="Measure the dish on a phone", id="task_guard_1")
+
+        with (
+            patch.object(worker, "_get_worker_agent", return_value=agent),
+            patch.object(worker, "_return_worker_agent"),
+            patch.object(worker, "_get_dep_tasks_info", return_value=""),
+        ):
+            state = await worker._process_task(task, [])
+
+        assert state == TaskState.DONE
+        assert agent.astep.await_count == 2
+        assert "Continue now" in agent.astep.await_args_list[1].args[0]
+        assert task.result == "Measured: the dish sits 52px lower on a phone."
+        assert task.additional_info["token_usage"]["total_tokens"] == 17
+
+    @pytest.mark.asyncio
+    async def test_real_report_is_accepted_without_a_nudge(self):
+        worker = self._worker(structured=False)
+        agent = AsyncMock()
+        agent.astep.return_value = self._response(
+            "Added the guard to the worker; 42 tests pass.",
+            9,
+            TaskResult(
+                content="Added the guard to the worker; 42 tests pass.",
+                failed=False,
+            ),
+        )
+        task = Task(content="Add the guard to workforce", id="task_guard_2")
+
+        with (
+            patch.object(worker, "_get_worker_agent", return_value=agent),
+            patch.object(worker, "_return_worker_agent"),
+            patch.object(worker, "_get_dep_tasks_info", return_value=""),
+        ):
+            state = await worker._process_task(task, [])
+
+        assert state == TaskState.DONE
+        assert agent.astep.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_structured_mode_wraps_the_nudge_like_the_task_prompt(self):
+        worker = self._worker(structured=True)
+        handler = MagicMock()
+        handler.generate_structured_prompt.side_effect = (
+            lambda base_prompt, **kw: f"[schema]{base_prompt}"
+        )
+        handler.parse_structured_response.side_effect = (
+            lambda response_text, **kw: TaskResult(
+                content=response_text, failed=False
+            )
+        )
+        worker.structured_handler = handler
+
+        agent = AsyncMock()
+        agent.astep.side_effect = [
+            self._response("Let me measure it properly.", 4),
+            self._response("Measured: 52px lower on a phone.", 6),
+        ]
+        task = Task(content="Measure the dish on a phone", id="task_guard_3")
+
+        with (
+            patch.object(worker, "_get_worker_agent", return_value=agent),
+            patch.object(worker, "_return_worker_agent"),
+            patch.object(worker, "_get_dep_tasks_info", return_value=""),
+        ):
+            state = await worker._process_task(task, [])
+
+        assert state == TaskState.DONE
+        assert agent.astep.await_count == 2
+        assert handler.generate_structured_prompt.call_count == 2
+        second_prompt = agent.astep.await_args_list[1].args[0]
+        assert second_prompt.startswith("[schema]")
+        assert "Continue now" in second_prompt
+        assert task.additional_info["token_usage"]["total_tokens"] == 10

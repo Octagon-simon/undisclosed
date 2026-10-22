@@ -16,6 +16,7 @@ import asyncio
 import datetime
 import logging
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 from camel.agents.chat_agent import (
     AsyncStreamingChatAgentResponse,
@@ -31,10 +32,87 @@ from camel.utils.context_utils import ContextUtility
 from colorama import Fore
 
 from app.agent.listen_chat_agent import ListenChatAgent, SegmentAccumulator
+from app.agent.toolkit.observable_todo_toolkit import ObservableTodoToolkit
 from app.service.task import get_task_lock
+from app.service.turn_end_guard import (
+    MAX_TURN_CONTINUATIONS,
+    TurnEndState,
+    classify_tool_records,
+    evaluate_turn_end,
+    should_auto_continue,
+)
 from app.utils.agent_memory import record_agent_memory_snapshot
 
 logger = logging.getLogger("single_agent_worker")
+
+
+def _todo_open(agent: Any) -> bool:
+    """True when the worker's todo list still has an in-progress item."""
+    toolkit = getattr(agent, "_observable_todo_toolkit", None)
+    if not isinstance(toolkit, ObservableTodoToolkit):
+        return False
+    try:
+        return any(
+            str(item.get("status", "")).strip().lower()
+            in ("in_progress", "in-progress")
+            for item in toolkit.serialized_todos()
+        )
+    except Exception:
+        return False
+
+
+def _tokens_from_info(info: dict[str, Any]) -> int:
+    usage = info.get("usage") or info.get("token_usage") or {}
+    return int(usage.get("total_tokens", 0) or 0) if usage else 0
+
+
+async def _consume_response(
+    response: Any,
+    stream_callback: Callable[[Any], Awaitable[None] | None] | None,
+) -> tuple[str, Any, dict[str, Any], bool, list[Any]]:
+    """Drive one agent response to completion.
+
+    Returns ``(answer, parsed, info, answer_from_fallback, tool_records)``. The
+    answer is the trailing segment after the last tool call (see
+    ``SegmentAccumulator``); ``answer_from_fallback`` is True when that segment
+    was empty and an earlier pre-tool-call one was kept instead.
+    """
+    if not isinstance(response, AsyncStreamingChatAgentResponse):
+        msg = getattr(response, "msg", None)
+        info = getattr(response, "info", None) or {}
+        content = (getattr(msg, "content", "") or "") if msg else ""
+        parsed = getattr(msg, "parsed", None) if msg else None
+        return content, parsed, info, False, list(info.get("tool_calls") or [])
+
+    segment = SegmentAccumulator()
+    last_chunk = None
+    parsed = None
+    chunk_count = 0
+    async for chunk in response:
+        chunk_count += 1
+        last_chunk = chunk
+        if stream_callback:
+            maybe = stream_callback(chunk)
+            if asyncio.iscoroutine(maybe):
+                await maybe
+        segment.ingest(chunk)
+        msg = getattr(chunk, "msg", None)
+        if msg is not None and getattr(msg, "parsed", None) is not None:
+            parsed = msg.parsed
+    info = (getattr(last_chunk, "info", None) or {}) if last_chunk else {}
+    response._last_chunk_info = info
+    answer = segment.answer()
+    logger.info(
+        f"Streaming complete: {chunk_count} chunks, "
+        f"content_length={len(answer)}"
+    )
+    return (
+        answer,
+        parsed,
+        info,
+        segment.from_fallback,
+        list(info.get("tool_calls") or []),
+    )
 
 
 class SingleAgentWorker(BaseSingleAgentWorker):
@@ -72,6 +150,85 @@ class SingleAgentWorker(BaseSingleAgentWorker):
             enable_workflow_memory=enable_workflow_memory,
         )
         self.worker = worker  # change type hint
+
+    async def _run_worker_step(
+        self,
+        worker_agent: ListenChatAgent,
+        base_prompt: str,
+        stream_callback: Callable[[Any], Awaitable[None] | None] | None,
+    ) -> tuple[Any, str, TaskResult | None, int, bool, list[Any]]:
+        """Run one worker step and read its response to completion.
+
+        Returns ``(response, answer, task_result, tokens,
+        answer_from_fallback, tool_records)``.
+        """
+        if self.use_structured_output_handler and self.structured_handler:
+            # The schema lives in the prompt here, so a follow-up nudge has to
+            # be wrapped the same way as the task prompt.
+            prompt = self.structured_handler.generate_structured_prompt(
+                base_prompt=base_prompt,
+                schema=TaskResult,
+                examples=[
+                    {
+                        "content": "I have successfully completed the task...",
+                        "failed": False,
+                    }
+                ],
+                additional_instructions="Ensure you provide a clear "
+                "description of what was done and whether the task "
+                "succeeded or failed.",
+            )
+            response = await worker_agent.astep(prompt)
+            (
+                answer,
+                _,
+                info,
+                from_fallback,
+                tool_records,
+            ) = await _consume_response(response, stream_callback)
+            task_result = self.structured_handler.parse_structured_response(
+                response_text=answer,
+                schema=TaskResult,
+                fallback_values={
+                    "content": "Task processing failed",
+                    "failed": True,
+                },
+            )
+            return (
+                response,
+                answer,
+                task_result,
+                _tokens_from_info(info),
+                from_fallback,
+                tool_records,
+            )
+
+        response = await worker_agent.astep(
+            base_prompt, response_format=TaskResult
+        )
+        (
+            answer,
+            parsed,
+            info,
+            from_fallback,
+            tool_records,
+        ) = await _consume_response(response, stream_callback)
+        if parsed is not None:
+            task_result = parsed
+        elif isinstance(response, AsyncStreamingChatAgentResponse):
+            task_result = TaskResult(
+                content="Failed to parse streaming response", failed=True
+            )
+        else:
+            task_result = None
+        return (
+            response,
+            answer,
+            task_result,
+            _tokens_from_info(info),
+            from_fallback,
+            tool_records,
+        )
 
     async def _process_task(
         self,
@@ -133,119 +290,53 @@ class SingleAgentWorker(BaseSingleAgentWorker):
                 additional_info=task.additional_info,
             )
 
-            if self.use_structured_output_handler and self.structured_handler:
-                # Use structured output handler for prompt-based extraction
-                enhanced_prompt = self.structured_handler.generate_structured_prompt(
-                    base_prompt=prompt,
-                    schema=TaskResult,
-                    examples=[
-                        {
-                            "content": "I have successfully completed the task...",
-                            "failed": False,
-                        }
-                    ],
-                    additional_instructions="Ensure you provide a clear "
-                    "description of what was done and whether the task "
-                    "succeeded or failed.",
+            total_tokens = 0
+            response = None
+            task_result = None
+            # TURN-END VALIDATION: the same rule the single agent uses. A worker
+            # whose step ends on an intent preamble ("Let me measure it
+            # properly.") has not finished the task, so the step is nudged to
+            # continue instead of being reported to the orchestrator as done.
+            step_prompt = prompt
+            for _attempt in range(MAX_TURN_CONTINUATIONS + 1):
+                (
+                    response,
+                    response_content,
+                    task_result,
+                    step_tokens,
+                    answer_from_fallback,
+                    tool_records,
+                ) = await self._run_worker_step(
+                    worker_agent, step_prompt, stream_callback
                 )
-                response = await worker_agent.astep(enhanced_prompt)
-
-                # Handle streaming response
-                if isinstance(response, AsyncStreamingChatAgentResponse):
-                    # With stream_accumulate=False we accumulate delta content,
-                    # but a multi-step tool loop streams a "Let me…" preamble
-                    # before each tool call; keep only the final answer segment
-                    # (see SegmentAccumulator) so those preambles don't end up in
-                    # the structured TaskResult text and break its parsing.
-                    segment = SegmentAccumulator()
-                    last_chunk = None
-                    chunk_count = 0
-                    async for chunk in response:
-                        chunk_count += 1
-                        last_chunk = chunk
-                        if stream_callback:
-                            maybe = stream_callback(chunk)
-                            if asyncio.iscoroutine(maybe):
-                                await maybe
-                        segment.ingest(chunk)
-                    response_content = segment.answer()
-                    logger.info(
-                        f"Streaming complete: {chunk_count} chunks, content_length={len(response_content)}"
-                    )
-                    # Store usage info from last chunk for later use
-                    response._last_chunk_info = (
-                        last_chunk.info if last_chunk else {}
-                    )
-                else:
-                    # Regular ChatAgentResponse
-                    response_content = (
-                        response.msg.content if response.msg else ""
-                    )
-
-                task_result = (
-                    self.structured_handler.parse_structured_response(
-                        response_text=response_content,
-                        schema=TaskResult,
-                        fallback_values={
-                            "content": "Task processing failed",
-                            "failed": True,
-                        },
-                    )
+                total_tokens += step_tokens
+                _state = TurnEndState(
+                    question=task.content,
+                    answer=response_content,
+                    tool_rounds=len(tool_records),
+                    todo_open=_todo_open(worker_agent),
+                    action_request=False,
+                    announce_continue=should_auto_continue(
+                        response_content,
+                        task.content,
+                        tool_called=bool(tool_records),
+                        answer_from_fallback=answer_from_fallback,
+                    ),
+                    outcomes=classify_tool_records(tool_records),
                 )
-            else:
-                # Use native structured output if supported
-                response = await worker_agent.astep(
-                    prompt, response_format=TaskResult
+                _decision = evaluate_turn_end(_state, _attempt)
+                if not _decision.continue_turn:
+                    break
+                logger.info(
+                    "turn-end: execution still owed (reason=%s, tool_calls=%s, "
+                    "attempt %d/%d); auto-continuing worker on task %s",
+                    _decision.reason,
+                    _state.tool_rounds,
+                    _attempt + 1,
+                    MAX_TURN_CONTINUATIONS,
+                    task.id,
                 )
-
-                # Handle streaming response for native output (shouldn't happen now but keep for safety)
-                if isinstance(response, AsyncStreamingChatAgentResponse):
-                    task_result = None
-                    # Keep only the final answer segment (drop per-tool-call
-                    # "Let me…" preambles); see SegmentAccumulator.
-                    segment = SegmentAccumulator()
-                    last_chunk = None
-                    async for chunk in response:
-                        last_chunk = chunk
-                        if stream_callback:
-                            maybe = stream_callback(chunk)
-                            if asyncio.iscoroutine(maybe):
-                                await maybe
-                        segment.ingest(chunk)
-                        if chunk.msg and chunk.msg.parsed:
-                            task_result = chunk.msg.parsed
-                    response_content = segment.answer()
-                    # Store usage info from last chunk for later use
-                    response._last_chunk_info = (
-                        last_chunk.info if last_chunk else {}
-                    )
-                    # If no parsed result found in streaming, create fallback
-                    if task_result is None:
-                        task_result = TaskResult(
-                            content="Failed to parse streaming response",
-                            failed=True,
-                        )
-                else:
-                    # Regular ChatAgentResponse
-                    task_result = response.msg.parsed
-                    response_content = (
-                        response.msg.content if response.msg else ""
-                    )
-
-            # Get token usage from the response
-            if isinstance(response, AsyncStreamingChatAgentResponse):
-                # For streaming responses, get info from last chunk captured during iteration
-                chunk_info = getattr(response, "_last_chunk_info", {})
-                usage_info = chunk_info.get("usage") or chunk_info.get(
-                    "token_usage"
-                )
-            else:
-                usage_info = response.info.get("usage") or response.info.get(
-                    "token_usage"
-                )
-            total_tokens = (
-                usage_info.get("total_tokens", 0) if usage_info else 0
-            )
+                step_prompt = _decision.nudge
 
             # collect conversation from working agent to
             # accumulator for workflow memory
@@ -308,16 +399,18 @@ class SingleAgentWorker(BaseSingleAgentWorker):
         )
         worker_attempt_details = {
             "agent_id": getattr(
-                worker_agent, "agent_id", worker_agent.role_name
+                worker_agent,
+                "agent_id",
+                getattr(worker_agent, "role_name", ""),
             ),
             "original_worker_id": getattr(
-                self.worker, "agent_id", self.worker.role_name
+                self.worker, "agent_id", getattr(self.worker, "role_name", "")
             ),
             "timestamp": str(datetime.datetime.now()),
             "description": f"Attempt by "
-            f"{getattr(worker_agent, 'agent_id', worker_agent.role_name)} "
+            f"{getattr(worker_agent, 'agent_id', getattr(worker_agent, 'role_name', ''))} "
             f"(from pool/clone of "
-            f"{getattr(self.worker, 'agent_id', self.worker.role_name)}) "
+            f"{getattr(self.worker, 'agent_id', getattr(self.worker, 'role_name', ''))}) "
             f"to process task: {task.content}",
             "response_content": response_content[:50],
             "tool_calls": str(
