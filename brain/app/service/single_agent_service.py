@@ -64,6 +64,12 @@ from app.service.task import (
     delete_task_lock,
     set_current_task_id,
 )
+from app.service.turn_end_guard import (
+    TurnEndState,
+    classify_tool_records,
+    evaluate_turn_end,
+    outstanding_reasons,
+)
 from app.utils.agent_memory import (
     build_memory_context,
     record_agent_memory_snapshot,
@@ -794,6 +800,7 @@ async def _response_content(
     task_id: str = "",
     stream_reasoning: bool = False,
     on_first_tool_call: Any = None,
+    tool_sink: list[Any] | None = None,
 ) -> tuple[str, int, str, bool]:
     """Returns (content, tokens, reasoning, reasoning_was_streamed,
     answer_from_fallback).
@@ -802,6 +809,10 @@ async def _response_content(
     segment carried no text, so the reported answer is a resurrected EARLIER
     segment — usually a pre-tool-call preamble, not a real closing message.
     Callers use it to detect a turn that ended without actually answering.
+
+    ``tool_sink`` collects the raw tool-call records seen in the stream (name +
+    result), so the turn-end guard can tell whether the last action actually
+    succeeded instead of trusting the model's prose.
 
     When ``stream_reasoning`` is on and the model emits reasoning, each reasoning
     delta is pushed live onto the task queue as an `Action.reasoning` event so
@@ -867,6 +878,11 @@ async def _response_content(
             _tc = _info.get("tool_calls") or []
             _tc_count = len(_tc) if isinstance(_tc, (list, tuple)) else 0
             if _tc_count > _seen_tool_calls:
+                if tool_sink is not None:
+                    try:
+                        tool_sink.extend(list(_tc[_seen_tool_calls:_tc_count]))
+                    except Exception:  # pragma: no cover - defensive
+                        pass
                 # A tool-call round just completed: everything accumulated since
                 # the last boundary was a pre-tool-call preamble, not the
                 # answer. Close the segment and start a fresh one.
@@ -1001,6 +1017,14 @@ async def _response_content(
 
     msg = getattr(response, "msg", None)
     usage_tokens = extract_tokens(response)
+    if tool_sink is not None:
+        try:
+            _ns_records = (getattr(response, "info", None) or {}).get(
+                "tool_calls"
+            ) or []
+            tool_sink.extend(list(_ns_records))
+        except Exception:  # pragma: no cover - defensive
+            pass
     # Non-streaming path: same soft-error signal lives on response.info.
     if task_lock is not None:
         _ns_info = getattr(response, "info", None) or {}
@@ -1463,9 +1487,11 @@ async def single_agent_solve(
         else:
             step_input = prompt
 
-        # Track whether ANY tool was called this turn — the announce-and-stop
-        # detector below needs it; it also drives the presence ack.
+        # Track whether ANY tool was called this turn — the turn-end guard needs
+        # it; it also drives the presence ack. `_tool_records` keeps the actual
+        # results so completion can be validated against what tools returned.
         _tool_called = False
+        _tool_records: list[Any] = []
 
         async def _on_first_tool_call() -> None:
             # Must be a COROUTINE: _response_content schedules it via
@@ -1489,16 +1515,16 @@ async def single_agent_solve(
             task_id=task_id,
             stream_reasoning=_thinking_enabled(options),
             on_first_tool_call=_on_first_tool_call,
+            tool_sink=_tool_records,
         )
 
-        # ANNOUNCE-AND-STOP recovery: the low-temp model sometimes ends a turn on
-        # ONLY an intent preamble ("I'll start by looking at the files…") —
-        # either with ZERO tool calls, or AFTER doing work when its trailing
-        # segment is empty and _response_content resurrects the preamble as the
-        # turn's "answer". Either way the user is stuck seeing "Let me…" and has
-        # to re-prompt. Nudge it (bounded) to actually act / report. Guarded so
-        # it can never loop forever, never fires on greetings/short chats, and
-        # never fires on an errored turn.
+        # TURN-END VALIDATION: a finished turn is committed only when no
+        # execution obligation is outstanding. Obligations come from runtime
+        # state (open todo, zero tool rounds on a work request, a failed last
+        # tool result behind a completion claim) plus the legacy preamble
+        # detector, which is now one signal instead of the whole rule. Bounded:
+        # after _MAX_ANNOUNCE_NUDGES corrective rounds the turn ends anyway and
+        # whatever is still owed is logged.
         def _todo_in_progress() -> bool:
             toolkit = getattr(turn_agent, "_observable_todo_toolkit", None)
             if toolkit is None:
@@ -1512,48 +1538,46 @@ async def single_agent_solve(
             except Exception:
                 return False
 
+        def _turn_state() -> TurnEndState:
+            return TurnEndState(
+                question=question,
+                answer=content,
+                tool_rounds=len(_tool_records),
+                todo_open=_todo_in_progress(),
+                announce_continue=_should_auto_continue(
+                    content,
+                    question,
+                    tool_called=_tool_called,
+                    answer_from_fallback=answer_from_fallback,
+                    todo_in_progress=_todo_in_progress(),
+                ),
+                outcomes=classify_tool_records(_tool_records),
+            )
+
+        _continuations = 0
+        _last_reason = ""
         for _attempt in range(_MAX_ANNOUNCE_NUDGES):
-            if not _should_auto_continue(
-                content,
-                question,
-                tool_called=_tool_called,
-                answer_from_fallback=answer_from_fallback,
-                todo_in_progress=_todo_in_progress(),
-            ):
+            _state = _turn_state()
+            _decision = evaluate_turn_end(_state, _attempt)
+            if not _decision.continue_turn:
                 break
+            _continuations = _attempt + 1
+            _last_reason = _decision.reason
             logger.info(
-                "announce-and-stop detected (tool_calls=%s, fallback=%s, "
-                "todo_open=%s, attempt %d/%d); auto-continuing",
-                _tool_called,
+                "turn-end: execution still owed (reason=%s, tool_calls=%s, "
+                "tool_failures=%s, todo_open=%s, fallback=%s, attempt %d/%d); "
+                "auto-continuing",
+                _decision.reason,
+                len(_tool_records),
+                len(_state.failures),
+                _state.todo_open,
                 answer_from_fallback,
-                _todo_in_progress(),
                 _attempt + 1,
                 _MAX_ANNOUNCE_NUDGES,
                 extra={"task_id": task_id},
             )
             try:
-                if _attempt == 0 and _todo_in_progress():
-                    nudge = (
-                        "Your todo list still has an unfinished item, and your "
-                        "last message described the plan instead of doing it. "
-                        "Continue now: run the next step with your tools, then "
-                        "update the todos with what actually changed. Do NOT "
-                        "restate the plan."
-                    )
-                elif _attempt == 0:
-                    nudge = (
-                        "Continue now. Actually perform the action you just "
-                        "described, using your tools — do NOT restate the plan. "
-                        "Do the work, then report what you changed or found."
-                    )
-                else:
-                    nudge = (
-                        "You ended your turn without a final answer. Report now, "
-                        "in a short concrete summary, what you did and found. If "
-                        "the task is complete, say so plainly; otherwise finish "
-                        "the remaining steps first."
-                    )
-                response2 = await turn_agent.astep(nudge)
+                response2 = await turn_agent.astep(_decision.nudge)
                 (
                     content2,
                     tokens2,
@@ -1566,6 +1590,7 @@ async def single_agent_solve(
                     task_id=task_id,
                     stream_reasoning=_thinking_enabled(options),
                     on_first_tool_call=_on_first_tool_call,
+                    tool_sink=_tool_records,
                 )
                 if content2 and content2.strip():
                     content = content2
@@ -1574,10 +1599,33 @@ async def single_agent_solve(
                     reasoning_streamed = reasoning_streamed2
                     answer_from_fallback = answer_from_fallback2
             except Exception:
-                logger.warning(
-                    "announce-and-stop auto-continue failed", exc_info=True
-                )
+                logger.warning("turn-end auto-continue failed", exc_info=True)
                 break
+        # Failure-mode counters: what was still owed when the turn was committed
+        # anyway. A non-empty `outstanding` is a premature final response.
+        _final_state = _turn_state()
+        _outstanding = outstanding_reasons(_final_state)
+        if _outstanding:
+            logger.warning(
+                "turn-end: committing an incomplete turn (reason=%s, "
+                "outstanding=%s, continuations=%d, tool_calls=%s, "
+                "tool_failures=%s)",
+                _last_reason or "obligation_unresolved",
+                ",".join(_outstanding),
+                _continuations,
+                len(_tool_records),
+                len(_final_state.failures),
+                extra={"task_id": task_id, "turn_end": "incomplete"},
+            )
+        elif _continuations:
+            logger.info(
+                "turn-end: recovered after %d continuation(s) (reason=%s, "
+                "tool_calls=%s)",
+                _continuations,
+                _last_reason,
+                len(_tool_records),
+                extra={"task_id": task_id, "turn_end": "recovered"},
+            )
         # Turn is done: stop the long-task fallback timer if it's still pending
         # (short / no-tool turns never reach it → no ack). A tool-using turn has
         # already fired the ack via on_first_tool_call above.
