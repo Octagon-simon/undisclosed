@@ -1080,12 +1080,78 @@
     </div>
   </section>
 
+  <!-- ============ HOW IT IS BUILT ============ -->
+  <section class="section" id="how-built">
+    <div class="wrap cap-grid">
+      <div class="cap-intro reveal">
+        <span class="kicker">
+          <svg viewBox="0 0 17 14" fill="currentColor" aria-hidden="true"><rect x="0" y="0" width="17" height="3.2" rx="1.6"/><rect x="0" y="5.4" width="12.5" height="3.2" rx="1.6" opacity=".8"/><rect x="0" y="10.8" width="8" height="3.2" rx="1.6" opacity=".62"/></svg>
+          06 / Under the hood
+        </span>
+        <h2>Every capability has a mechanism, not a slogan.</h2>
+        <p>Nothing here is a model asked to try harder. Each feature is a tool with code behind it: a page camera, a syntax tree, a local vector store. The links go to the files that do the work.</p>
+        <a class="text-link" href="https://github.com/Octagon-simon/undisclosed#capabilities-and-how-each-one-is-built" target="_blank" rel="noopener">The same list with file references &rarr;</a>
+      </div>
+
+      <div class="ledger">
+        <div class="row reveal">
+          <span class="idx">01</span>
+          <div>
+            <h3>A page camera</h3>
+            <p>Ask it to check a page and it renders the URL in Chrome at desktop, phone and tablet sizes in one step, then looks at the result. The camera is <code>iris</code>, a small binary driving Chrome over CDP: one process per shot, saved under <code>~/.undisclosed/screenshots</code>.</p>
+          </div>
+          <span class="fact">iris</span>
+        </div>
+        <div class="row reveal" style="--i:1">
+          <span class="idx">02</span>
+          <div>
+            <h3>Images routed to a model that can see</h3>
+            <p>A vision model gets the screenshots attached. A text-only chat model gets a written description of each viewport from the vision model you configured instead. The picker tags every row with an eye or a brain, read from the same capability check the tools use, so the badge cannot drift from behavior.</p>
+          </div>
+          <span class="fact">eye + brain</span>
+        </div>
+        <div class="row reveal" style="--i:2">
+          <span class="idx">03</span>
+          <div>
+            <h3>Code, not text</h3>
+            <p>&ldquo;Where is this defined&rdquo;, &ldquo;who calls it&rdquo;, &ldquo;what does this file export&rdquo; are answered from tree-sitter syntax trees, not a guess over lines. You get the file, the line and the enclosing scope, and it falls back to search only when a grammar is missing.</p>
+          </div>
+          <span class="fact">tree-sitter</span>
+        </div>
+        <div class="row reveal" style="--i:3">
+          <span class="idx">04</span>
+          <div>
+            <h3>Memory that stays on the machine</h3>
+            <p>Facts and earlier conversations live in a local ChromaDB collection at <code>~/.undisclosed/memory</code>. Recall is a vector query against that store. No embedding call leaves the machine, and the Memory panel can stop writes or clear what is there.</p>
+          </div>
+          <span class="fact">chromadb</span>
+        </div>
+        <div class="row reveal" style="--i:4">
+          <span class="idx">05</span>
+          <div>
+            <h3>Receipts before &ldquo;done&rdquo;</h3>
+            <p>Typecheck and lint, a deterministic diff review, then the test suite with a coverage-gap plan. The cards in the panel are parsed from the command output, so the number on the test card is what the runner printed.</p>
+          </div>
+          <span class="fact">run_tests</span>
+        </div>
+        <div class="row reveal" style="--i:5">
+          <span class="idx">06</span>
+          <div>
+            <h3>The gate stays on</h3>
+            <p>A risky command stops and shows the exact call before it runs. Always-approve is a setting you turn on, not the default. Every gated step is written into the turn, so the transcript shows what was asked and what you allowed.</p>
+          </div>
+          <span class="fact">approval on</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- ============ PRIVACY BAND ============ -->
   <section class="band" id="privacy">
     <div class="wrap band-inner">
       <span class="kicker">
         <svg viewBox="0 0 17 14" fill="currentColor" aria-hidden="true"><rect x="0" y="0" width="17" height="3.2" rx="1.6"/><rect x="0" y="5.4" width="12.5" height="3.2" rx="1.6" opacity=".8"/><rect x="0" y="10.8" width="8" height="3.2" rx="1.6" opacity=".62"/></svg>
-        06 / Privacy
+        07 / Privacy
       </span>
       <h2>Privacy you can check, not just a tagline.</h2>
       <p class="band-lead">Two processes, both yours: the editor and the brain on localhost. No Undisclosed server sits in between. Three questions cover most of it: what leaves the machine, what stays on disk, and what can run without asking. The full host-by-host ledger is linked below.</p>
@@ -1119,7 +1185,7 @@
       <div class="os-copy reveal">
         <span class="kicker">
           <svg viewBox="0 0 17 14" fill="currentColor" aria-hidden="true"><rect x="0" y="0" width="17" height="3.2" rx="1.6"/><rect x="0" y="5.4" width="12.5" height="3.2" rx="1.6" opacity=".8"/><rect x="0" y="10.8" width="8" height="3.2" rx="1.6" opacity=".62"/></svg>
-          07 / Open source
+          08 / Open source
         </span>
         <h2>The whole thing is in one repo.</h2>
         <p>Apache-2.0: the editor shell, the agent panel, the brain, the packaging. You can read the code that reads your code. Issues are how the roadmap gets set, so file one even if it is just a rough edge.</p>
@@ -1193,7 +1259,7 @@
       <div class="cta-inner reveal">
         <span class="kicker">
           <svg viewBox="0 0 17 14" fill="currentColor" aria-hidden="true"><rect x="0" y="0" width="17" height="3.2" rx="1.6"/><rect x="0" y="5.4" width="12.5" height="3.2" rx="1.6" opacity=".8"/><rect x="0" y="10.8" width="8" height="3.2" rx="1.6" opacity=".62"/></svg>
-          08 / Download
+          09 / Download
         </span>
         <h2>The agent, without giving up your code.</h2>
         <p>Download Undisclosed for macOS, Windows or Linux. Bring a local model or your own key, and keep the editor, the brain and every conversation on your machine.</p>

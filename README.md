@@ -115,6 +115,26 @@ auto-launched alongside Electron.
 
 ---
 
+## Capabilities, and how each one is built
+
+This list is capability first: what the agent can do, then the mechanism that
+makes it real. Every row names the file, so the claim is checkable.
+
+| Capability | What it does | How it is built |
+| --- | --- | --- |
+| **Page camera** (`capture_page`) | Renders a URL and returns PNGs at desktop, iPhone and iPad sizes in one call, so the agent can look at a page it just built or one it is debugging. | The bundled `iris` binary ([brijr/iris](https://github.com/brijr/iris), MIT) drives Chrome over CDP: one process per shot, run concurrently, no shared session. A generated wrapper pins the light color scheme because iris has no `--light` flag. Shots land in `~/.undisclosed/screenshots`. [`iris_toolkit.py`](brain/app/agent/toolkit/iris_toolkit.py) |
+| **Vision routing** | A model that accepts images gets the screenshots attached; a text-only model gets a written description of each viewport from the vision model you configured. | Capability is derived from the model id by the same checks the tools use ([`model_capabilities.py`](brain/app/utils/model_capabilities.py)). `GET /api/v1/providers` annotates every configured row, and the picker badges render that response, so the tag cannot drift from behavior. [`vision_backend.py`](brain/app/utils/vision_backend.py) |
+| **Structural code navigation** | `find_symbol`, `find_references`, `callers_of`, `file_symbols`, `imports_of`, `context_at` and `skeleton_map` return exact locations instead of grep guesses. | tree-sitter with `tree-sitter-language-pack` grammars and compiled s-expression queries against the native parser; TSX uses the `tsx` grammar. When a grammar is missing it degrades to a text search instead of failing. [`code_query_toolkit.py`](brain/app/agent/toolkit/code_query_toolkit.py) |
+| **Text search** | `grep_search` and `list_dir` over the workspace, scoped by path and glob. | ripgrep executed as an argv list (no shell pipeline to escape), with Python fallbacks when `rg` is absent. [`code_search_toolkit.py`](brain/app/agent/toolkit/code_search_toolkit.py) |
+| **Memory** | Durable facts and earlier conversations come back in later sessions. | A local ChromaDB `PersistentClient` at `~/.undisclosed/memory/semantic`, with per-user metadata scoping. Nothing leaves the machine. Fail-soft: a missing dependency or a bad disk logs and degrades instead of taking the agent down. [`semantic_store.py`](brain/app/memory/semantic_store.py), [`memory_toolkit.py`](brain/app/agent/toolkit/memory_toolkit.py) |
+| **Tool selection** | Each turn exposes a small core set plus the tools that actually match the request. | Tool-RAG embeds the tool registry with chromadb's local MiniLM embedding function and keeps the top-K per turn. On any failure it keeps every tool, so the saving is optional and never costs capability. [`tool_rag.py`](brain/app/agent/tool_rag.py) |
+| **Approvals** | A risky call stops and shows what will run before it runs. | A governance wrapper sits around the tools, builds the call description from the real argv, and a command policy decides what counts as risky. [`governance_toolkit.py`](brain/app/agent/toolkit/governance_toolkit.py), [`command_policy.py`](brain/app/agent/toolkit/command_policy.py) |
+| **Verification** | Typecheck, lint, diff review, and tests with a coverage-gap plan. | See [Reliability over tool count](#reliability-over-tool-count). |
+| **Skills** | 20 bundled, 6 enabled on a new install; others install from a URL. | A skill is a folder with a `SKILL.md`, read at load time from `~/.undisclosed/skills`. [`skill_toolkit.py`](brain/app/agent/toolkit/skill_toolkit.py) |
+| **Sub-agents** | A bounded piece of work can be handed off without the parent losing the thread. | Depth-limited sub-agent tools: a child gets the task, its tools and a depth cap, and cannot spawn further children. [`depth_limited_agent_toolkit.py`](brain/app/agent/toolkit/depth_limited_agent_toolkit.py) |
+
+---
+
 ## Privacy and control
 
 "Local-first" is only worth something if you can check it. These are the concrete
