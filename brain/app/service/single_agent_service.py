@@ -83,6 +83,7 @@ from app.utils.file_utils import (
     resolve_upload_ref,
 )
 from app.utils.model_capabilities import model_supports_vision
+from app.utils.vision_backend import vision_backend_for
 
 logger = logging.getLogger("single_agent_service")
 
@@ -412,11 +413,15 @@ _CAPTION_INSTRUCTION = (
 
 
 async def _caption_images(agent: Any, images: list[Any]) -> str | None:
-    """Produce a concise text description of the given images using the agent's
-    own model, so the description can replace the raw image in memory. Returns
-    None on any failure (caller falls back to a generic marker).
+    """Produce a concise text description of the given images using the
+    configured image model, so the description can replace the raw image in
+    memory. Returns None on any failure (caller falls back to a generic
+    marker).
     """
     if not images:
+        return None
+    backend = vision_backend_for(agent)
+    if backend is None:
         return None
     try:
         message = BaseMessage.make_user_message(
@@ -429,7 +434,7 @@ async def _caption_images(agent: Any, images: list[Any]) -> str | None:
                 "You are a careful visual assistant. Describe only what is "
                 "actually visible in the image."
             ),
-            model=agent.model_backend,
+            model=backend,
             tools=[],
         )
         response = await vision_agent.astep(message)

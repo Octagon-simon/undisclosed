@@ -24,6 +24,7 @@ from app.agent.listen_chat_agent import default_step_timeout
 from app.agent.toolkit.abstract_toolkit import AbstractToolkit
 from app.component.environment import env
 from app.utils.listen.toolkit_listen import auto_listen_toolkit
+from app.utils.vision_backend import vision_backend_for
 
 
 @auto_listen_toolkit(BaseScreenshotToolkit)
@@ -58,7 +59,8 @@ class ScreenshotToolkit(BaseScreenshotToolkit, AbstractToolkit):
         When this toolkit itself is being invoked through a tool call, that
         creates a nested step on the same agent and can corrupt tool-call
         memory (`tool_call_id` mismatch). Use a short-lived vision agent with
-        the same model backend instead.
+        the configured image model instead (falling back to the agent's own
+        backend only when it can see images).
         """
         if self.agent is None:
             return (
@@ -70,6 +72,13 @@ class ScreenshotToolkit(BaseScreenshotToolkit, AbstractToolkit):
             image_path = str(Path(image_path).absolute())
             if not os.path.exists(image_path):
                 return f"Error: Screenshot file not found: {image_path}"
+
+            backend = vision_backend_for(self.agent)
+            if backend is None:
+                return (
+                    "Error: no vision-capable model is configured. Add one "
+                    "under Agents > Models (or set UNDISCLOSED_VISION_MODEL)."
+                )
 
             img = Image.open(image_path)
             message = BaseMessage.make_user_message(
@@ -83,7 +92,7 @@ class ScreenshotToolkit(BaseScreenshotToolkit, AbstractToolkit):
                     "You are a careful visual assistant. Answer only from the "
                     "provided image and user instruction."
                 ),
-                model=self.agent.model_backend,
+                model=backend,
                 tools=[],
                 toolkits_to_register_agent=None,
                 external_tools=None,
