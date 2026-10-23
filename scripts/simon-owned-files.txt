@@ -2,6 +2,7 @@
 # carry the Simon Ugorji banner only. The new-file check cannot catch them once
 # they are committed, so list them explicitly here.
 
+brain/app/agent/toolkit/iris_toolkit.py
 agent-ui/src/components/BrainStatus/index.tsx
 agent-ui/src/components/BrainStatus/useBrainStatus.ts
 agent-ui/src/components/ChatBox/ContextWindowNotice.tsx
@@ -35,3 +36,9 @@ agent-ui/src/stories/ui/Tabs.stories.tsx
 agent-ui/src/stories/ui/Tag.stories.tsx
 agent-ui/src/stories/ui/Textarea.stories.tsx
 agent-ui/src/stories/ui/Tooltip.stories.tsx
+brain/app/utils/vision_backend.py
+brain/tests/app/utils/test_vision_backend.py
+brain/tests/app/agent/factory/test_capability_names.py
+brain/tests/app/agent/toolkit/test_browser_on_demand_launch.py
+brain/tests/app/agent/toolkit/test_iris_toolkit.py
+brain/tests/app/agent/toolkit/test_screenshot_toolkit.py

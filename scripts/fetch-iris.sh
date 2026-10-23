@@ -6,9 +6,14 @@
 # resources/binaries/iris/<os>-<arch>/, where the brain's Page Screenshots
 # toolkit and electron-builder both expect it.
 #
-#   ./scripts/fetch-iris.sh                  # host platform
+#   ./scripts/fetch-iris.sh                  # host platform, best effort
 #   ./scripts/fetch-iris.sh darwin-x64       # explicit target (CI matrix)
-#   ./scripts/fetch-iris.sh --check          # exit 0 if present at the pin
+#   ./scripts/fetch-iris.sh --check          # exit 0 only if present at the pin
+#   ./scripts/fetch-iris.sh --required       # exit 1 if the fetch fails
+#
+# Best effort is the default so `npm install` and `npm run setup` never fail
+# without a network. Packaging passes --required so a release cannot ship
+# without the binary.
 #
 # iris ships macOS (arm64/x64) and Linux (x64 musl) only. Windows exits 0
 # without a binary, and the capability is simply not registered there.
@@ -32,20 +37,41 @@ host_target() {
 asset_for() {
   case "$1" in
     darwin-arm64) echo "iris-aarch64-apple-darwin.tar.gz" ;;
-    darwin-x86_64) echo "iris-x86_64-apple-darwin.tar.gz" ;;
-    linux-x86_64) echo "iris-x86_64-unknown-linux-musl.tar.gz" ;;
+    darwin-x86_64|darwin-x64) echo "iris-x86_64-apple-darwin.tar.gz" ;;
+    linux-x86_64|linux-x64) echo "iris-x86_64-unknown-linux-musl.tar.gz" ;;
     *) echo "" ;;
   esac
 }
 
 CHECK_ONLY=0
-if [ "${1:-}" = "--check" ]; then
-  CHECK_ONLY=1
+REQUIRED=0
+TARGET_ARG=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --check) CHECK_ONLY=1 ;;
+    --required) REQUIRED=1 ;;
+    --*) echo "[fetch-iris] unknown flag: $1" >&2; exit 2 ;;
+    *) TARGET_ARG="$1" ;;
+  esac
   shift
-fi
+done
 
-TARGET="${1:-$(host_target)}"
+TARGET="${TARGET_ARG:-$(host_target)}"
+case "$TARGET" in
+  darwin-x64) TARGET=darwin-x86_64 ;;
+  linux-x64) TARGET=linux-x86_64 ;;
+esac
 ASSET="$(asset_for "$TARGET")"
+
+fail() {
+  if [ "$REQUIRED" -eq 1 ]; then
+    echo "[fetch-iris] ERROR: $*" >&2
+    exit 1
+  fi
+  echo "[fetch-iris] WARNING: $*" >&2
+  echo "[fetch-iris] Page Screenshots stays off until you rerun: npm run fetch:iris" >&2
+  exit 0
+}
 
 if [ -z "$ASSET" ]; then
   echo "[fetch-iris] no prebuilt binary for ${TARGET}; skipping (feature stays off)."
@@ -69,8 +95,7 @@ trap 'rm -rf "$TMP"' EXIT
 
 echo "[fetch-iris] downloading v$VERSION ($TARGET)"
 if ! curl -fsSL --retry 3 --retry-delay 2 -o "$TMP/$ASSET" "$BASE_URL/$ASSET"; then
-  echo "[fetch-iris] download failed: $BASE_URL/$ASSET" >&2
-  exit 1
+  fail "download failed: $BASE_URL/$ASSET"
 fi
 
 tar -xzf "$TMP/$ASSET" -C "$TMP"
@@ -80,13 +105,11 @@ if [ -z "$BIN" ]; then
   BIN="$(find "$TMP" -type f -name iris | head -n 1)"
 fi
 if [ -z "$BIN" ]; then
-  echo "[fetch-iris] archive did not contain an iris binary" >&2
-  exit 1
+  fail "archive did not contain an iris binary"
 fi
 
-install -m 0755 "$BIN" "$DEST"
-if ! "$DEST" --version 2>/dev/null | grep -q "$VERSION"; then
-  echo "[fetch-iris] downloaded binary is not v$VERSION" >&2
-  exit 1
+if ! "$BIN" --version 2>/dev/null | grep -q "$VERSION"; then
+  fail "downloaded binary is not v$VERSION"
 fi
+install -m 0755 "$BIN" "$DEST"
 echo "[fetch-iris] installed $DEST"

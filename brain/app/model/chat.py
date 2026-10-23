@@ -1,4 +1,5 @@
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+# Portions Copyright 2026 Simon Ugorji. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -76,6 +77,10 @@ class Chat(BaseModel):
     language: str = "en"
     browser_port: int = 9222
     cdp_browsers: list[dict] = Field(default_factory=list)
+    # User setting: start a managed browser when the turn begins instead of on
+    # the first browser tool call. Off by default so reasoning-only turns and
+    # workforce tasks that never touch the web spawn no Chromium.
+    keep_browser_warm: bool = False
     max_retries: int = 3
     allow_local_system: bool = False
     installed_mcp: McpServers = {"mcpServers": {}}
@@ -221,6 +226,8 @@ class SupplementChat(BaseModel):
     task_id: str | None = None
     attaches: list[str] = []
     project_context: str | None = None
+    # Mirrors Chat.keep_browser_warm so a follow-up honours the user setting.
+    keep_browser_warm: bool = False
     # Optional model override for follow-up turns. When the user switches the
     # model mid-conversation, the client sends the new selection here so the
     # backend can rebuild the agent instead of reusing the original one.

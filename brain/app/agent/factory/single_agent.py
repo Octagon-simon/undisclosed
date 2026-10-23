@@ -1,4 +1,5 @@
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+# Portions Copyright 2026 Simon Ugorji. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -15,6 +16,7 @@
 import asyncio
 import logging
 import platform
+import re
 from dataclasses import dataclass
 from typing import Literal
 
@@ -22,19 +24,62 @@ from camel.messages import BaseMessage
 
 from app.agent.agent_model import agent_model
 from app.agent.factory.toolkit_assembler import assemble_single_agent_toolkits
-from app.agent.tool_rag import ToolRAGSelector, tool_rag_enabled
 from app.agent.prompt import (
     SINGLE_AGENT_SYS_PROMPT,
     append_connected_app_mcp_notice,
 )
+from app.agent.tool_rag import ToolRAGSelector, tool_rag_enabled
 from app.agent.utils import NOW_STR
+from app.component.environment import env
 from app.hands.interface import IHands
 from app.model.chat import Chat
-from app.component.environment import env
 from app.service.task import Agents
 from app.utils.file_utils import get_working_directory
 
 logger = logging.getLogger("single_agent_factory")
+
+
+# Old or abbreviated labels the model may still emit, mapped to current names.
+_CAPABILITY_ALIASES = {
+    "screenshot toolkit": "Image Reader",
+    "image reader toolkit": "Image Reader",
+    "image toolkit": "Image Reader",
+    "read image": "Image Reader",
+    "page screenshot": "Page Screenshots",
+    "page camera": "Page Screenshots",
+}
+
+# Purpose hints for the capabilities the model kept confusing. Names alone made
+# "Screenshot Toolkit" and "Page Screenshots" look interchangeable.
+_CAPABILITY_HINTS = {
+    "Image Reader": "read an image file on disk, or capture the user's desktop",
+    "Page Screenshots": "capture a live web page URL (including localhost)",
+}
+
+
+def _capability_line(name: str) -> str:
+    hint = _CAPABILITY_HINTS.get(name)
+    return f"- {name}: {hint}" if hint else f"- {name}"
+
+
+def resolve_capability_name(requested: str, available: list[str]) -> str | None:
+    """Map a model-supplied capability label onto an available toolkit name."""
+    raw = re.sub(r"^\s*-\s*", "", str(requested or "")).strip()
+    if not raw:
+        return None
+    by_lower = {name.lower(): name for name in available}
+    key = raw.lower()
+    if key in by_lower:
+        return by_lower[key]
+    # The model often echoes the hint too: "Page Screenshots: capture a URL".
+    head = re.split(r"[:(]| - ", raw, maxsplit=1)[0].strip().lower()
+    if head in by_lower:
+        return by_lower[head]
+    alias = _CAPABILITY_ALIASES.get(head) or _CAPABILITY_ALIASES.get(key)
+    if alias and alias.lower() in by_lower:
+        return by_lower[alias.lower()]
+    hits = [name for name in available if key in name.lower() or name.lower() in key]
+    return hits[0] if len(hits) == 1 else None
 
 
 def _max_iteration() -> int | None:
@@ -134,13 +179,14 @@ async def single_agent(
             loadable_names.extend(tool_rag_selector.capability_catalog())
         except Exception:
             logger.warning("capability catalog build failed", exc_info=True)
+    loadable_names = list(dict.fromkeys(loadable_names))
     if loadable_names:
         system_message += (
             "\n\n<loadable_capabilities>\n"
             "These tool capabilities are NOT loaded by default. The moment a "
             "task needs one, call load_capability([...]) with the name(s) "
             "below, then use the tools it returns:\n"
-            + "\n".join(f"- {name}" for name in loadable_names)
+            + "\n".join(_capability_line(name) for name in loadable_names)
             + "\n</loadable_capabilities>"
         )
 
@@ -181,11 +227,19 @@ async def single_agent(
                 Returns:
                     A short status describing what was loaded.
                 """
+                known = list(_deferred.keys()) + (
+                    _selector.capability_catalog()
+                    if _selector is not None
+                    else []
+                )
                 loaded: list[str] = []
                 # 1) Deferred toolkits are BUILT on demand here (e.g. the browser
                 #    toolkit launches Chromium only at this point).
                 rag_wanted: list[str] = []
-                for cap in capabilities:
+                for requested in capabilities:
+                    cap = resolve_capability_name(requested, known) or str(
+                        requested
+                    ).strip()
                     factory = _deferred.get(cap)
                     if factory is None:
                         rag_wanted.append(cap)

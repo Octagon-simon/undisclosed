@@ -1,4 +1,5 @@
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+# Portions Copyright 2026 Simon Ugorji. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -13,6 +14,7 @@
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
 
 import os
+import sys
 from pathlib import Path
 
 from camel.agents import ChatAgent
@@ -31,13 +33,19 @@ from app.utils.vision_backend import vision_backend_for
 class ScreenshotToolkit(BaseScreenshotToolkit, AbstractToolkit):
     agent_name: str
 
+    @classmethod
+    def toolkit_name(cls) -> str:
+        # "Screenshot Toolkit" made the model pick this instead of Page
+        # Screenshots for a live URL. This toolkit reads images; name it that.
+        return "Image Reader"
+
     def __init__(
         self,
         api_task_id,
         agent_name: str,
         working_directory: str | None = None,
         timeout: float | None = None,
-        enable_desktop_capture: bool = False,
+        enable_desktop_capture: bool = True,
     ):
         self.api_task_id = api_task_id
         self.agent_name = agent_name
@@ -53,14 +61,19 @@ class ScreenshotToolkit(BaseScreenshotToolkit, AbstractToolkit):
         image_path: str,
         instruction: str = "",
     ) -> str:
-        """Analyze an image without recursively calling the current agent.
+        """Read and analyze an image file that already exists on disk.
 
-        CAMEL's base ScreenshotToolkit uses `self.agent.step(...)` directly.
-        When this toolkit itself is being invoked through a tool call, that
-        creates a nested step on the same agent and can corrupt tool-call
-        memory (`tool_call_id` mismatch). Use a short-lived vision agent with
-        the configured image model instead (falling back to the agent's own
-        backend only when it can see images).
+        Use this for a saved PNG/JPG/WebP: a diagram, a previous screenshot,
+        a chart the task produced. It captures nothing. For a live web page
+        load Page Screenshots and call `capture_page`; to capture the user's
+        desktop screen call `take_screenshot_and_read_image`.
+
+        Args:
+            image_path (str): Path to the image file.
+            instruction (str, optional): What to look for in the image.
+
+        Returns:
+            str: The vision model's answer, or an error message.
         """
         if self.agent is None:
             return (
@@ -87,6 +100,7 @@ class ScreenshotToolkit(BaseScreenshotToolkit, AbstractToolkit):
                 image_list=[img],
             )
 
+            #a nested self.agent.step() here corrupts the caller's tool-call memory
             vision_agent = ChatAgent(
                 system_message=(
                     "You are a careful visual assistant. Answer only from the "
@@ -116,18 +130,40 @@ class ScreenshotToolkit(BaseScreenshotToolkit, AbstractToolkit):
         read_image: bool = True,
         instruction: str | None = None,
     ) -> str:
+        """Capture the user's entire desktop screen, then optionally read it.
+
+        Use this only when the task is about what is on the user's screen right
+        now. It is not a page camera: for a URL load Page Screenshots and call
+        `capture_page` instead.
+
+        Args:
+            filename (str): File name to save the capture as.
+            save_to_file (bool): Save the capture to disk. Default True.
+            read_image (bool): Analyze the capture with the vision model.
+            instruction (str, optional): What to look for in the capture.
+
+        Returns:
+            str: Capture status, plus the vision answer when requested.
+        """
         if not self.enable_desktop_capture:
             return (
                 "Error: Desktop screenshot capture is disabled for this agent. "
                 "Use read_image with an existing image file path instead."
             )
 
-        return super().take_screenshot_and_read_image(
+        result = super().take_screenshot_and_read_image(
             filename=filename,
             save_to_file=save_to_file,
             read_image=read_image,
             instruction=instruction,
         )
+        if result.startswith("Error taking screenshot:") and sys.platform == "darwin":
+            result += (
+                " macOS blocks screen capture until the app hosting the brain "
+                "has Screen Recording permission (System Settings > Privacy & "
+                "Security > Screen Recording)."
+            )
+        return result
 
     def get_tools(self):
         tools = super().get_tools()

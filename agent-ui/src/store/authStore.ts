@@ -1,4 +1,5 @@
 // ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+// Portions Copyright 2026 Simon Ugorji. All Rights Reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -85,6 +86,12 @@ interface AuthState {
   governanceMode: GovernanceMode;
   /** Semantic (long-term) memory on/off. Sent to the backend in toolkit_config. */
   memoryEnabled: boolean;
+  /**
+   * Start a browser when a task begins instead of at the first browser action.
+   * Off by default so tasks that never touch the web spawn no Chromium. Sent to
+   * the Brain as `keep_browser_warm`.
+   */
+  keepBrowserWarm: boolean;
   /** Show a reasoning model's thoughts in a collapsible thinking block. */
   showThinking: boolean;
   /**
@@ -151,6 +158,7 @@ interface AuthState {
   ) => void;
   setGovernanceMode: (governanceMode: GovernanceMode) => void;
   setMemoryEnabled: (memoryEnabled: boolean) => void;
+  setKeepBrowserWarm: (keepBrowserWarm: boolean) => void;
   setShowThinking: (showThinking: boolean) => void;
   setCodeEditorEnabled: (codeEditorEnabled: boolean) => void;
   setCodeEditorLastFolder: (codeEditorLastFolder: string | null) => void;
@@ -263,6 +271,7 @@ const authStore = create<AuthState>()(
       lastUsedModel: null,
       governanceMode: 'ask',
       memoryEnabled: true,
+      keepBrowserWarm: false,
       showThinking: true,
       codeEditorEnabled: false,
       codeEditorLastFolder: null,
@@ -401,6 +410,7 @@ const authStore = create<AuthState>()(
 
       setGovernanceMode: (governanceMode) => set({ governanceMode }),
       setMemoryEnabled: (memoryEnabled) => set({ memoryEnabled }),
+      setKeepBrowserWarm: (keepBrowserWarm) => set({ keepBrowserWarm }),
       setShowThinking: (showThinking) => set({ showThinking }),
 
       setCodeEditorEnabled: (codeEditorEnabled) => set({ codeEditorEnabled }),
@@ -630,6 +640,7 @@ const authStore = create<AuthState>()(
         lastUsedModel: state.lastUsedModel,
         governanceMode: state.governanceMode,
         memoryEnabled: state.memoryEnabled,
+        keepBrowserWarm: state.keepBrowserWarm,
         showThinking: state.showThinking,
         codeEditorEnabled: state.codeEditorEnabled,
         codeEditorLastFolder: state.codeEditorLastFolder,

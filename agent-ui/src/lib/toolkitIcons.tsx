@@ -1,4 +1,5 @@
 // ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+// Portions Copyright 2026 Simon Ugorji. All Rights Reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -55,6 +56,8 @@ const toolkitIconMap: Record<string, LucideIcon> = {
   'Code Execution Toolkit': Play,
   'File Toolkit': FilePen,
   'Web Deploy Toolkit': Rocket,
+  'Image Reader': Image,
+  // Legacy label: sessions created before the rename still tag tools with it.
   'Screenshot Toolkit': Camera,
   'Page Screenshots': Camera,
   'Py Auto Gui Toolkit': MousePointer,

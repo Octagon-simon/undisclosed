@@ -1,4 +1,5 @@
 // ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+// Portions Copyright 2026 Simon Ugorji. All Rights Reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -14,6 +15,7 @@
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Switch } from '@/components/ui/switch';
 import { LocaleEnum, switchLanguage } from '@/i18n';
 import { SITE_URL } from '@/lib';
 import { useAuthStore } from '@/store/authStore';
@@ -273,6 +275,31 @@ export default function SettingGeneral() {
               </SelectGroup>
             </SelectContent>
           </Select>
+        </div>
+
+        {/* Browser Section */}
+        <div className="rounded-2xl bg-ds-bg-neutral-default-default px-6 py-4">
+          <div className="flex items-center justify-between gap-md">
+            <div className="flex flex-col gap-2">
+              <div className="text-body-base font-bold text-ds-text-neutral-default-default">
+                {t('setting.keep-browser-warm', {
+                  defaultValue: 'Keep a browser warm',
+                })}
+              </div>
+              <div className="text-body-sm font-normal text-ds-text-neutral-default-default">
+                {t('setting.keep-browser-warm-description', {
+                  defaultValue:
+                    'Start a browser when a task begins. Off by default: the browser opens on the first browser action, so tasks that never use the web never open one.',
+                })}
+              </div>
+            </div>
+            <div className="flex items-center justify-center">
+              <Switch
+                checked={authStore.keepBrowserWarm}
+                onCheckedChange={authStore.setKeepBrowserWarm}
+              />
+            </div>
+          </div>
         </div>
 
         {/* Network Proxy Section */}

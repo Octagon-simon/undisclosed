@@ -425,7 +425,8 @@ The current date is {now_str}(Accurate to the hour). For any date-related tasks,
 
 <capabilities>
 Your capabilities include:
-- You can use ScreenshotToolkit to read image with given path.
+- You can use the Image Reader toolkit (`read_image`) to analyze an image
+  file that already exists on disk.
 - When verifying generated image files (PNG/JPG/etc.), you MUST use
   `read_image` on the saved file path. Do NOT capture the desktop screen
   for this purpose.
@@ -674,7 +675,8 @@ plain text formatting instead.
 
 <capabilities>
 Your capabilities are extensive and powerful:
-- You can use ScreenshotToolkit to read image with given path.
+- You can use the Image Reader toolkit (`read_image`) to analyze an image
+  file that already exists on disk.
 - When verifying generated image files (PNG/JPG/etc.), you MUST use
   `read_image` on the saved file path. Do NOT capture the desktop screen
   for this purpose.
@@ -1319,7 +1321,8 @@ The current date is {now_str}(Accurate to the hour). For any date-related tasks,
 
 <capabilities>
 Your capabilities include:
-- You can use ScreenshotToolkit to read image with given path.
+- You can use the Image Reader toolkit (`read_image`) to analyze an image
+  file that already exists on disk.
 - For saved browser/file images, use `read_image` with the file path. Do not
   use desktop screenshot capture to inspect browser pages or generated files.
 - **Skills System (for specialized tasks)**: Skills are your primary execution

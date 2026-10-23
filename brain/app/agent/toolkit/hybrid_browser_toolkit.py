@@ -1,4 +1,5 @@
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+# Portions Copyright 2026 Simon Ugorji. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -33,6 +34,12 @@ from typing_extensions import TypedDict
 from app.agent.toolkit.abstract_toolkit import AbstractToolkit
 from app.component.environment import env
 from app.service.task import Agents
+from app.utils.browser_launcher import (
+    is_cdp_url_available,
+    is_local_cdp_host,
+    launch_local_cdp_browser,
+    normalize_cdp_url,
+)
 from app.utils.listen.toolkit_listen import auto_listen_toolkit
 
 logger = logging.getLogger("hybrid_browser_toolkit")
@@ -97,6 +104,11 @@ async def _get_browser_bringup_lock(key: str) -> asyncio.Lock:
             lock = asyncio.Lock()
             _browser_bringup_locks[key] = lock
         return lock
+
+
+async def _get_browser_launch_lock(port: int) -> asyncio.Lock:
+    """Serialize on-demand launches for the same port across toolkits."""
+    return await _get_browser_bringup_lock(f"launch:{port}")
 
 
 class SheetCell(TypedDict):
@@ -613,6 +625,10 @@ class HybridBrowserToolkit(BaseHybridBrowserToolkit, AbstractToolkit):
             f"[HybridBrowserToolkit] Initializing with api_task_id: {api_task_id}"
         )
         self.api_task_id = api_task_id
+        # One reachability check and at most one launch attempt per toolkit, so
+        # a broken environment cannot probe or launch on every tool call.
+        self._cdp_endpoint_checked = False
+        self._launch_attempted = False
         logger.debug(
             f"[HybridBrowserToolkit] api_task_id set to: {self.api_task_id}"
         )
@@ -697,6 +713,49 @@ class HybridBrowserToolkit(BaseHybridBrowserToolkit, AbstractToolkit):
             or f"http://localhost:{env('browser_port', '9222')}"
         )
 
+    async def _ensure_reachable_cdp_endpoint(self, cdp_url: str) -> str:
+        """Start a managed browser when the configured local endpoint is dead.
+
+        Remote endpoints are left untouched. At most one launch is attempted per
+        toolkit; callers connect to whatever endpoint comes back.
+        """
+        if self._cdp_endpoint_checked:
+            return cdp_url
+        try:
+            _, host, port = normalize_cdp_url(cdp_url)
+            if not is_local_cdp_host(host):
+                return cdp_url
+            if await asyncio.to_thread(is_cdp_url_available, cdp_url):
+                return cdp_url
+
+            lock = await _get_browser_launch_lock(port)
+            async with lock:
+                if self._launch_attempted:
+                    return self._ws_cdp_url()
+                self._launch_attempted = True
+                # Another toolkit may have launched on this port while we waited.
+                if await asyncio.to_thread(
+                    is_cdp_url_available, self._ws_cdp_url()
+                ):
+                    return self._ws_cdp_url()
+                endpoint = await asyncio.to_thread(
+                    launch_local_cdp_browser, cdp_url
+                )
+                if not endpoint:
+                    logger.info(
+                        "[HybridBrowserToolkit] No managed browser launched for "
+                        f"{cdp_url}; connecting to the existing endpoint"
+                    )
+                    return cdp_url
+                self._ws_config["cdpUrl"] = endpoint
+                logger.info(
+                    "[HybridBrowserToolkit] Launched managed browser on demand: "
+                    f"{endpoint}"
+                )
+                return endpoint
+        finally:
+            self._cdp_endpoint_checked = True
+
     def _should_prime_shared_cdp_tab(self) -> bool:
         enabled = (
             env("UNDISCLOSED_INTERIM_SHARED_BROWSER_TAB_ISOLATION", "true")
@@ -734,6 +793,9 @@ class HybridBrowserToolkit(BaseHybridBrowserToolkit, AbstractToolkit):
 
         # Log when connecting to browser
         cdp_url = self._ws_cdp_url()
+        # A browser is launched here, on the first tool call, instead of at the
+        # start of every turn. No-op once the endpoint is reachable.
+        cdp_url = await self._ensure_reachable_cdp_endpoint(cdp_url)
         logger.info(
             f"[PROJECT BROWSER] Connecting to browser via CDP at {cdp_url}"
         )

@@ -47,6 +47,28 @@ check() {
   fi
 }
 
+echo "== Bundled runtime binaries =="
+case "$(uname -s)" in
+  Darwin) iris_os=darwin ;;
+  Linux) iris_os=linux ;;
+  *) iris_os="" ;;
+esac
+case "$(uname -m)" in
+  arm64|aarch64) iris_arch=arm64 ;;
+  x86_64|amd64) iris_arch=x86_64 ;;
+  *) iris_arch="$(uname -m)" ;;
+esac
+iris_bin="resources/binaries/iris/${iris_os}-${iris_arch}/iris"
+if [ -z "$iris_os" ]; then
+  printf '  \033[33m? %-22s no prebuilt for this OS (Windows)\033[0m\n' "page camera"
+elif [ -x "$iris_bin" ]; then
+  printf '  \033[32m✓ %-22s up to date\033[0m\n' "page camera"
+else
+  printf '  \033[31m✗ %-22s MISSING\033[0m  (%s)\n      fetch: npm run fetch:iris\n' \
+    "page camera" "$iris_bin"
+  stale=1
+fi
+
 echo "== Build outputs vs source =="
 check "frozen brain"        "brain/dist/undisclosed-brain" \
       "brain/app"           "npm run dist:brain"

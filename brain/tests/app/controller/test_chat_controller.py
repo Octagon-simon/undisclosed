@@ -1,4 +1,5 @@
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+# Portions Copyright 2026 Simon Ugorji. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -23,6 +24,10 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from app.controller.chat_controller import (
+    _browser_prepare_timeout_seconds,
+    _prepare_browser_for_request,
+    _prepare_browser_for_request_with_timeout,
+    _reuse_browser_for_request,
     human_reply,
     improve,
     install_mcp,
@@ -60,7 +65,7 @@ class TestChatController:
             patch("app.controller.chat_controller.load_dotenv"),
             patch("app.controller.chat_controller.set_current_task_id"),
             patch(
-                "app.controller.chat_controller._prepare_browser_for_request_with_timeout",
+                "app.controller.chat_controller._resolve_browser_for_turn",
                 new=AsyncMock(return_value=True),
             ),
             patch("pathlib.Path.mkdir"),
@@ -96,7 +101,7 @@ class TestChatController:
             patch("app.controller.chat_controller.load_dotenv"),
             patch("app.controller.chat_controller.set_current_task_id"),
             patch(
-                "app.controller.chat_controller._prepare_browser_for_request",
+                "app.controller.chat_controller._resolve_browser_for_turn",
                 return_value=True,
             ),
             patch("pathlib.Path.mkdir"),
@@ -123,11 +128,11 @@ class TestChatController:
             )
 
     @pytest.mark.asyncio
-    async def test_post_chat_sets_cdp_url_when_browser_ready(
+    async def test_post_chat_launches_when_keep_browser_warm(
         self, sample_chat_data, mock_request, mock_task_lock
     ):
-        """Web mode should set UNDISCLOSED_CDP_URL after successful browser ensure."""
-        chat_data = Chat(**sample_chat_data)
+        """keep_browser_warm starts a browser before the agent is built."""
+        chat_data = Chat(**sample_chat_data, keep_browser_warm=True)
         mock_request.state = SimpleNamespace()
 
         with (
@@ -164,13 +169,48 @@ class TestChatController:
                 mock_task_lock.run_context.cdp_url == "http://127.0.0.1:8080"
             )
             assert mock_task_lock.run_context.browser_port == 8080
-            assert mock_request.state.browser_available is True
+
+    @pytest.mark.asyncio
+    async def test_post_chat_does_not_launch_browser_by_default(
+        self, sample_chat_data, mock_request, mock_task_lock
+    ):
+        """Without keep_browser_warm the turn must not start Chromium."""
+        chat_data = Chat(**sample_chat_data)
+        mock_request.state = SimpleNamespace()
+
+        with (
+            patch(
+                "app.controller.chat_controller.get_or_create_task_lock",
+                return_value=mock_task_lock,
+            ),
+            patch(
+                "app.controller.chat_controller.step_solve"
+            ) as mock_step_solve,
+            patch(
+                "app.controller.chat_controller.ensure_cdp_browser_endpoint"
+            ) as mock_ensure_browser,
+            patch("app.controller.chat_controller.load_dotenv"),
+            patch("app.controller.chat_controller.set_current_task_id"),
+            patch("pathlib.Path.mkdir"),
+            patch("pathlib.Path.home", return_value=MagicMock()),
+            patch.dict(os.environ, {}, clear=True),
+        ):
+
+            async def mock_generator():
+                yield "data: test_response\n\n"
+
+            mock_step_solve.return_value = mock_generator()
+
+            await post(chat_data, mock_request)
+
+            assert mock_task_lock.run_context.cdp_url is None
+            mock_ensure_browser.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_post_chat_clears_cdp_url_when_browser_unavailable(
         self, sample_chat_data, mock_request, mock_task_lock
     ):
-        """Web mode should mark browser unavailable and clear UNDISCLOSED_CDP_URL."""
+        """A dead stored endpoint is dropped, not relaunched, by default."""
         chat_data = Chat(**sample_chat_data)
         mock_request.state = SimpleNamespace()
 
@@ -188,8 +228,7 @@ class TestChatController:
             ),
             patch(
                 "app.controller.chat_controller.ensure_cdp_browser_endpoint",
-                return_value=None,
-            ),
+            ) as mock_ensure_browser,
             patch("app.controller.chat_controller.load_dotenv"),
             patch("app.controller.chat_controller.set_current_task_id"),
             patch("pathlib.Path.mkdir"),
@@ -210,7 +249,7 @@ class TestChatController:
 
             assert mock_task_lock.run_context.cdp_url is None
             assert mock_task_lock.run_context.browser_port == 8080
-            assert mock_request.state.browser_available is False
+            mock_ensure_browser.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_post_chat_preserves_existing_cdp_url(
@@ -256,7 +295,6 @@ class TestChatController:
                 mock_task_lock.run_context.cdp_url == "http://worker-17:9222"
             )
             assert mock_task_lock.run_context.browser_port == 9222
-            assert mock_request.state.browser_available is True
             mock_ensure_browser.assert_not_called()
 
     @pytest.mark.asyncio
@@ -272,7 +310,7 @@ class TestChatController:
                 return_value=mock_task_lock,
             ),
             patch(
-                "app.controller.chat_controller._prepare_browser_for_request_with_timeout",
+                "app.controller.chat_controller._resolve_browser_for_turn",
                 new=AsyncMock(return_value=True),
             ),
         ):
@@ -297,7 +335,7 @@ class TestChatController:
                 return_value=mock_task_lock,
             ),
             patch(
-                "app.controller.chat_controller._prepare_browser_for_request_with_timeout",
+                "app.controller.chat_controller._resolve_browser_for_turn",
                 new=AsyncMock(return_value=True),
             ),
         ):
@@ -360,7 +398,7 @@ class TestChatController:
                 return_value=memory_service,
             ),
             patch(
-                "app.controller.chat_controller._prepare_browser_for_request_with_timeout",
+                "app.controller.chat_controller._resolve_browser_for_turn",
                 new=AsyncMock(return_value=True),
             ),
         ):
@@ -507,6 +545,111 @@ class TestChatController:
             mock_queue_action.assert_called_once()
 
 
+@pytest.mark.unit
+class TestBrowserTurnResolution:
+    """The turn resolves a browser without launching unless kept warm."""
+
+    @pytest.mark.asyncio
+    async def test_remote_hands_skip_local_endpoint(self):
+        request = SimpleNamespace(state=SimpleNamespace(), headers={})
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch(
+                "app.controller.chat_controller._is_remote_browser_hands",
+                return_value=True,
+            ),
+            patch(
+                "app.controller.chat_controller.ensure_cdp_browser_endpoint"
+            ) as mock_ensure,
+        ):
+            assert await _reuse_browser_for_request(request, 9222) is True
+            assert request.state.cdp_url is None
+            assert request.state.browser_port == 9222
+            mock_ensure.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_reuse_without_request_never_launches(self):
+        with (
+            patch.dict(
+                os.environ,
+                {"UNDISCLOSED_CDP_URL": "http://127.0.0.1:9222"},
+                clear=True,
+            ),
+            patch(
+                "app.controller.chat_controller.is_cdp_url_available",
+                return_value=True,
+            ),
+            patch(
+                "app.controller.chat_controller.ensure_cdp_browser_endpoint"
+            ) as mock_ensure,
+        ):
+            assert await _reuse_browser_for_request(None, 9222) is True
+            mock_ensure.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_warm_turn_reuses_without_launching(self):
+        request = SimpleNamespace(state=SimpleNamespace())
+        with (
+            patch(
+                "app.controller.chat_controller._reuse_browser_for_request",
+                new=AsyncMock(return_value=True),
+            ),
+            patch(
+                "app.controller.chat_controller.ensure_cdp_browser_endpoint"
+            ) as mock_ensure,
+        ):
+            assert await _prepare_browser_for_request(request, 9222) is True
+            mock_ensure.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_warm_turn_swallows_launch_errors(self):
+        request = SimpleNamespace(state=SimpleNamespace())
+        with (
+            patch(
+                "app.controller.chat_controller._reuse_browser_for_request",
+                new=AsyncMock(return_value=False),
+            ),
+            patch(
+                "app.controller.chat_controller.ensure_cdp_browser_endpoint",
+                side_effect=RuntimeError("no chrome"),
+            ),
+        ):
+            assert await _prepare_browser_for_request(request, 9222) is False
+
+    @pytest.mark.asyncio
+    async def test_warm_turn_returns_false_when_launch_finds_nothing(self):
+        request = SimpleNamespace(state=SimpleNamespace())
+        with (
+            patch(
+                "app.controller.chat_controller._reuse_browser_for_request",
+                new=AsyncMock(return_value=False),
+            ),
+            patch(
+                "app.controller.chat_controller.ensure_cdp_browser_endpoint",
+                return_value=None,
+            ),
+        ):
+            assert await _prepare_browser_for_request(request, 9222) is False
+
+    @pytest.mark.asyncio
+    async def test_warm_turn_timeout_does_not_raise(self):
+        request = SimpleNamespace(state=SimpleNamespace())
+        with patch(
+            "app.controller.chat_controller.asyncio.wait_for",
+            side_effect=TimeoutError,
+        ):
+            assert (
+                await _prepare_browser_for_request_with_timeout(request, 9222)
+                is False
+            )
+
+    def test_invalid_prepare_timeout_falls_back(self):
+        with patch.dict(
+            os.environ, {"BROWSER_PREPARE_TIMEOUT_SECONDS": "nope"}, clear=True
+        ):
+            assert _browser_prepare_timeout_seconds() == 8.0
+
+
 @pytest.mark.integration
 class TestChatControllerIntegration:
     """Integration tests for chat controller."""
@@ -525,7 +668,7 @@ class TestChatControllerIntegration:
             patch("app.controller.chat_controller.load_dotenv"),
             patch("app.controller.chat_controller.set_current_task_id"),
             patch(
-                "app.controller.chat_controller._prepare_browser_for_request_with_timeout",
+                "app.controller.chat_controller._resolve_browser_for_turn",
                 new=AsyncMock(return_value=True),
             ),
             patch("pathlib.Path.mkdir"),
@@ -558,7 +701,7 @@ class TestChatControllerIntegration:
                 "app.controller.chat_controller.get_task_lock"
             ) as mock_get_lock,
             patch(
-                "app.controller.chat_controller._prepare_browser_for_request_with_timeout",
+                "app.controller.chat_controller._resolve_browser_for_turn",
                 new=AsyncMock(return_value=True),
             ),
         ):

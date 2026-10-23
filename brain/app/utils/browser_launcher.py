@@ -25,8 +25,8 @@ import json
 import logging
 import os
 import platform
-import socket
 import re
+import socket
 import subprocess
 from pathlib import Path
 from urllib.parse import urlparse
@@ -348,6 +348,29 @@ def _launch_browser(
         return None
 
 
+def browser_launch_disabled() -> bool:
+    """Whether managed browser auto-launch is turned off."""
+    raw = os.environ.get("UNDISCLOSED_BRAIN_LAUNCH_BROWSER", "true")
+    return raw.strip().lower() in ("false", "0", "no")
+
+
+def launch_local_cdp_browser(cdp_url: str) -> str | None:
+    """Start a managed browser for a dead local CDP endpoint.
+
+    Returns the endpoint to connect to, or None when the endpoint is remote,
+    auto-launch is disabled, or no browser could be started.
+    """
+    _, host, port = normalize_cdp_url(cdp_url)
+    if not is_local_cdp_host(host):
+        return None
+    if browser_launch_disabled():
+        logger.debug(
+            "[BROWSER LAUNCHER] On-demand launch skipped: auto-launch disabled"
+        )
+        return None
+    return ensure_cdp_browser_endpoint(port)
+
+
 def ensure_cdp_browser_available(port: int = DEFAULT_CDP_PORT) -> bool:
     """
     Ensure a CDP-capable browser is running on the given port.
@@ -360,11 +383,7 @@ def ensure_cdp_browser_available(port: int = DEFAULT_CDP_PORT) -> bool:
         False otherwise.
     """
     # Check if auto-launch is disabled
-    if os.environ.get("UNDISCLOSED_BRAIN_LAUNCH_BROWSER", "true").lower() in (
-        "false",
-        "0",
-        "no",
-    ):
+    if browser_launch_disabled():
         logger.debug("[BROWSER LAUNCHER] Auto-launch disabled by env")
         return _is_cdp_available(port)
 

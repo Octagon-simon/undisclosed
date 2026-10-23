@@ -1225,6 +1225,7 @@ export default function ChatBox(): JSX.Element {
               question: tempMessageContent,
               task_id: nextTaskId,
               attaches: improveAttaches,
+              keep_browser_warm: useAuthStore.getState().keepBrowserWarm,
               project_context: buildProjectContinuationContext(
                 targetProjectId,
                 nextTaskId

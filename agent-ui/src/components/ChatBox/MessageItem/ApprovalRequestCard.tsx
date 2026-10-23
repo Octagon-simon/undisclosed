@@ -43,7 +43,15 @@
 import { fetchPost } from '@/api/http';
 import { Button } from '@/components/ui/button';
 import { generateUniqueId } from '@/lib';
-import type { ActiveApproval, VanillaChatStore } from '@/store/chatStore';
+import { inferSessionModeFromTask } from '@/lib/sessionMode';
+import { useAuthStore } from '@/store/authStore';
+import {
+  buildProjectContinuationContext,
+  hasLiveSessionStream,
+  resolveChatModelForProject,
+  type ActiveApproval,
+  type VanillaChatStore,
+} from '@/store/chatStore';
 import { useProjectStore } from '@/store/projectStore';
 import { Check, Folder, Loader2, RotateCcw, ShieldAlert } from 'lucide-react';
 import { useEffect, useState, useSyncExternalStore } from 'react';
@@ -465,22 +473,96 @@ export function ApprovalRequestCard({
   const handleRetry = async () => {
     if (!activeProjectId || !taskId || submitting) return;
     setSubmitting('approve');
+    const store = chatStore.getState();
+    // The Brain mints a NEW task id for this turn. The store only adopts it
+    // when `nextTaskId` was recorded before the POST: on the follow-up
+    // `confirmed` event it calls appendInitChatStore(nextTaskId), so without
+    // this the turn runs on the Brain while every event lands on a task id
+    // this store never created (the "retry sits there, nothing happens" bug).
     const turnId = generateUniqueId();
-    chatStore.getState().setNextUserId(taskId, turnId);
+    const nextTaskId = generateUniqueId();
+    const currentTask = store.tasks[taskId];
+    store.setNextTaskId(nextTaskId);
+    if (currentTask?.executionId) {
+      store.setNextExecutionId(taskId, currentTask.executionId);
+    }
+    store.setNextUserId(taskId, turnId);
     const command = friendlyApprovalDetail(approval.detail);
+    const question =
+      `My approval request for the "${approval.tool_name}" action ` +
+      `(${command || 'no command shown'}) expired before I could ` +
+      'answer. Please try that step again now.';
     try {
+      // A session that lost its SSE consumer (brain restart, long idle drop)
+      // would run the retry with nothing rendering it. Re-attach first, same
+      // as ChatBox.handleSend; this card only offers Retry once the approval
+      // has expired, so no in-flight turn can be superseded here.
+      if (!hasLiveSessionStream(activeProjectId)) {
+        try {
+          await store.startTask(
+            taskId,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            currentTask?.executionId,
+            activeProjectId,
+            inferSessionModeFromTask(currentTask) ?? undefined,
+            { preserveTaskId: true, resume: true }
+          );
+        } catch (reAttachError) {
+          console.error(
+            'Failed to re-attach the session stream for the retry:',
+            reAttachError
+          );
+        }
+      }
+      // Same payload shape as ChatBox.handleSend's follow-up: without the
+      // model config and project context the Brain falls back to defaults and
+      // the retried turn can run on a different model than the chat.
+      const model = await resolveChatModelForProject(activeProjectId);
       await fetchPost(`/chat/${activeProjectId}`, {
-        question:
-          `My approval request for the "${approval.tool_name}" action ` +
-          `(${command || 'no command shown'}) expired before I could ` +
-          'answer. Please try that step again now.',
-        task_id: turnId,
+        question,
+        task_id: nextTaskId,
+        attaches: [],
+        keep_browser_warm: useAuthStore.getState().keepBrowserWarm,
+        project_context: buildProjectContinuationContext(
+          activeProjectId,
+          nextTaskId
+        ),
+        target: undefined,
+        ...(model
+          ? {
+              model_platform: model.model_platform,
+              model_type: model.model_type,
+              api_key: model.api_key,
+              api_url: model.api_url,
+              auth_source: model.auth_source,
+              model_config_dict: model.model_config_dict,
+              extra_params: model.extra_params,
+            }
+          : {}),
+      });
+      store.setActiveApproval(taskId, null);
+      // Same reset as an idle follow-up: stale reasoning/acknowledgement from
+      // the expired turn would otherwise prepend themselves to the new one.
+      store.clearLiveReasoning(taskId);
+      store.clearAcknowledgement(taskId);
+      store.addMessages(taskId, {
+        id: turnId,
+        role: 'user',
+        content: question,
         attaches: [],
       });
-      chatStore.getState().setActiveApproval(taskId, null);
-      chatStore.getState().setIsPending(taskId, true);
+      store.setHasMessages(taskId, true);
+      store.setIsPending(taskId, true);
     } catch (error) {
       console.error('Failed to ask the agent to retry:', error);
+      // Drop the pointers: a later `confirmed` must not adopt a turn that
+      // never got queued.
+      store.setNextTaskId(null);
+      store.setNextUserId(taskId, undefined);
       toast.error('Could not ask the agent to retry. Please try again.');
       setSubmitting(null);
     }

@@ -98,7 +98,8 @@ brain/*.spec
 !resources/example-skills/**
 
 # Page-camera binary (github.com/brijr/iris). Fetched per platform by
-# scripts/fetch-iris.sh and bundled by electron-builder; never commit it.
+# scripts/fetch-iris.sh (best effort from npm install, --required for a
+# package) and bundled by electron-builder; never commit it.
 resources/binaries/iris/*/
 # Local page shots from `npm run shot`.
 .screenshots/

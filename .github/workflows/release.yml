@@ -108,7 +108,9 @@ jobs:
       #     so the script exits 0 and the capability is simply not registered.
       - name: Fetch page-camera binary
         shell: bash
-        run: ./scripts/fetch-iris.sh
+        # --required: unlike `npm install`, a release must not ship without it
+        # on the platforms that have a prebuilt asset (Windows exits 0).
+        run: ./scripts/fetch-iris.sh --required
 
       # 1b) Linux native build deps. `native-keymap` (a @theia/core dependency)
       #     compiles from source on install and its binding.gyp shells out to

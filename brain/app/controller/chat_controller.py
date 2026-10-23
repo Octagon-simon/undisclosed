@@ -115,10 +115,11 @@ def _is_remote_browser_hands(request: Request | None) -> bool:
     return manifest.get("deployment") == "remote_cluster"
 
 
-async def _prepare_browser_for_request(
+async def _reuse_browser_for_request(
     request: Request | None,
     port: int,
 ) -> bool:
+    """Adopt a browser that is already running; never launch one."""
     existing_cdp_url = (
         get_connected_cdp_endpoint_for_request(request)
         or env("UNDISCLOSED_CDP_URL", "")
@@ -131,18 +132,36 @@ async def _prepare_browser_for_request(
             normalized_endpoint, _, selected_port = normalize_cdp_url(
                 existing_cdp_url
             )
-            if request is not None:
-                request.state.browser_available = True
-                request.state.cdp_url = normalized_endpoint
-                request.state.browser_port = selected_port
+            _remember_browser_endpoint(
+                request, normalized_endpoint, selected_port
+            )
             return True
         clear_connected_cdp_browser_for_request(request)
 
     if _is_remote_browser_hands(request):
-        if request is not None:
-            request.state.browser_available = True
-            request.state.cdp_url = None
-            request.state.browser_port = port
+        _remember_browser_endpoint(request, None, port)
+        return True
+
+    return False
+
+
+def _remember_browser_endpoint(
+    request: Request | None,
+    cdp_url: str | None,
+    port: int,
+) -> None:
+    if request is None:
+        return
+    request.state.cdp_url = cdp_url
+    request.state.browser_port = port
+
+
+async def _prepare_browser_for_request(
+    request: Request | None,
+    port: int,
+) -> bool:
+    """Keep-warm path: adopt a browser, launching one when none is running."""
+    if await _reuse_browser_for_request(request, port):
         return True
 
     try:
@@ -152,28 +171,17 @@ async def _prepare_browser_for_request(
             "Could not ensure CDP browser for web mode",
             extra={"error": str(e), "port": port},
         )
-        if request is not None:
-            request.state.browser_available = False
-            request.state.cdp_url = None
-            request.state.browser_port = port
         return False
 
     if endpoint:
         _, _, selected_port = normalize_cdp_url(endpoint)
-        if request is not None:
-            request.state.browser_available = True
-            request.state.cdp_url = endpoint
-            request.state.browser_port = selected_port
+        _remember_browser_endpoint(request, endpoint, selected_port)
         return True
 
     chat_logger.warning(
         "CDP browser not available after ensure attempt",
         extra={"port": port},
     )
-    if request is not None:
-        request.state.browser_available = False
-        request.state.cdp_url = None
-        request.state.browser_port = port
     return False
 
 
@@ -201,11 +209,23 @@ async def _prepare_browser_for_request_with_timeout(
             "Timed out preparing CDP browser",
             extra={"port": port, "timeout_seconds": timeout},
         )
-        if request is not None:
-            request.state.browser_available = False
-            request.state.cdp_url = None
-            request.state.browser_port = port
         return False
+
+
+async def _resolve_browser_for_turn(
+    request: Request | None,
+    port: int,
+    *,
+    keep_warm: bool,
+) -> bool:
+    """Adopt an existing browser; launch one only when asked to keep it warm.
+
+    Off (the default), a browser is started on the first browser tool call
+    instead, so a task that never touches the web never spawns Chromium.
+    """
+    if keep_warm:
+        return await _prepare_browser_for_request_with_timeout(request, port)
+    return await _reuse_browser_for_request(request, port)
 
 
 def _build_run_context(
@@ -486,11 +506,13 @@ async def start_chat_stream(data: Chat, request: Request):
             exc_info=True,
         )
 
-    # Web mode: reuse an existing CDP endpoint first, otherwise acquire browser
-    # through RemoteHands or launch a local browser when available.
+    # Web mode: reuse a browser that is already running. Launching is deferred
+    # to the first browser tool call unless the user keeps a browser warm.
     if not data.cdp_browsers:
-        await _prepare_browser_for_request_with_timeout(
-            request, data.browser_port
+        await _resolve_browser_for_turn(
+            request,
+            data.browser_port,
+            keep_warm=data.keep_browser_warm,
         )
 
     camel_log = _camel_log_dir(
@@ -605,15 +627,18 @@ async def improve(id: str, data: SupplementChat, request: Request):
     )
     task_lock = get_task_lock(id)
 
-    # Reuse an existing endpoint when possible to avoid tearing down
-    # a browser that was manually connected through the Browser page.
+    # Reuse an endpoint that is already running (for example a browser
+    # connected manually through the Browser page) and leave launching to the
+    # first browser tool call unless the user keeps a browser warm.
     current_context = getattr(task_lock, "run_context", None)
     port = (
         current_context.browser_port
         if isinstance(current_context, RunContext)
         else int(env("browser_port", "9222"))
     )
-    await _prepare_browser_for_request_with_timeout(request, port)
+    await _resolve_browser_for_turn(
+        request, port, keep_warm=data.keep_browser_warm
+    )
 
     # Allow continuing conversation even after task is done
     # This supports multi-turn conversation after complex task completion

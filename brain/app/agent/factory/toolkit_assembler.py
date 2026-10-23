@@ -16,6 +16,7 @@
 import asyncio
 import logging
 import os
+import platform
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -92,7 +93,10 @@ DEFAULT_SINGLE_AGENT_TOOLKIT_CONFIG: dict[str, Any] = {
     "human": {"enabled": True},
     "file": {"enabled": True},
     "web_deploy": {"enabled": True},
-    "screenshot": {"enabled": True},
+    # Image Reader: read_image for files on disk, plus a desktop capture tool
+    # for "what is on my screen" tasks. Set enable_desktop_capture=False to
+    # keep only read_image.
+    "screenshot": {"enabled": True, "enable_desktop_capture": True},
     # Live web-page camera (bundled iris binary). Deferred by default: it costs
     # one line in <loadable_capabilities> until a task actually needs pixels.
     "page_screenshot": {"enabled": True},
@@ -404,7 +408,9 @@ async def _build_single_agent_browser(
                     acquired = True
                 except (NotImplementedError, ValueError):
                     acquired = False
-            if not acquired:
+            if not acquired and options.keep_browser_warm:
+                # Keep-warm only. Otherwise the toolkit launches on its first
+                # browser action, so a reasoning-only turn spawns nothing.
                 from app.utils.browser_launcher import (
                     ensure_cdp_browser_endpoint,
                 )
@@ -418,8 +424,6 @@ async def _build_single_agent_browser(
                             selected_port = parsed_port
                     except Exception:
                         pass
-                else:
-                    cdp_url = f"http://localhost:{selected_port}"
 
     cdp_keep_current = bool(options.cdp_browsers)
     default_start_url = None if cdp_keep_current else "about:blank"
@@ -584,18 +588,28 @@ async def assemble_single_agent_toolkits(
     # Only advertise the page camera when the binary actually exists: a missing
     # iris (e.g. Windows) would otherwise cost the model a load_capability call
     # that can only return an error.
-    if _enabled(config, "page_screenshot") and IrisToolkit.resolve_binary():
-        if _lazy_single_agent_extras():
-            assembly.deferred_capabilities[
-                IrisToolkit.toolkit_name()
-            ] = lambda agent: _build_single_agent_iris(
-                options, config, working_directory, message_integration,
-                assembly, agent,
-            )
-        else:
-            await _build_single_agent_iris(
-                options, config, working_directory, message_integration,
-                assembly, None,
+    if _enabled(config, "page_screenshot"):
+        if IrisToolkit.resolve_binary():
+            if _lazy_single_agent_extras():
+                assembly.deferred_capabilities[
+                    IrisToolkit.toolkit_name()
+                ] = lambda agent: _build_single_agent_iris(
+                    options, config, working_directory, message_integration,
+                    assembly, agent,
+                )
+            else:
+                await _build_single_agent_iris(
+                    options, config, working_directory, message_integration,
+                    assembly, None,
+                )
+        elif platform.system() != "Windows":
+            # Windows has no iris release, so silence there. Everywhere else a
+            # missing binary means a fresh clone skipped the fetch step.
+            logger.warning(
+                "Page Screenshots is enabled but the iris binary is missing "
+                "for %s-%s; run `npm run fetch:iris` and restart the brain.",
+                platform.system().lower(),
+                platform.machine().lower(),
             )
 
     if _enabled(config, "skill"):

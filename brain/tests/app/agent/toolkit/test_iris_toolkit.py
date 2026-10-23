@@ -1,17 +1,11 @@
-# ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+# Copyright (c) 2026 Simon Ugorji
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-# ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
 
+import platform
 from pathlib import Path
 
 import pytest
@@ -77,6 +71,24 @@ def test_resolve_binary_honors_env_override(monkeypatch, tmp_path):
     binary = tmp_path / "custom-iris"
     binary.write_bytes(PNG)
     monkeypatch.setenv("IRIS_BIN", str(binary))
+    assert IrisToolkit.resolve_binary() == str(binary)
+
+
+@pytest.mark.unit
+def test_resolve_binary_finds_bundled_resources_path(monkeypatch, tmp_path):
+    import app.agent.toolkit.iris_toolkit as iris_module
+
+    platform_dir = f"{platform.system().lower()}-{platform.machine().lower()}"
+    binary = (
+        tmp_path / "resources" / "binaries" / "iris" / platform_dir / "iris"
+    )
+    binary.parent.mkdir(parents=True)
+    binary.write_bytes(PNG)
+
+    monkeypatch.delenv("IRIS_BIN", raising=False)
+    monkeypatch.setattr(iris_module, "_candidate_roots", lambda: [tmp_path])
+    monkeypatch.setattr(iris_module.shutil, "which", lambda _name: None)
+
     assert IrisToolkit.resolve_binary() == str(binary)
 
 

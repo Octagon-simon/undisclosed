@@ -195,8 +195,10 @@ class IrisToolkit(BaseToolkit, RegisteredAgentToolkit, AbstractToolkit):
         if not self._binary:
             return (
                 "Error: the page camera binary (iris) is not installed for "
-                f"{_platform_dir()}. Fall back to browser_get_page_snapshot "
-                "or read_image of an existing file."
+                f"{_platform_dir()}. Run `npm run fetch:iris` (or point "
+                "IRIS_BIN at a local binary) and restart the brain. Until "
+                "then use browser_get_page_snapshot, or read_image on an "
+                "existing file."
             )
 
         url = (url or "").strip()
