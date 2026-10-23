@@ -19,11 +19,9 @@ import { Switch } from '@/components/ui/switch';
 import { LocaleEnum, switchLanguage } from '@/i18n';
 import { SITE_URL } from '@/lib';
 import { useAuthStore } from '@/store/authStore';
-import { useInstallationStore } from '@/store/installationStore';
-import { LogOut, Settings } from 'lucide-react';
+import { Settings } from 'lucide-react';
 import { createRef, RefObject, useEffect, useState } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
-import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import {
@@ -34,7 +32,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import useChatStoreAdapter from '@/hooks/useChatStoreAdapter';
 import { useHost } from '@/host';
 
 export default function SettingGeneral() {
@@ -42,20 +39,12 @@ export default function SettingGeneral() {
   const host = useHost();
   const authStore = useAuthStore();
 
-  const resetInstallation = useInstallationStore((state) => state.reset);
-  const setNeedsBackendRestart = useInstallationStore(
-    (state) => state.setNeedsBackendRestart
-  );
-
-  const navigate = useNavigate();
   const [_isLoading, _setIsLoading] = useState(false);
   const language = authStore.language;
   const _setLanguage = authStore.setLanguage;
   const _fullNameRef: RefObject<HTMLInputElement> = createRef();
   const _nickNameRef: RefObject<HTMLInputElement> = createRef();
   const _workDescRef: RefObject<HTMLInputElement> = createRef();
-  //Get Chatstore for the active project's task
-  const { chatStore } = useChatStoreAdapter();
 
   // Proxy configuration state
   const [proxyUrl, setProxyUrl] = useState('');
@@ -227,26 +216,6 @@ export default function SettingGeneral() {
             >
               <Settings />
               {t('setting.manage')}
-            </Button>
-            <Button
-              variant="outline"
-              textWeight="semibold"
-              buttonContent="text"
-              buttonRadius="lg"
-              tone="neutral"
-              size="sm"
-              onClick={() => {
-                chatStore?.clearTasks?.();
-
-                resetInstallation(); // Reset installation state for new account
-                setNeedsBackendRestart(true); // Mark that backend is restarting
-
-                authStore.logout();
-                navigate('/login');
-              }}
-            >
-              <LogOut />
-              {t('setting.log-out')}
             </Button>
           </div>
         </div>

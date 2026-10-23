@@ -22,7 +22,6 @@
  */
 
 import { proxyFetchGet } from '@/api/http';
-import { cn } from '@/lib/utils';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ModelCapabilityTags } from './ModelCapabilityTags';
@@ -85,16 +84,20 @@ export function ModelCapabilityPreview({
   // A result for a previous model must not be shown while the next one is in
   // flight: a stale answer would tag the new model with the old capabilities.
   const current = preview?.model === model ? preview : null;
-  const muted = 'text-label-xs text-ds-text-neutral-muted-default';
 
   return (
     <div
-      className={cn(
+      // Built by hand, not through `cn`: tailwind-merge treats `text-label-xs`
+      // and `text-ds-text-neutral-muted-default` as one conflict group and
+      // drops the size, which rendered this row at 16px.
+      className={[
         // Full width so the row starts at the field edge and wraps inside it.
         'flex w-full flex-wrap items-center justify-start gap-x-2 gap-y-1 pt-1',
-        muted,
-        className
-      )}
+        'text-label-xs text-ds-text-neutral-muted-default',
+        className,
+      ]
+        .filter(Boolean)
+        .join(' ')}
       aria-live="polite"
     >
       <span>

@@ -351,7 +351,7 @@ export default function AgentModels() {
                   type="button"
                   aria-label={showKey ? 'Hide API key' : 'Show API key'}
                   onClick={() => setShowKey((s) => !s)}
-                  className="rounded-md p-1.5 text-ds-text-neutral-subtle-default outline-none hover:bg-ds-bg-neutral-default-default"
+                  className="rounded-md border border-solid border-ds-border-neutral-subtle-default bg-ds-bg-neutral-subtle-default p-1.5 text-ds-text-neutral-subtle-default outline-none transition-colors hover:bg-ds-bg-neutral-default-default"
                 >
                   {showKey ? <EyeOff size={14} /> : <Eye size={14} />}
                 </button>
@@ -437,7 +437,7 @@ export default function AgentModels() {
               type="button"
               onClick={save}
               disabled={saving}
-              className="flex items-center gap-1.5 rounded-md bg-ds-bg-information-default-default px-3 py-1 text-label-xs font-semibold text-ds-text-inverse-default-default outline-none transition-colors hover:opacity-90 disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded-md bg-ds-bg-information-default-default px-3 py-1 text-label-xs font-semibold text-ds-text-information-inverse-default outline-none transition-colors hover:bg-ds-bg-information-default-hover disabled:opacity-50"
             >
               {saving && <Loader2 className="h-3 w-3 animate-spin" aria-hidden />}
               {editingId ? 'Save changes' : 'Add model'}
@@ -497,7 +497,7 @@ export default function AgentModels() {
                       aria-label="Set as default"
                       title="Set as default"
                       onClick={() => setDefault(row)}
-                      className="rounded-md p-1.5 text-ds-text-neutral-subtle-default outline-none hover:bg-ds-bg-neutral-default-default"
+                      className="rounded-md border border-solid border-ds-border-neutral-subtle-default bg-ds-bg-neutral-subtle-default p-1.5 text-ds-text-neutral-subtle-default outline-none transition-colors hover:bg-ds-bg-neutral-default-default"
                     >
                       <Star size={14} />
                     </button>
@@ -507,7 +507,7 @@ export default function AgentModels() {
                     aria-label="Edit"
                     title="Edit"
                     onClick={() => openEdit(row)}
-                    className="rounded-md p-1.5 text-ds-text-neutral-subtle-default outline-none hover:bg-ds-bg-neutral-default-default"
+                    className="rounded-md border border-solid border-ds-border-neutral-subtle-default bg-ds-bg-neutral-subtle-default p-1.5 text-ds-text-neutral-subtle-default outline-none transition-colors hover:bg-ds-bg-neutral-default-default"
                   >
                     <Pencil size={14} />
                   </button>

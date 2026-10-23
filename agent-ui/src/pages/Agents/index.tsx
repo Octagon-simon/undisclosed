@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
 
+import AgentModels from '@/components/CodeAgentWorkspace/AgentModels';
 import VerticalNavigation, {
   HISTORY_VERTICAL_SIDEBAR_CLASSNAME,
   type VerticalNavItem,
@@ -20,10 +21,11 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import Memory from './Memory';
-import Models from './Models';
 import Skills from './Skills';
 import SubAgents from './SubAgents';
 
+// Models use the same panel-native screen as the embedded agent, so there is
+// only one model form to maintain.
 const AGENT_SECTIONS = ['models', 'skills', 'sub-agents', 'memory'] as const;
 type AgentSection = (typeof AGENT_SECTIONS)[number];
 
@@ -38,7 +40,7 @@ export default function Capabilities() {
   const sectionFromUrl = searchParams.get('section');
 
   const [activeTab, setActiveTab] = useState<AgentSection>(() =>
-    isAgentSection(sectionFromUrl) ? sectionFromUrl : 'models'
+    isAgentSection(sectionFromUrl) ? sectionFromUrl : 'skills'
   );
 
   useEffect(() => {
@@ -96,7 +98,13 @@ export default function Capabilities() {
 
       <div className="flex h-auto w-full flex-1 flex-col">
         <div className="flex flex-col gap-4">
-          {activeTab === 'models' && <Models />}
+          {activeTab === 'models' && (
+            // The panel screen sizes itself to the agent rail, so give it a
+            // bounded shell instead of letting the page width stretch it.
+            <div className="h-[560px] w-full max-w-[440px]">
+              <AgentModels />
+            </div>
+          )}
           {activeTab === 'skills' && <Skills />}
           {activeTab === 'sub-agents' && <SubAgents />}
           {activeTab === 'memory' && <Memory />}

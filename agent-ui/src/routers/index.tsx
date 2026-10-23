@@ -16,12 +16,10 @@ import { proxyFetchPost } from '@/api/http';
 import { isDesktop } from '@/client/platform';
 import { useAuthStore } from '@/store/authStore';
 import { lazy, useEffect, useReducer } from 'react';
-import { Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
+import { Navigate, Outlet, Route, Routes } from 'react-router-dom';
 
 import Layout from '@/components/Layout';
 // Lazy load page components
-const Login = lazy(() => import('@/pages/Login'));
-const Signup = lazy(() => import('@/pages/SignUp'));
 const Workspace = lazy(() => import('@/pages/Workspace'));
 const History = lazy(() => import('@/pages/History'));
 const NotFound = lazy(() => import('@/pages/NotFound'));
@@ -61,7 +59,6 @@ const authReducer = (state: AuthState, action: AuthAction): AuthState => {
 
 // Route guard: Check if user is logged in
 const ProtectedRoute = () => {
-  const location = useLocation();
   const [state, dispatch] = useReducer(authReducer, {
     loading: false,
     isAuthenticated: false,
@@ -146,17 +143,32 @@ const ProtectedRoute = () => {
     return <Outlet />;
   }
 
-  const redirect = `${location.pathname}${location.search}`;
+  // The auth pages are gone, so there is nowhere to redirect. If the local
+  // auto-login cannot reach the brain, say so and offer a retry instead of
+  // routing to a /login that no longer exists.
   return (
-    <Navigate to={`/login?redirect=${encodeURIComponent(redirect)}`} replace />
+    <div className="flex h-screen flex-col items-center justify-center gap-2 px-6 text-center">
+      <div className="text-body-sm text-ds-text-neutral-default-default">
+        Can&apos;t reach the local brain
+      </div>
+      <div className="max-w-sm text-label-xs text-ds-text-neutral-subtle-default">
+        Undisclosed could not sign in to the brain on this machine. Start it,
+        then retry.
+      </div>
+      <button
+        type="button"
+        onClick={() => window.location.reload()}
+        className="mt-1 rounded-md bg-ds-bg-information-default-default px-3 py-1 text-label-xs font-semibold text-ds-text-information-inverse-default outline-none transition-colors hover:bg-ds-bg-information-default-hover"
+      >
+        Retry
+      </button>
+    </div>
   );
 };
 
 // Main route configuration
 const AppRoutes = () => (
   <Routes>
-    <Route path="/login" element={<Login />} />
-    <Route path="/signup" element={<Signup />} />
     {ENABLE_DESKTOP_REMOTE_CONTROL_FALLBACK ? (
       <Route path="/remote-control/:sessionId" element={<RemoteControl />} />
     ) : null}

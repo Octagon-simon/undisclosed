@@ -81,20 +81,24 @@ export function ModelCapabilityTags({
         const Icon = meta.icon;
         const hint = t(meta.hintKey, { defaultValue: meta.hint });
         const label = t(meta.labelKey, { defaultValue: meta.fallback });
+        // Joined by hand: `cn` (tailwind-merge) groups `text-label-xs` with
+        // the text color and would drop the color.
         return (
           <span
             key={tag}
             title={`${label}: ${hint}`}
             aria-label={hint}
-            className={cn(
+            className={[
               'inline-flex items-center rounded-md bg-ds-bg-neutral-subtle-default font-medium leading-none text-ds-text-neutral-subtle-default',
               size === 'sm' ? 'text-label-xs' : 'text-[10px]',
               variant === 'icon'
                 ? 'p-0.5'
                 : size === 'sm'
                   ? 'gap-1 px-1.5 py-1'
-                  : 'gap-0.5 px-1 py-0.5'
-            )}
+                  : 'gap-0.5 px-1 py-0.5',
+            ]
+              .filter(Boolean)
+              .join(' ')}
           >
             <Icon
               className={size === 'sm' ? 'h-3 w-3' : 'h-2.5 w-2.5'}
