@@ -549,7 +549,7 @@ export function ModelSelect({
           </DropdownMenuSubTrigger>
           <DropdownMenuSubContent
             ref={subContentCallbackRef}
-            className="max-h-[440px] w-[300px] overflow-y-auto"
+            className="max-h-[440px] w-[340px] overflow-y-auto"
           >
             {cloudGroups.map((group, i) =>
               renderProviderGroup(group, 'custom', i === 0)

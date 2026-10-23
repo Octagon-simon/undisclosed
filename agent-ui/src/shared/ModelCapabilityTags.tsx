@@ -59,12 +59,15 @@ export interface ModelCapabilityTagsProps {
    * there is room to spell it out.
    */
   variant?: 'icon' | 'label';
+  /** `sm` is for the models panel, where the tags are the point of the row. */
+  size?: 'xs' | 'sm';
   className?: string;
 }
 
 export function ModelCapabilityTags({
   capabilities,
   variant = 'label',
+  size = 'xs',
   className,
 }: ModelCapabilityTagsProps) {
   const { t } = useTranslation();
@@ -84,11 +87,19 @@ export function ModelCapabilityTags({
             title={`${label}: ${hint}`}
             aria-label={hint}
             className={cn(
-              'inline-flex items-center rounded-md bg-ds-bg-neutral-subtle-default text-[10px] font-medium leading-none text-ds-text-neutral-subtle-default',
-              variant === 'icon' ? 'p-0.5' : 'gap-0.5 px-1 py-0.5'
+              'inline-flex items-center rounded-md bg-ds-bg-neutral-subtle-default font-medium leading-none text-ds-text-neutral-subtle-default',
+              size === 'sm' ? 'text-label-xs' : 'text-[10px]',
+              variant === 'icon'
+                ? 'p-0.5'
+                : size === 'sm'
+                  ? 'gap-1 px-1.5 py-1'
+                  : 'gap-0.5 px-1 py-0.5'
             )}
           >
-            <Icon className="h-2.5 w-2.5" aria-hidden />
+            <Icon
+              className={size === 'sm' ? 'h-3 w-3' : 'h-2.5 w-2.5'}
+              aria-hidden
+            />
             {variant === 'label' && label}
           </span>
         );

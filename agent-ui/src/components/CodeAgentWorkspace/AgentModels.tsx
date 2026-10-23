@@ -36,6 +36,8 @@ import {
   proxyFetchPut,
 } from '@/api/http';
 import { toProviderValidStatus } from '@/lib/providerStatus';
+import { ModelCapabilityPreview } from '@/shared/ModelCapabilityPreview';
+import { ModelCapabilityTags } from '@/shared/ModelCapabilityTags';
 import {
   CLOUD_PROVIDER_PRESETS as CLOUD_PROVIDERS,
   LOCAL_PROVIDER_PRESETS as LOCAL_PROVIDERS,
@@ -67,6 +69,8 @@ interface ProviderRow {
   endpoint_url?: string;
   api_key?: string;
   prefer?: boolean;
+  /** Derived by the brain from the model id, e.g. ["vision", "thinking"]. */
+  capabilities?: string[];
   // Stored provider config JSON. For Anthropic identity-linked keys it may
   // carry `default_headers['anthropic-workspace-id']`.
   encrypted_config?: Record<string, any> | null;
@@ -362,6 +366,7 @@ export default function AgentModels() {
             <input
               value={form.model_type}
               spellCheck={false}
+              aria-label="Model name"
               placeholder={preset?.modelHint}
               onChange={(e) =>
                 setForm((f) => ({ ...f, model_type: e.target.value }))
@@ -369,6 +374,11 @@ export default function AgentModels() {
               className="rounded-md border border-solid border-ds-border-neutral-subtle-default bg-ds-bg-neutral-subtle-default px-2 py-1.5 font-mono text-label-xs text-ds-text-neutral-default-default outline-none"
             />
           </label>
+
+          <ModelCapabilityPreview
+            providerName={form.provider_name}
+            modelType={form.model_type}
+          />
 
           <label className="flex flex-col gap-1">
             <span className="text-label-xs text-ds-text-neutral-subtle-default">
@@ -471,6 +481,11 @@ export default function AgentModels() {
                     {row.model_type}
                   </div>
                 )}
+                <ModelCapabilityTags
+                  capabilities={row.capabilities}
+                  size="sm"
+                  className="mt-1"
+                />
               </div>
               {busyId === row.id ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin text-ds-text-neutral-subtle-default" />

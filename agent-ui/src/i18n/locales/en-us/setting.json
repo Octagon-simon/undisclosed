@@ -463,5 +463,15 @@
   "help-improve-eigent": "Help Improve Undisclosed",
   "help-improve-eigent-description": "Allow Undisclosed to collect anonymous error logs and usage data to improve the service. This is optional and can be changed at any time.",
   "require-approval-for-risky-actions": "Require Approval for Risky Actions",
-  "require-approval-for-risky-actions-description": "Ask before the agent runs terminal commands or writes files, instead of running them automatically. Applies to tasks started after this is turned on."
+  "require-approval-for-risky-actions-description": "Ask before the agent runs terminal commands or writes files, instead of running them automatically. Applies to tasks started after this is turned on.",
+  "capability-vision": "Vision",
+  "capability-vision-hint": "Accepts images: screenshots are attached directly",
+  "capability-thinking": "Thinking",
+  "capability-thinking-hint": "Emits reasoning that streams in the thinking block",
+  "capabilities-label": "Capabilities",
+  "capabilities-detected": "matched from the model name",
+  "capabilities-checking": "Checking…",
+  "capabilities-unavailable": "Couldn't check capabilities",
+  "capabilities-text-only": "Text only",
+  "capabilities-text-only-hint": "screenshots go through your vision model"
 }

@@ -674,6 +674,21 @@ async def get_providers(
     return filtered
 
 
+@router.get("/providers/capabilities")
+async def preview_provider_capabilities(
+    provider_name: str | None = None,
+    model_type: str | None = None,
+):
+    """Capability tags for a model that is not saved yet.
+
+    Same derivation as the saved rows and the agent tools, so the tag a user
+    sees while typing is the tag the agent will act on.
+    """
+    return {
+        "capabilities": model_capability_tags(provider_name, model_type),
+    }
+
+
 @router.get("/provider")
 async def get_provider(id: int):
     providers = _load_providers()
