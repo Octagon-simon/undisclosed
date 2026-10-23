@@ -54,6 +54,7 @@ import {
   LOCAL_MODEL_OPTIONS,
 } from '@/pages/Agents/localModels';
 import { useEffectiveAppearance } from '@/shared/hostTheme';
+import { ModelCapabilityTags } from '@/shared/ModelCapabilityTags';
 import {
   getModelImage,
   modelImageStyle,
@@ -101,6 +102,8 @@ interface ProviderRow {
   prefer?: boolean;
   is_valid?: unknown;
   encrypted_config?: Record<string, unknown> | null;
+  /** Derived by the brain from the model id, e.g. ["vision", "thinking"]. */
+  capabilities?: string[];
 }
 
 type ProviderSelectionKind = 'custom' | 'local';
@@ -420,10 +423,11 @@ export function ModelSelect({
             }}
             className="flex items-center justify-between"
           >
-            <div className="flex min-w-0 items-center">
+            <div className="flex min-w-0 items-center gap-1.5">
               <span className="truncate text-body-sm text-ds-text-neutral-default-default">
                 {rowLabel(row)}
               </span>
+              <ModelCapabilityTags capabilities={row.capabilities} />
             </div>
             {isDefault ? (
               <Check className="h-4 w-4 shrink-0 text-ds-text-success-default-default" />
@@ -541,7 +545,7 @@ export function ModelSelect({
           </DropdownMenuSubTrigger>
           <DropdownMenuSubContent
             ref={subContentCallbackRef}
-            className="max-h-[440px] w-[220px] overflow-y-auto"
+            className="max-h-[440px] w-[300px] overflow-y-auto"
           >
             {cloudGroups.map((group, i) =>
               renderProviderGroup(group, 'custom', i === 0)
@@ -571,7 +575,7 @@ export function ModelSelect({
               {t('setting.local-model')}
             </span>
           </DropdownMenuSubTrigger>
-          <DropdownMenuSubContent ref={subContentCallbackRef} className="w-[200px]">
+          <DropdownMenuSubContent ref={subContentCallbackRef} className="w-[280px]">
             {localGroups.map((group, i) =>
               renderProviderGroup(group, 'local', i === 0)
             )}

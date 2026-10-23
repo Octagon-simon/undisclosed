@@ -89,6 +89,7 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import undisclosedImage from '@/assets/logo/undisclosed-icon.svg';
+import { ModelCapabilityTags } from '@/shared/ModelCapabilityTags';
 import { useEffectiveAppearance } from '@/shared/hostTheme';
 import {
   getModelImage,
@@ -272,6 +273,8 @@ export default function SettingModels() {
       provider_name: string;
       model_type?: string;
       prefer?: boolean;
+      /** Derived by the brain from the model id, e.g. ["vision", "thinking"]. */
+      capabilities?: string[];
     }>
   >([]);
   const [localVerifying, setLocalVerifying] = useState(false);
@@ -2681,7 +2684,7 @@ export default function SettingModels() {
                     {t('setting.custom-model')}
                   </span>
                 </DropdownMenuSubTrigger>
-                <DropdownMenuSubContent className="max-h-[440px] w-[220px] overflow-y-auto">
+                <DropdownMenuSubContent className="max-h-[440px] w-[320px] overflow-y-auto">
                   {/* Every configured row, grouped by provider, so a provider
                       with several models (e.g. deepseek-chat and
                       deepseek-v4-flash) shows all of them. */}
@@ -2710,10 +2713,13 @@ export default function SettingModels() {
                                 <Key className="h-4 w-4 text-ds-icon-neutral-muted-default" />
                               )}
                               <span
-                                className={`text-body-sm ${row.prefer ? 'text-ds-text-neutral-default-default' : 'text-ds-text-neutral-muted-default'}`}
+                                className={`min-w-0 truncate text-body-sm ${row.prefer ? 'text-ds-text-neutral-default-default' : 'text-ds-text-neutral-muted-default'}`}
                               >
                                 {rowDisplayLabel(row)}
                               </span>
+                              <ModelCapabilityTags
+                                capabilities={row.capabilities}
+                              />
                             </div>
                             <div className="flex items-center gap-1">
                               {row.prefer ? (
@@ -2836,10 +2842,13 @@ export default function SettingModels() {
                                 <Server className="h-4 w-4 text-ds-icon-neutral-muted-default" />
                               )}
                               <span
-                                className={`text-body-sm ${row.prefer ? 'text-ds-text-neutral-default-default' : 'text-ds-text-neutral-muted-default'}`}
+                                className={`min-w-0 truncate text-body-sm ${row.prefer ? 'text-ds-text-neutral-default-default' : 'text-ds-text-neutral-muted-default'}`}
                               >
                                 {rowDisplayLabel(row)}
                               </span>
+                              <ModelCapabilityTags
+                                capabilities={row.capabilities}
+                              />
                             </div>
                             <div className="flex items-center gap-1">
                               {row.prefer ? (

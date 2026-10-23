@@ -39,6 +39,7 @@ from fastapi import APIRouter, Body, Query, HTTPException, Response
 from pydantic import BaseModel, Field, AliasChoices, field_validator
 
 from app.component.environment import default_env_path, env
+from app.utils.model_capabilities import model_capability_tags
 
 logger = logging.getLogger("chat_platform_controller")
 router = APIRouter()
@@ -646,6 +647,17 @@ def _save_providers(providers: list[dict]) -> None:
         logger.error("Failed to save providers JSON: %s", p_file, exc_info=True)
 
 
+def _with_capabilities(provider: dict) -> dict:
+    # Derived on read: providers.json stays the user's raw config, and a row
+    # added by any path gets tags without a migration.
+    return {
+        **provider,
+        "capabilities": model_capability_tags(
+            provider.get("provider_name"), provider.get("model_type")
+        ),
+    }
+
+
 @router.get("/providers")
 async def get_providers(
     keyword: str | None = None,
@@ -658,7 +670,7 @@ async def get_providers(
             continue
         if prefer is not None and p.get("prefer") != prefer:
             continue
-        filtered.append(p)
+        filtered.append(_with_capabilities(p))
     return filtered
 
 
@@ -667,7 +679,7 @@ async def get_provider(id: int):
     providers = _load_providers()
     for p in providers:
         if p.get("id") == id:
-            return p
+            return _with_capabilities(p)
     raise HTTPException(status_code=404, detail="Provider not found")
 
 

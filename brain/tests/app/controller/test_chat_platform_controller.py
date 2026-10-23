@@ -203,3 +203,29 @@ async def test_remote_sub_agents_crud(mock_home):
     await delete_remote_sub_agent_provider(provider_id=1)
     agents = await list_remote_sub_agent_providers()
     assert agents == []
+
+
+@pytest.mark.asyncio
+async def test_providers_report_capabilities(mock_home):
+    rows = [
+        ("deepseek", "deepseek-v4-flash-vision-exp", ["vision", "thinking"]),
+        ("deepseek", "deepseek-v4-flash", ["thinking"]),
+        ("openai", "gpt-4o", ["vision"]),
+        ("ollama", "deepseek-chat", []),
+    ]
+    for name, model_type, _ in rows:
+        await create_provider(
+            ProviderIn(provider_name=name, model_type=model_type, api_key="k")
+        )
+
+    providers = await get_providers()
+    by_model = {p["model_type"]: p for p in providers}
+    for _, model_type, expected in rows:
+        assert by_model[model_type]["capabilities"] == expected
+
+    # Derived on read, so the stored row stays exactly what the user configured.
+    stored = chat_platform_controller._load_providers()
+    assert all("capabilities" not in row for row in stored)
+
+    one = await get_provider(by_model["gpt-4o"]["id"])
+    assert one["capabilities"] == ["vision"]

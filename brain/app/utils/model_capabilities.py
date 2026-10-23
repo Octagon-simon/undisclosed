@@ -22,6 +22,13 @@ model families known to accept image input are treated as vision-capable;
 everything else is treated as text-only. A false negative just means images are
 routed through the tool/OCR fallback instead of native vision (still works); we
 avoid false positives so we don't push image blocks at a text-only model.
+
+"thinking" follows the same rule: it describes what THIS app can actually get
+back today, not what the upstream model is theoretically capable of. That means
+Anthropic extended thinking (requested in agent_model) and DeepSeek reasoning
+models (emit reasoning_content without a request param). OpenAI reasoning models
+are deliberately absent until reasoning_effort is wired here: tagging them would
+promise a thinking block that never streams.
 """
 
 import logging
@@ -76,6 +83,42 @@ _VISION_MODEL_SUBSTRINGS: tuple[str, ...] = (
 )
 
 
+# Substrings that indicate a family this app can surface reasoning from.
+# Anthropic: _wants_thinking requests it. DeepSeek: reasoner models return
+# reasoning_content by default. Keep this list narrower than "models with a
+# hidden reasoning mode" for the reason in the module docstring.
+_THINKING_MODEL_SUBSTRINGS: tuple[str, ...] = (
+    # Anthropic extended thinking (claude-3-7 and newer)
+    "claude-3-7",
+    "claude-4",
+    "claude-5",
+    "sonnet-4",
+    "opus-4",
+    "haiku-4",
+    "sonnet-5",
+    "opus-5",
+    "haiku-5",
+    # DeepSeek reasoning models. The v4 ids mirror CAMEL's
+    # DEEPSEEK_THINKING_MODE_MODELS rather than a generic "v4" prefix.
+    "deepseek-reasoner",
+    "deepseek-r1",
+    "deepseek-v4-flash",
+    "deepseek-v4-pro",
+    "-reasoner",
+)
+
+CAPABILITY_ORDER: tuple[str, ...] = ("vision", "thinking")
+
+
+def _matches(markers: tuple[str, ...], *values: str | None) -> bool:
+    haystacks = [str(v).lower() for v in values if v]
+    for text in haystacks:
+        for marker in markers:
+            if marker in text:
+                return True
+    return False
+
+
 def model_supports_vision(
     model_platform: str | None = None,
     model_type: str | None = None,
@@ -85,13 +128,31 @@ def model_supports_vision(
     Matching is on the lowercased model id (model_type), with model_platform as
     a fallback signal. Unknown models are treated as text-only.
     """
-    haystacks = [
-        str(v).lower() for v in (model_type, model_platform) if v
+    return _matches(_VISION_MODEL_SUBSTRINGS, model_type, model_platform)
+
+
+def model_supports_thinking(
+    model_platform: str | None = None,
+    model_type: str | None = None,
+) -> bool:
+    """Return True when this app can surface reasoning for the given model."""
+    return _matches(_THINKING_MODEL_SUBSTRINGS, model_type, model_platform)
+
+
+def model_capability_tags(
+    model_platform: str | None = None,
+    model_type: str | None = None,
+) -> list[str]:
+    """Capability tags for one configured provider row, in display order.
+
+    Derived on read so any model the user adds is tagged without a migration.
+    """
+    checks = {
+        "vision": model_supports_vision,
+        "thinking": model_supports_thinking,
+    }
+    return [
+        name
+        for name in CAPABILITY_ORDER
+        if checks[name](model_platform, model_type)
     ]
-    if not haystacks:
-        return False
-    for text in haystacks:
-        for marker in _VISION_MODEL_SUBSTRINGS:
-            if marker in text:
-                return True
-    return False
