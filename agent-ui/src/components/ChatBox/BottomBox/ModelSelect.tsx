@@ -510,6 +510,10 @@ export function ModelSelect({
             <span className="min-w-0 flex-1 truncate text-center !text-label-xs text-ds-text-neutral-default-default">
               {triggerModelName}
             </span>
+            <ModelCapabilityTags
+              capabilities={activeRow?.capabilities}
+              variant="icon"
+            />
           </span>
           <ChevronDown
             className="h-3.5 w-3.5 shrink-0 opacity-80"
