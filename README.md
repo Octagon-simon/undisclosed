@@ -362,6 +362,14 @@ To rebuild the embed bundle that the editor ships, and refresh the committed cop
 npm run build:agent-ui   # vite build -> packages/undisclosed-agent/assets/agent-embed/
 ```
 
+If the app is already running (dev server or the packaged `.app`), you do not need a
+full rebuild: `npm run reload:app` builds the bundle, copies it into the installed app
+(`${UNDISCLOSED_APP_PATH}`, `/Applications/Undisclosed.app`, or `~/Applications`), and
+then a window reload (Cmd+R) is enough, because the backend serves the bundle from
+disk on every request. Pass `--brain` to restart the dev brain as well: Python edits
+are the one thing a reload cannot pick up, and the script warns when `brain/app` is
+newer than the running brain.
+
 > `agent-ui/` uses a locally patched `@stackframe/react` at
 > `agent-ui/package/@stackframe/react`. That directory is gitignored, so it is **not**
 > in a fresh clone and `npm install` inside `agent-ui/` fails until it is restored.

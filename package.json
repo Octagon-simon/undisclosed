@@ -126,6 +126,7 @@
     "watch": "theia build --watch --mode development",
     "build:agent-ui": "npm --prefix agent-ui run build:agent-embed && npm run sync:agent-bundle",
     "sync:agent-bundle": "cp agent-ui/dist-agent-embed/agent-embed.umd.js agent-ui/dist-agent-embed/style.css packages/undisclosed-agent/assets/agent-embed/ && echo synced",
+    "reload:app": "bash scripts/reload-app.sh",
     "dist:brain": "bash scripts/build-brain.sh",
     "fetch:iris": "bash scripts/fetch-iris.sh",
     "shot": "bash scripts/iris-shot.sh",

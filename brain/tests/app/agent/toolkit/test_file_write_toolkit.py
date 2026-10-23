@@ -240,3 +240,93 @@ def test_restore_refuses_a_path_outside_the_workspace(
 
     assert "outside the workspace" in result
     assert outside.read_text() == "keep\n"
+
+
+def test_read_file_returns_only_the_requested_lines(
+    toolkit: FileToolkit, tmp_path: Path
+) -> None:
+    target = tmp_path / "app.py"
+    target.write_text("\n".join(f"line{i}" for i in range(1, 11)) + "\n")
+
+    result = toolkit.read_file("app.py", start_line=3, end_line=5)
+
+    assert isinstance(result, str)
+    #real line numbers, so a ranged read can be cited directly
+    assert "3: line3" in result
+    assert "5: line5" in result
+    assert "line2" not in result
+    assert "line6" not in result
+
+
+def test_read_file_default_page_points_at_the_next_one(
+    toolkit: FileToolkit, tmp_path: Path
+) -> None:
+    target = tmp_path / "big.py"
+    target.write_text("\n".join(f"line{i}" for i in range(1, 2101)) + "\n")
+
+    result = toolkit.read_file("big.py")
+
+    assert isinstance(result, str)
+    assert "1: line1" in result
+    assert "2000: line2000" in result
+    assert "line2001" not in result
+    assert "start_line=2001" in result
+
+
+def test_read_file_rejects_a_backwards_range(
+    toolkit: FileToolkit, tmp_path: Path
+) -> None:
+    (tmp_path / "app.py").write_text("one\ntwo\n")
+
+    result = toolkit.read_file("app.py", start_line=2, end_line=1)
+
+    assert "must be greater than or equal to start_line" in result
+
+
+def test_read_file_reports_a_start_past_the_end(
+    toolkit: FileToolkit, tmp_path: Path
+) -> None:
+    (tmp_path / "app.py").write_text("one\ntwo\nthree\n")
+
+    result = toolkit.read_file("app.py", start_line=99)
+
+    assert "past the end of the file (3 lines)" in result
+
+
+def test_read_file_exposes_range_params_to_the_model(
+    toolkit: FileToolkit,
+) -> None:
+    tool = next(
+        tool
+        for tool in toolkit.get_tools()
+        if tool.get_function_name() == "read_file"
+    )
+
+    properties = tool.get_openai_tool_schema()["function"]["parameters"][
+        "properties"
+    ]
+
+    assert {"start_line", "end_line"} <= set(properties)
+
+
+def test_grep_files_searches_a_single_file_path(
+    toolkit: FileToolkit, tmp_path: Path
+) -> None:
+    (tmp_path / "app.py").write_text("first\nneedle here\nlast\n")
+
+    result = toolkit.grep_files("needle", "app.py")
+
+    assert "needle here" in result
+    assert "No matches found." not in result
+
+
+def test_grep_files_still_walks_a_directory(
+    toolkit: FileToolkit, tmp_path: Path
+) -> None:
+    (tmp_path / "app.py").write_text("needle here\n")
+    (tmp_path / "other.py").write_text("needle there\n")
+
+    result = toolkit.grep_files("needle", ".")
+
+    assert "needle here" in result
+    assert "needle there" in result

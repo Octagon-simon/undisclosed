@@ -14,6 +14,7 @@
 
 import mimetypes
 import os
+import re
 import shutil
 import time
 from contextlib import nullcontext
@@ -21,7 +22,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from glob import escape as glob_escape
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from camel.toolkits import FileToolkit as BaseFileToolkit, FunctionTool
 
@@ -101,6 +102,13 @@ _TEXT_MIME_TYPES: frozenset[str] = frozenset(
 
 # Refuse to slurp huge files into the agent's context window.
 _MAX_TEXT_BYTES: int = 2 * 1024 * 1024  # 2 MB
+
+# A read without an explicit range returns at most this many lines, so the
+# agent gets a page plus a pointer to the next one instead of a wall of text.
+_DEFAULT_READ_LINES: int = 2000
+_MAX_READ_LINES: int = 5000
+_MAX_READ_CHARS: int = 400_000
+_MAX_LINE_CHARS: int = 5_000
 
 
 @dataclass(frozen=True)
@@ -219,36 +227,100 @@ class FileToolkit(BaseFileToolkit, AbstractToolkit):
             return False
         return True
 
-    def _read_text_file(self, path: Path) -> str:
-        r"""Return the file's text with 1-based line numbers prefixed.
+    def _read_text_file(
+        self,
+        path: Path,
+        start_line: int | None = None,
+        end_line: int | None = None,
+    ) -> str:
+        r"""Return a window of the file's text with 1-based line numbers.
 
-        Line numbers let the agent cite and edit exact lines without counting
-        or re-reading the file. Files larger than the cap are truncated with a
-        trailing marker instead of being refused.
+        The numbers are the file's real ones, so a ranged read lines up with
+        the full file and can be cited directly. Without a range the window is
+        the first ``_DEFAULT_READ_LINES`` lines; the footer says how to fetch
+        the next page instead of silently dropping the rest.
         """
+        first = 1 if start_line is None else start_line
+        if first < 1:
+            return "Error: start_line must be 1 or greater."
+        if end_line is not None and end_line < first:
+            return (
+                f"Error: end_line ({end_line}) must be greater than or equal "
+                f"to start_line ({first})."
+            )
+
+        requested_last = (
+            end_line
+            if end_line is not None
+            else first + _DEFAULT_READ_LINES - 1
+        )
+        last = min(requested_last, first + _MAX_READ_LINES - 1)
+        clamped = last < requested_last
+
+        numbered: list[str] = []
+        chars = 0
+        scanned = 0
+        has_more = False
         try:
             with path.open("rb") as handle:
-                raw = handle.read(_MAX_TEXT_BYTES + 1)
+                for scanned, raw in enumerate(handle, start=1):
+                    if scanned < first:
+                        continue
+                    if scanned > last:
+                        has_more = True
+                        break
+                    line = raw.decode(
+                        self._encoding, errors="replace"
+                    ).rstrip("\r\n")
+                    if len(line) > _MAX_LINE_CHARS:
+                        line = f"{line[:_MAX_LINE_CHARS]} ... [line clipped]"
+                    if chars + len(line) > _MAX_READ_CHARS:
+                        has_more = True
+                        clamped = True
+                        break
+                    numbered.append(line)
+                    chars += len(line) + 1
         except OSError as e:
             return f"Error reading file: {e}"
 
-        truncated = len(raw) > _MAX_TEXT_BYTES
-        text = raw[:_MAX_TEXT_BYTES].decode(
-            self._encoding, errors="replace"
-        )
-        lines = text.splitlines()
-        if truncated:
-            lines.append(f"... [truncated at {_MAX_TEXT_BYTES} bytes]")
-        if not lines:
-            return ""
-        width = len(str(len(lines)))
-        return "\n".join(
-            f"{number:>{width}}: {line}"
-            for number, line in enumerate(lines, start=1)
+        if not numbered:
+            if first == 1 and scanned == 0:
+                return ""
+            return (
+                f"Error: start_line {first} is past the end of the file "
+                f"({scanned} lines)."
+            )
+
+        shown_last = first + len(numbered) - 1
+        width = len(str(shown_last))
+        body = "\n".join(
+            f"{first + offset:>{width}}: {line}"
+            for offset, line in enumerate(numbered)
         )
 
+        notes: list[str] = []
+        if has_more:
+            if end_line is None:
+                notes.append(
+                    f"showing lines {first}-{shown_last}; call read_file with "
+                    f"start_line={shown_last + 1} to continue"
+                )
+            else:
+                notes.append(f"file continues past line {shown_last}")
+        if clamped and has_more:
+            notes.append(
+                f"output capped at {_MAX_READ_LINES} lines / "
+                f"{_MAX_READ_CHARS} chars per call"
+            )
+        if notes:
+            body += "\n... [" + "; ".join(notes) + "]"
+        return body
+
     def read_file(
-        self, file_paths: str | list[str]
+        self,
+        file_paths: str | list[str],
+        start_line: int | None = None,
+        end_line: int | None = None,
     ) -> str | dict[str, str]:
         r"""Read one or more files, preferring a plain-text fast-path.
 
@@ -258,6 +330,10 @@ class FileToolkit(BaseFileToolkit, AbstractToolkit):
 
         Args:
             file_paths: A single path or a list of paths, relative or absolute.
+            start_line: First line to return, 1-based. Defaults to 1.
+            end_line: Last line to return, inclusive. Defaults to the end of
+                the default page (``_DEFAULT_READ_LINES``). Ignored for rich
+                documents, which are always returned whole.
 
         Returns:
             The file content as a string for a single path, or a dict keyed by
@@ -267,7 +343,7 @@ class FileToolkit(BaseFileToolkit, AbstractToolkit):
             if isinstance(file_paths, str):
                 resolved = self._resolve_existing_filepath(file_paths)
                 if self._is_text_readable(resolved):
-                    return self._read_text_file(resolved)
+                    return self._read_text_file(resolved, start_line, end_line)
                 return super().read_file(file_paths)
 
             resolved_paths = [
@@ -278,7 +354,9 @@ class FileToolkit(BaseFileToolkit, AbstractToolkit):
             rich_resolved: list[str] = []
             for original, resolved in zip(file_paths, resolved_paths):
                 if self._is_text_readable(resolved):
-                    result[original] = self._read_text_file(resolved)
+                    result[original] = self._read_text_file(
+                        resolved, start_line, end_line
+                    )
                 else:
                     rich_originals.append(original)
                     rich_resolved.append(str(resolved))
@@ -298,6 +376,163 @@ class FileToolkit(BaseFileToolkit, AbstractToolkit):
             return result
         except Exception as e:
             return f"Error reading file(s): {e}"
+
+    def grep_files(
+        self,
+        pattern: str,
+        path: str,
+        glob_pattern: str = "*",
+        file_type: str | None = None,
+        output_mode: str = "content",
+        ignore_case: bool = False,
+        context_lines: int = 0,
+        head_limit: int = 20,
+        multiline: bool = False,
+    ) -> Any:
+        r"""Search file contents, accepting a file path as the search root.
+
+        The base implementation walks ``root.rglob(...)``, which yields nothing
+        when ``root`` is a file, so pointing it at a single file silently
+        reported "No matches found.".
+
+        Args:
+            pattern (str): Regular expression to search for.
+            path (str): File or directory to search, relative or absolute.
+            glob_pattern (str): Glob filter for candidate files before
+                searching content. (default: :obj:`"*"`)
+            file_type (Optional[str]): Optional file extension filter without
+                requiring the leading dot. (default: :obj:`None`)
+            output_mode (str): One of :obj:`content`,
+                :obj:`files_with_matches`, or :obj:`count`.
+                (default: :obj:`"content"`)
+            ignore_case (bool): Whether to search case-insensitively.
+                (default: :obj:`False`)
+            context_lines (int): Number of surrounding lines to include when
+                :obj:`output_mode` is :obj:`content`. (default: :obj:`0`)
+            head_limit (int): Maximum number of blocks or file paths to return.
+                (default: :obj:`20`)
+            multiline (bool): Whether the regex may span multiple lines.
+                (default: :obj:`False`)
+        """
+        root = self._resolve_search_path(path)
+        if not root.is_file():
+            return super().grep_files(
+                pattern,
+                path,
+                glob_pattern,
+                file_type,
+                output_mode,
+                ignore_case,
+                context_lines,
+                head_limit,
+                multiline,
+            )
+        return self._grep_single_file(
+            root,
+            pattern,
+            file_type,
+            output_mode,
+            ignore_case,
+            context_lines,
+            head_limit,
+            multiline,
+        )
+
+    def _grep_single_file(
+        self,
+        file_path: Path,
+        pattern: str,
+        file_type: str | None,
+        output_mode: str,
+        ignore_case: bool,
+        context_lines: int,
+        head_limit: int,
+        multiline: bool,
+    ) -> Any:
+        valid_modes = {"content", "files_with_matches", "count"}
+        if output_mode not in valid_modes:
+            return self._tool_error(
+                f"output_mode must be one of {sorted(valid_modes)}."
+            )
+
+        if file_type:
+            suffix = f".{file_type.lstrip('.').lower()}"
+            if file_path.suffix.lower() != suffix:
+                if output_mode == "count":
+                    return {"files_with_matches": 0, "matches": 0}
+                if output_mode == "files_with_matches":
+                    return []
+                return "No matches found."
+
+        try:
+            if file_path.stat().st_size > _MAX_TEXT_BYTES:
+                return self._tool_error(
+                    f"{file_path} is larger than {_MAX_TEXT_BYTES} bytes."
+                )
+            text = file_path.read_text(
+                encoding=self.default_encoding, errors="ignore"
+            )
+        except OSError as exc:
+            return self._tool_error(f"Failed to read {file_path}: {exc}")
+
+        flags = re.MULTILINE
+        if ignore_case:
+            flags |= re.IGNORECASE
+        if multiline:
+            flags |= re.DOTALL
+        try:
+            regex = re.compile(pattern, flags)
+        except re.error as exc:
+            return self._tool_error(f"Invalid regex pattern: {exc}")
+
+        limit = head_limit if head_limit > 0 else float("inf")
+        lines = text.splitlines()
+        blocks: list[str] = []
+        matches = 0
+
+        if multiline:
+            for match in regex.finditer(text):
+                matches += 1
+                if len(blocks) >= limit:
+                    continue
+                start_line = text.count("\n", 0, match.start()) + 1
+                end_offset = max(match.end() - 1, match.start())
+                end_line = text.count("\n", 0, end_offset) + 1
+                blocks.append(
+                    self._render_grep_multiline_block(
+                        file_path=file_path,
+                        lines=lines,
+                        start_line=start_line,
+                        end_line=end_line,
+                        context_lines=context_lines,
+                    )
+                )
+        else:
+            for index, line in enumerate(lines):
+                if not regex.search(line):
+                    continue
+                matches += 1
+                if len(blocks) >= limit:
+                    continue
+                blocks.append(
+                    self._render_grep_context_block(
+                        file_path=file_path,
+                        lines=lines,
+                        match_index=index,
+                        context_lines=context_lines,
+                    )
+                )
+
+        if output_mode == "files_with_matches":
+            return [str(file_path.resolve())] if matches else []
+        if output_mode == "count":
+            return {
+                "files_with_matches": 1 if matches else 0,
+                "matches": matches,
+            }
+        if not blocks:
+            return "No matches found."
+        return "\n--\n".join(blocks)
 
     def _overlay_write_context(
         self, filename: str
