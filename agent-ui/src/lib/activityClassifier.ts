@@ -41,6 +41,7 @@ export type ActivityCategory =
   | 'read'
   | 'memory'
   | 'mcp'
+  | 'capabilities'
   | 'other';
 
 export interface ActivityItem {
@@ -61,6 +62,8 @@ export interface ActivityItem {
   /** Source tool's request/response, carried through for click-to-inspect. */
   input: string;
   output: string;
+  /** Toolkits named by a `load_capability` call, for the row's icons. */
+  capabilities?: string[];
 }
 
 export interface ActivityGroup {
@@ -83,6 +86,20 @@ function extractParam(input: string, keys: string[]): string | null {
     if (match) return match[1];
   }
   return null;
+}
+
+/**
+ * Capability names from a `load_capability` input. The value arrives as JSON
+ * (`{"capabilities": ["Browser Toolkit"]}`) or as a Python-style list in older
+ * logs, so read quoted strings inside the brackets rather than parsing JSON.
+ */
+function extractCapabilities(input: string): string[] {
+  const block = input.match(/capabilities["']?\s*[:=]\s*\[([^\]]*)\]/);
+  const source = block ? block[1] : input;
+  const names = Array.from(source.matchAll(/['"]([^'"]+)['"]/g)).map(
+    (match) => match[1]
+  );
+  return Array.from(new Set(names)).slice(0, 4);
 }
 
 /** Common file-path argument keys the backend uses (singular + plural). */
@@ -526,9 +543,19 @@ export function classifyToolItem(item: ToolItem): ActivityItem {
   let verb = item.method || 'Ran';
   let object = item.toolkitName;
   let badge: string | undefined;
+  let capabilities: string[] | undefined;
 
   if (PREPARATION_METHOD_NAMES.has(method)) {
     // category/verb/object stay at the neutral defaults above.
+  } else if (method.includes('load_capability')) {
+    // load_capability is a plain FunctionTool, so the backend reports it
+    // against "mcp_toolkit"; classify on the method, not the toolkit name.
+    category = 'capabilities';
+    capabilities = extractCapabilities(item.input);
+    verb = 'Loaded';
+    object = capabilities.length
+      ? capabilities.join(', ')
+      : 'a capability';
   } else if (
     method.includes('write') &&
     (method.includes('file') || method.includes('content'))
@@ -712,7 +739,8 @@ export function classifyToolItem(item: ToolItem): ActivityItem {
 
   // Prefer the agent's own message_title/description as the label — but not for
   // file rows, whose object is a click-to-open filename we must keep.
-  const narrated = filePath ? null : labelFromNarration(item.input);
+  const narrated =
+    filePath || capabilities ? null : labelFromNarration(item.input);
   if (narrated) {
     verb = narrated.verb;
     object = narrated.object;
@@ -736,6 +764,7 @@ export function classifyToolItem(item: ToolItem): ActivityItem {
     diff,
     input: item.input,
     output: item.output,
+    capabilities,
   };
 }
 
@@ -808,6 +837,7 @@ const CATEGORY_NOUNS: Record<
   shell: ['command', 'commands'],
   memory: ['memory', 'memories'],
   mcp: ['connector action', 'connector actions'],
+  capabilities: ['capability loaded', 'capabilities loaded'],
 };
 
 /** Counts per category, excluding 'other' (nothing meaningful to summarize). */
@@ -822,6 +852,7 @@ export function summarizeActivities(
     shell: 0,
     memory: 0,
     mcp: 0,
+    capabilities: 0,
   };
   for (const item of items) {
     if (item.category === 'other') continue;

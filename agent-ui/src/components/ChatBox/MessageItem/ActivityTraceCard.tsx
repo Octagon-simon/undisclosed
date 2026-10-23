@@ -45,11 +45,13 @@ import {
   Image as ImageIcon,
   Pencil,
   Plug,
+  Puzzle,
   Search,
   Terminal,
   type LucideIcon,
 } from 'lucide-react';
 import { memo, useMemo, useState } from 'react';
+import { getToolkitIcon } from '@/lib/toolkitIcons';
 
 /**
  * Real per-language SVG logo, generated from Simple Icons into
@@ -228,6 +230,7 @@ export const ACTIVITY_CATEGORY_ICON: Record<ActivityCategory, LucideIcon> = {
   read: FileText,
   memory: Brain,
   mcp: Plug,
+  capabilities: Puzzle,
   other: FileText,
 };
 
@@ -244,7 +247,6 @@ export const ActivityItemRow = memo(function ActivityItemRow({
 }) {
   const [open, setOpen] = useState(false);
   const host = useHost();
-  const Icon = ACTIVITY_CATEGORY_ICON[item.category];
   const hasDetail = Boolean(item.input || item.output);
   const openable = Boolean(item.filePath && host?.openFile);
 
@@ -267,7 +269,29 @@ export const ActivityItemRow = memo(function ActivityItemRow({
           aria-hidden
           className="shrink-0 text-ds-icon-neutral-subtle-default"
         /> */}
-        
+
+        {/* Capability loads are the one row where the toolkit's own icon is
+            the useful signal: it says WHICH toolkit attached, not just that
+            something happened. Regular rows stay icon-free on purpose. */}
+        {item.capabilities?.length ? (
+          <span className="flex shrink-0 items-center gap-0.5">
+            {item.capabilities.map((capability) => (
+              <span
+                key={capability}
+                title={capability}
+                className="inline-flex"
+                aria-hidden
+              >
+                {getToolkitIcon(
+                  capability,
+                  13,
+                  'text-ds-icon-neutral-subtle-default'
+                )}
+              </span>
+            ))}
+          </span>
+        ) : null}
+
         {item.running ? (
           <ShinyText
             text={item.verb}
@@ -428,6 +452,12 @@ export const METRIC_META: Record<
     tone: 'text-ds-text-neutral-default-default',
     description: 'calling a connector',
   },
+  capabilities: {
+    label: 'capabilities',
+    groupLabel: 'Capabilities',
+    tone: 'text-ds-text-information-default-default',
+    description: 'loading a toolkit',
+  },
 };
 
 /** Stable order the pills and the groups render in. */
@@ -440,6 +470,13 @@ export const METRIC_ORDER: MeaningCategory[] = [
   'memory',
   'mcp',
 ];
+
+/**
+ * Groups render capability loads too, but the header pills do not count them:
+ * attaching a toolkit is setup, not work the user asked for. Keeping it out of
+ * METRIC_ORDER is what keeps the pill row from growing on every turn.
+ */
+const GROUP_ORDER: MeaningCategory[] = [...METRIC_ORDER, 'capabilities'];
 
 /** One category plus the operations that fired in it. */
 export interface ActivityGroupView {
@@ -461,7 +498,7 @@ export function groupActivitiesByCategory(
     if (bucket) bucket.push(item);
     else byCategory.set(item.category, [item]);
   }
-  return METRIC_ORDER.filter((category) => byCategory.has(category)).map(
+  return GROUP_ORDER.filter((category) => byCategory.has(category)).map(
     (category) => ({ category, items: byCategory.get(category)! })
   );
 }
