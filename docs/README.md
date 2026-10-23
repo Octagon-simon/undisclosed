@@ -62,6 +62,7 @@ above and are kept for history.
 | [reviews/project-context-tree-sitter.md](reviews/project-context-tree-sitter.md) | The "why" review: repomix vs tree-sitter for project understanding. |
 | [reviews/grep-tool-efficiency.md](reviews/grep-tool-efficiency.md) | Findings: why `grep_files`/`search_files` are slow and unbounded, and what the output cap really covers. |
 | [plans/multi-editor-shared-brain.md](plans/multi-editor-shared-brain.md) | Plan: why several editors sharing one brain contend, why the (reverted) SSE relay doesn't fix it, and the options (single-instance windows, real brain concurrency, per-editor isolation). |
+| [plans/earshot-optional-audio-tooling.md](plans/earshot-optional-audio-tooling.md) | Evaluation (not adopted): earshot as an optional audio/video QA tool over MCP and skills, the gap it fills, and why it must not become a dependency. |
 | [plans/sse-relay-and-next-features.md](plans/sse-relay-and-next-features.md) | The SSE relay port + next-feature sequencing (relay reverted 2026-10-12; see the change ledger). |
 | [plans/tree-sitter-implementation-plan.md](plans/tree-sitter-implementation-plan.md) | The tree-sitter implementation plan (R1 shipped). |
 | [plans/hybrid-memory-implementation.md](plans/hybrid-memory-implementation.md) | Hybrid memory module map + spec section index. |

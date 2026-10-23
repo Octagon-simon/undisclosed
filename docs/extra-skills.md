@@ -75,6 +75,23 @@ Source: **https://github.com/latent-spaces/brag/tree/main/skills** (MIT)
 | [`brag`](https://github.com/latent-spaces/brag/tree/main/skills/brag) | Turn the current project website into a short, shareable launch video (via HyperFrames). |
 | [`brag-slim`](https://github.com/latent-spaces/brag/tree/main/skills/brag-slim) | Same launch-video goal, one file, no bundled assets, built entirely with tools on the machine. |
 
+## Audio and video QA (candidate, not packaged)
+
+**[earshot](https://github.com/Leonxlnx/earshot)** (MIT) gives an agent ears for
+non-speech audio: `describe`, `match`, `find`, `timeline`, `critique`,
+`realness`, and a no-model effects bank (`sfx`). It is the measurement half of
+the media pipeline above: those skills make and mix the sound, earshot checks
+whether it landed.
+
+Not bundled, and not a one-URL install: the skills are only instructions, so the
+Python package and `ffmpeg`/`ffprobe` must be installed first. It pulls
+`torch` and ~1.1 GB of models, which is why it is not a dependency.
+
+- Skills: `https://github.com/Leonxlnx/earshot/tree/main/skills/earshot` and
+  `.../skills/real-sound`
+- Full evaluation, install steps, and why we did not adopt it:
+  [plans/earshot-optional-audio-tooling.md](plans/earshot-optional-audio-tooling.md)
+
 ## Attribution
 
 - **HyperFrames** (`hyperframes*`, `general-video`, `motion-graphics`, `slideshow`,
