@@ -60,6 +60,7 @@ from app.agent.toolkit.governance_toolkit import (
 )
 from app.agent.toolkit.human_toolkit import HumanToolkit
 from app.agent.toolkit.hybrid_browser_toolkit import HybridBrowserToolkit
+from app.agent.toolkit.iris_toolkit import IrisToolkit
 from app.agent.toolkit.lark_toolkit import LarkToolkit
 from app.agent.toolkit.linkedin_toolkit import LinkedInToolkit
 from app.agent.toolkit.memory_toolkit import MemoryToolkit
@@ -92,6 +93,9 @@ DEFAULT_SINGLE_AGENT_TOOLKIT_CONFIG: dict[str, Any] = {
     "file": {"enabled": True},
     "web_deploy": {"enabled": True},
     "screenshot": {"enabled": True},
+    # Live web-page camera (bundled iris binary). Deferred by default: it costs
+    # one line in <loadable_capabilities> until a task actually needs pixels.
+    "page_screenshot": {"enabled": True},
     "skill": {"enabled": True},
     "todo": {"enabled": True},
     "memory": {"enabled": True},
@@ -315,6 +319,30 @@ async def _build_single_agent_screenshot(
     if agent is None:
         assembly.toolkits_to_register_agent.append(toolkit)
         assembly.add_tools(tools, ScreenshotToolkit.toolkit_name())
+    else:
+        _register_lazy_toolkit(agent, toolkit)
+    return tools
+
+
+async def _build_single_agent_iris(
+    options, config, working_directory, message_integration, assembly, agent
+):
+    """Build + register the Iris page camera. No browser launches at build time,
+    so this is cheap either way; deferral only saves tool-schema tokens."""
+    toolkit = IrisToolkit(
+        options.project_id,
+        Agents.single_agent,
+        working_directory=working_directory,
+        model_type=getattr(options, "model_type", None),
+        model_platform=getattr(options, "model_platform", None),
+        **_options(config, "page_screenshot"),
+    )
+    registered = message_integration.register_toolkits(toolkit)
+    tools = registered.get_tools()
+    _tag_tools(tools, IrisToolkit.toolkit_name())
+    if agent is None:
+        assembly.toolkits_to_register_agent.append(toolkit)
+        assembly.add_tools(tools, IrisToolkit.toolkit_name())
     else:
         _register_lazy_toolkit(agent, toolkit)
     return tools
@@ -549,6 +577,23 @@ async def assemble_single_agent_toolkits(
             )
         else:
             await _build_single_agent_screenshot(
+                options, config, working_directory, message_integration,
+                assembly, None,
+            )
+
+    # Only advertise the page camera when the binary actually exists: a missing
+    # iris (e.g. Windows) would otherwise cost the model a load_capability call
+    # that can only return an error.
+    if _enabled(config, "page_screenshot") and IrisToolkit.resolve_binary():
+        if _lazy_single_agent_extras():
+            assembly.deferred_capabilities[
+                IrisToolkit.toolkit_name()
+            ] = lambda agent: _build_single_agent_iris(
+                options, config, working_directory, message_integration,
+                assembly, agent,
+            )
+        else:
+            await _build_single_agent_iris(
                 options, config, working_directory, message_integration,
                 assembly, None,
             )

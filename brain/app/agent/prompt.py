@@ -1275,6 +1275,10 @@ The current date is {now_str}(Accurate to the hour). For any date-related tasks,
     `browser_get_page_snapshot`. Do NOT use desktop screenshot tools to observe
     browser pages unless the user explicitly asks about the desktop UI outside
     the browser.
+- To SEE a rendered page (layout, spacing, theme, responsive breakpoints),
+    load the `Page Screenshots` capability and call `capture_page`. One call
+    can capture desktop + mobile + dark together, and the image comes back
+    with the result.
 
 - When you complete your task, your final response must be a comprehensive
     summary of your findings, presented in a clear, detailed, and

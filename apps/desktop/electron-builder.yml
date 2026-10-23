@@ -65,6 +65,12 @@ extraResources:
   # reach the installer and only the dev repo resolves them.
   - from: "../../resources/example-skills"
     to: "example-skills"
+  # Bundled page-camera binary (github.com/brijr/iris) ->
+  # <resources>/binaries/iris/<os>-<arch>/iris. The brain's Page Screenshots
+  # toolkit resolves it next to the frozen executable. Fetched per runner by
+  # scripts/fetch-iris.sh (macOS + Linux only; absent on Windows).
+  - from: "../../resources/binaries"
+    to: "binaries"
 
 # asar disabled: Theia's plugin host + our agent backend serve files with
 # express.static (which can't read from inside an asar archive), and several

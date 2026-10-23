@@ -96,6 +96,12 @@ brain/*.spec
 # `SKILL.md`: the blanket `*.md`, `*.png`, and `lib/` rules above would otherwise
 # silently drop skills' asset files (PNG textures) and `lib/` script dirs.
 !resources/example-skills/**
+
+# Page-camera binary (github.com/brijr/iris). Fetched per platform by
+# scripts/fetch-iris.sh and bundled by electron-builder; never commit it.
+resources/binaries/iris/*/
+# Local page shots from `npm run shot`.
+.screenshots/
 brag-output-2026-10-11-065557/
 demo-live/
 capture.mov

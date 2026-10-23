@@ -103,6 +103,13 @@ jobs:
       - name: Build brain binary
         run: npm run dist:brain
 
+      # 1a) Bundle the page-camera binary (github.com/brijr/iris). macOS and
+      #     Linux runners fetch the pinned tarball; Windows has no release asset,
+      #     so the script exits 0 and the capability is simply not registered.
+      - name: Fetch page-camera binary
+        shell: bash
+        run: ./scripts/fetch-iris.sh
+
       # 1b) Linux native build deps. `native-keymap` (a @theia/core dependency)
       #     compiles from source on install and its binding.gyp shells out to
       #     pkg-config for X11/xkbfile. The Ubuntu runner lacks those headers, so

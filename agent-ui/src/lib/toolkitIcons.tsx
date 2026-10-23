@@ -56,6 +56,7 @@ const toolkitIconMap: Record<string, LucideIcon> = {
   'File Toolkit': FilePen,
   'Web Deploy Toolkit': Rocket,
   'Screenshot Toolkit': Camera,
+  'Page Screenshots': Camera,
   'Py Auto Gui Toolkit': MousePointer,
 
   // Browser/Web
