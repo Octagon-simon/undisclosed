@@ -1,4 +1,5 @@
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+# Portions Copyright 2026 Simon Ugorji. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -305,7 +306,7 @@ class TestFileSavePath:
 
         assert resolved == (
             tmp_path
-            / "eigent"
+            / ".undisclosed"
             / "user_42"
             / "project_project-1"
             / "task_run-1"
@@ -350,9 +351,40 @@ class TestFileSavePath:
 
         assert resolved == (
             tmp_path
-            / "eigent"
+            / ".undisclosed"
             / "user_42"
             / "project_project-1"
             / "task_run-1"
         )
         assert resolved.exists()
+
+    def test_file_save_path_keeps_pre_rebrand_task_dir(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        (tmp_path / ".undisclosed").mkdir()
+        legacy_path = (
+            tmp_path / "eigent" / "user_42" / "project_project-1" / "task_run-1"
+        )
+        legacy_path.mkdir(parents=True)
+
+        resolved = Path(self._chat().file_save_path())
+
+        assert resolved == legacy_path
+
+    def test_new_task_in_pre_rebrand_project_stays_in_legacy_root(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        (tmp_path / ".undisclosed").mkdir()
+        (
+            tmp_path / "eigent" / "user_42" / "project_project-1"
+        ).mkdir(parents=True)
+        chat = self._chat()
+        chat.run_id = "run-2"
+
+        resolved = Path(chat.file_save_path())
+
+        assert resolved == (
+            tmp_path / "eigent" / "user_42" / "project_project-1" / "task_run-2"
+        )

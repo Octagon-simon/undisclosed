@@ -1,4 +1,5 @@
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+# Portions Copyright 2026 Simon Ugorji. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -22,14 +23,23 @@ def get_workspace_root() -> Path:
     return Path(env("UNDISCLOSED_WORKSPACE", "~/.undisclosed/workspace")).expanduser()
 
 
-def get_eigent_root() -> Path:
-    eigent = Path.home() / "eigent"
-    if eigent.exists():
-        return eigent
-    dot_eigent = Path.home() / ".undisclosed"
-    if dot_eigent.exists():
-        return dot_eigent
-    return eigent
+def get_storage_root() -> Path:
+    """Per-user storage root: ~/.undisclosed, or ~/eigent for pre-rebrand installs."""
+    home = Path.home()
+    root = home / ".undisclosed"
+    legacy_root = home / "eigent"
+    if root.exists() or not legacy_root.exists():
+        return root
+    return legacy_root
+
+
+def storage_root_candidates(root: Path | None = None) -> list[Path]:
+    """Active root first, then the sibling ~/eigent root if it still holds data."""
+    active = root or get_storage_root()
+    legacy = active.parent / "eigent"
+    if active.name == ".undisclosed" and legacy.exists():
+        return [active, legacy]
+    return [active]
 
 
 def sanitize_email(email: str) -> str:
@@ -57,7 +67,7 @@ def project_root(
     email: str, project_id: str, user_id: str | int | None = None
 ) -> Path:
     return (
-        get_eigent_root()
+        get_storage_root()
         / runtime_owner_key(email, user_id)
         / f"project_{project_id}"
     )
@@ -72,11 +82,33 @@ def project_task_root(
     return project_root(email, project_id, user_id) / task_dir_name(task_id)
 
 
+def resolve_task_root(
+    email: str,
+    project_id: str,
+    task_id: str,
+    user_id: str | int | None = None,
+) -> Path:
+    """Task dir under the project's existing root, else the canonical one.
+
+    Stickiness is per project, not per task: a project already living under
+    ~/eigent keeps its new tasks there instead of splitting across two roots.
+    """
+    keys = [runtime_owner_key(email, user_id)]
+    if user_id is not None and str(user_id).strip():
+        keys.append(runtime_owner_key(email, None))
+    for root in storage_root_candidates():
+        for key in dict.fromkeys(keys):
+            project_dir = root / key / f"project_{project_id}"
+            if project_dir.exists():
+                return project_dir / task_dir_name(task_id)
+    return project_task_root(email, project_id, task_id, user_id)
+
+
 def legacy_task_root(
     email: str, task_id: str, user_id: str | int | None = None
 ) -> Path:
     return (
-        get_eigent_root()
+        get_storage_root()
         / runtime_owner_key(email, user_id)
         / task_dir_name(task_id)
     )

@@ -1,4 +1,5 @@
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+# Portions Copyright 2026 Simon Ugorji. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -28,7 +29,12 @@ from starlette.concurrency import run_in_threadpool
 
 from app.component.environment import env
 from app.utils.file_utils import list_files, resolve_under_base
-from app.utils.workspace_paths import runtime_owner_key, task_dir_name
+from app.utils.workspace_paths import (
+    get_storage_root,
+    runtime_owner_key,
+    storage_root_candidates,
+    task_dir_name,
+)
 from app.utils.workspace_resolver import get_workspace_resolver
 
 router = APIRouter()
@@ -43,16 +49,10 @@ FILE_LIST_SEMAPHORE = asyncio.Semaphore(4)
 SLOW_FILE_LIST_LOG_MS = 300
 
 
-def _get_eigent_root() -> Path:
-    """Base root for eigent storage (~/eigent). Do NOT use env file_save_path
-    here: chat overwrites it to task path, which would break list/stream."""
-    eigent = Path.home() / "eigent"
-    if eigent.exists():
-        return eigent
-    dot_eigent = Path.home() / ".undisclosed"
-    if dot_eigent.exists():
-        return dot_eigent
-    return eigent  # default to ~/eigent
+def _get_storage_root() -> Path:
+    """Storage root for task artifacts. Do NOT use env file_save_path here:
+    chat overwrites it to task path, which would break list/stream."""
+    return get_storage_root()
 
 
 def _get_workspace_root() -> Path:
@@ -157,12 +157,19 @@ def _normalize_relative_path(path: str) -> str:
     return path.replace("\\", "/")
 
 
+def _owner_keys(email: str, user_id: str | int | None = None) -> list[str]:
+    keys = [runtime_owner_key(email, user_id)]
+    if user_id is not None and str(user_id).strip():
+        keys.append(runtime_owner_key(email, None))
+    return list(dict.fromkeys(keys))
+
+
 def _get_project_root(
     email: str, project_id: str, user_id: str | int | None = None
 ) -> Path:
     """Get project root path under the canonical user_id or legacy email key."""
     return (
-        _get_eigent_root()
+        _get_storage_root()
         / runtime_owner_key(email, user_id)
         / f"project_{project_id}"
     )
@@ -175,16 +182,13 @@ def _resolve_project_root(
     Resolve project root, preferring the canonical user_id-scoped path when
     available, then legacy email-scoped storage.
     """
-    preferred = _get_project_root(email, project_id, user_id)
-    if preferred.exists():
-        return preferred
+    for root in storage_root_candidates(_get_storage_root()):
+        for key in _owner_keys(email, user_id):
+            candidate = root / key / f"project_{project_id}"
+            if candidate.exists():
+                return candidate
 
-    if user_id is not None and str(user_id).strip():
-        legacy_preferred = _get_project_root(email, project_id)
-        if legacy_preferred.exists():
-            return legacy_preferred
-
-    return preferred
+    return _get_project_root(email, project_id, user_id)
 
 
 def _resolve_file_root(

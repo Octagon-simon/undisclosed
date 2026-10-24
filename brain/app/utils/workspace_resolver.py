@@ -558,7 +558,7 @@ class WorkspaceResolver:
         # folder's real root from the folder registry (folder_spaces.json). This
         # makes the agent operate in the open folder even when the client didn't
         # forward space_root_path — without it the task falls back to the legacy
-        # per-task directory (~/eigent/user_/project_/task_).
+        # per-task directory (~/.undisclosed/user_/project_/task_).
         root_path = options.space_root_path or _folder_root_for_space_id(space_id)
         if root_path:
             try:

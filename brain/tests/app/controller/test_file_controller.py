@@ -1,4 +1,5 @@
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+# Portions Copyright 2026 Simon Ugorji. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -24,7 +25,7 @@ def test_resolve_project_root_prefers_user_id_root(
     (eigent_root / "other_user" / "project_p1").mkdir(parents=True)
 
     monkeypatch.setattr(
-        file_controller, "_get_eigent_root", lambda: eigent_root
+        file_controller, "_get_storage_root", lambda: eigent_root
     )
 
     resolved = file_controller._resolve_project_root(
@@ -43,7 +44,7 @@ def test_resolve_project_root_falls_back_to_legacy_email_root(
     legacy_project.mkdir(parents=True)
 
     monkeypatch.setattr(
-        file_controller, "_get_eigent_root", lambda: eigent_root
+        file_controller, "_get_storage_root", lambda: eigent_root
     )
 
     resolved = file_controller._resolve_project_root(
@@ -61,7 +62,7 @@ def test_resolve_project_root_does_not_fallback_to_other_user_root(
     expected = eigent_root / "user_42" / "project_p1"
 
     monkeypatch.setattr(
-        file_controller, "_get_eigent_root", lambda: eigent_root
+        file_controller, "_get_storage_root", lambda: eigent_root
     )
 
     resolved = file_controller._resolve_project_root(
@@ -79,7 +80,7 @@ def test_resolve_project_root_without_user_id_stays_email_scoped(
     expected = eigent_root / "yueming.lai" / "project_p1"
 
     monkeypatch.setattr(
-        file_controller, "_get_eigent_root", lambda: eigent_root
+        file_controller, "_get_storage_root", lambda: eigent_root
     )
 
     resolved = file_controller._resolve_project_root(

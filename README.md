@@ -172,7 +172,13 @@ Everything is on disk under your home directory:
 | `~/.undisclosed/memory/` | the memory tree: facts, conversation events, tool events, run summaries, and the local vector store |
 | `~/.undisclosed/logs/brain.log` | packaged brain stdout/stderr, rotated at 16 MB |
 | `~/.undisclosed/debug/<task>.log` | full turn dumps, **only when `UNDISCLOSED_DEBUG=1`**: prompt, tool calls with arguments and results, model response |
-| `~/eigent/` (falls back to `~/.undisclosed/`) | per-task run artifacts and the working files the brain writes |
+| `~/.undisclosed/<user>/project_<id>/task_<id>/` | per-task run artifacts and the working files the brain writes |
+| `~/.undisclosed/workspace/<session>/uploads/` | files you attach in the editor panel |
+
+Installs from before the Undisclosed rename kept their artifacts in `~/eigent/`.
+Nothing is moved: if `~/.undisclosed/` does not exist yet but `~/eigent/` does,
+the brain keeps using `~/eigent/`, and existing task folders there are still
+resolved even after `~/.undisclosed/` appears.
 
 Memory is on by default. The panel's **Memory** screen has a "Remember across
 conversations" switch and a **Clear** button (`GET /memory/status`, `DELETE /memory`).

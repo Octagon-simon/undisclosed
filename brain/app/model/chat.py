@@ -16,7 +16,6 @@
 import json
 import logging
 import re
-from pathlib import Path
 from typing import Any, Literal
 
 from camel.types import ModelType, RoleType
@@ -28,7 +27,7 @@ from app.model.model_platform import (
     NormalizedOptionalModelPlatform,
 )
 from app.remote_sub_agent.config import RemoteSubAgentConfig
-from app.utils.workspace_paths import task_dir_name
+from app.utils.workspace_paths import resolve_task_root
 
 logger = logging.getLogger("chat_model")
 
@@ -182,39 +181,12 @@ class Chat(BaseModel):
         )
 
     def file_save_path(self, path: str | None = None):
-        legacy_owner_key = re.sub(
-            r'[\\/*?:"<>|\s]', "_", self.email.split("@")[0]
-        ).strip(".")
-        if self.user_id is not None and str(self.user_id).strip():
-            owner_key = "user_" + re.sub(
-                r'[\\/*?:"<>|\s]', "_", str(self.user_id)
-            ).strip(".")
-        else:
-            owner_key = legacy_owner_key
         run_id = self.run_id or self.task_id
-        # Use project-based structure: project_{project_id}/task_{task_id}
-        project_base = (
-            Path.home()
-            / "eigent"
-            / owner_key
-            / f"project_{self.project_id}"
-            / task_dir_name(run_id)
+        # project_{project_id}/task_{task_id}, reusing a pre-existing dir when
+        # one exists under the old email key or the pre-rebrand ~/eigent root.
+        project_base = resolve_task_root(
+            self.email, self.project_id, run_id, self.user_id
         )
-        legacy_project_base = (
-            Path.home()
-            / "eigent"
-            / legacy_owner_key
-            / f"project_{self.project_id}"
-            / task_dir_name(run_id)
-        )
-        if (
-            owner_key != legacy_owner_key
-            and not project_base.exists()
-            and legacy_project_base.exists()
-        ):
-            # Bridge old installs whose artifacts were written under
-            # ~/eigent/{email_sanitized} before user_id-owned roots existed.
-            project_base = legacy_project_base
         save_path = project_base / path if path is not None else project_base
         save_path.mkdir(parents=True, exist_ok=True)
 
