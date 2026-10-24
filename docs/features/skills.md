@@ -70,10 +70,11 @@ enable toggle and delete, and adds a skill via zip upload. (A device symlink
   `references/diagnose.md`, `references/systems.md`, `references/techniques.md`, and
   `assets/tokens.css`, MIT). `reverse-engineer-anything` (`SKILL.md` + six
   `references/*.md`, MIT, vendored from github.com/morluto/rea) covers binaries,
-  Electron/JavaScript, Android and runtime evidence; it ships instructions only,
+  Electron/JavaScript, Android and runtime evidence. It ships instructions only,
   so its tools need REA's MCP server in `~/.undisclosed/mcp.json`
-  (`npx -y rea-agents@latest mcp`). Without that the skill's own recovery path
-  falls back to the `npx` CLI. Extra skills (video/media/motion) are no longer vendored;
+  (`npx -y rea-agents@latest mcp`); it is bundled but **off by default**, and
+  each user enables it after registering that server. Without the server the
+  skill's own recovery path falls back to the `npx` CLI. Extra skills (video/media/motion) are no longer vendored;
   they live in their upstream GitHub projects and install on demand - see
   `docs/extra-skills.md`.
 - Packaging: the examples ship via electron-builder `extraResources` to
@@ -87,8 +88,8 @@ Applying a UI/design skill is not the last step. The brain prompt
 (`SINGLE_AGENT_SYS_PROMPT` and the other `Skills System` blocks in
 `brain/app/agent/prompt.py`) tells the agent that whenever it applies any UI or
 visual-design skill the user has enabled (`premium-frontend-ui`, `uipro`,
-`ui-styling`, `banner-design`, `design-system`, `screenshot-to-code`, or a
-taste/design skill), it MUST also load `refactoring-ui` and run its
+`ui-styling`, `banner-design`, `design-system`, or a taste/design
+skill), it MUST also load `refactoring-ui` and run its
 diagnose/refactor pass over the UI it produced before declaring the task done.
 That pass is where concrete design errors (ad-hoc spacing/type/color, weak
 hierarchy, flat depth, contrast) get fixed. The rule lives in the prompt, not in

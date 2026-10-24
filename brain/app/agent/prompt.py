@@ -164,11 +164,10 @@ Your integrated toolkits enable you to:
     only when needed.
   - UI polish chain: whenever you apply any UI or visual-design skill the user
     has enabled (for example premium-frontend-ui, uipro, ui-styling,
-    banner-design, design-system, screenshot-to-code, or a taste/design skill),
-    you MUST also load `refactoring-ui` and run its diagnose/refactor pass over
-    the UI you produced BEFORE you declare the task done. Fix everything it
-    flags. This refactor-for-errors pass is a mandatory final step, not an
-    optional extra.
+    banner-design, design-system, or a taste/design skill), you MUST also load
+    `refactoring-ui` and run its diagnose/refactor pass over the UI you
+    produced BEFORE you declare the task done. Fix everything it flags. This
+    refactor-for-errors pass is a mandatory final step, not an optional extra.
 
 2. WhatsApp Business Management (WhatsAppToolkit):
    - Send text and template messages to customers via the WhatsApp Business
@@ -299,11 +298,10 @@ Your capabilities include:
     only when needed.
   - UI polish chain: whenever you apply any UI or visual-design skill the user
     has enabled (for example premium-frontend-ui, uipro, ui-styling,
-    banner-design, design-system, screenshot-to-code, or a taste/design skill),
-    you MUST also load `refactoring-ui` and run its diagnose/refactor pass over
-    the UI you produced BEFORE you declare the task done. Fix everything it
-    flags. This refactor-for-errors pass is a mandatory final step, not an
-    optional extra.
+    banner-design, design-system, or a taste/design skill), you MUST also load
+    `refactoring-ui` and run its diagnose/refactor pass over the UI you
+    produced BEFORE you declare the task done. Fix everything it flags. This
+    refactor-for-errors pass is a mandatory final step, not an optional extra.
 - Video & Audio Analysis:
     - Download videos from URLs for analysis.
     - Transcribe speech from audio files to text with high accuracy
@@ -445,11 +443,10 @@ Your capabilities include:
     only when needed.
   - UI polish chain: whenever you apply any UI or visual-design skill the user
     has enabled (for example premium-frontend-ui, uipro, ui-styling,
-    banner-design, design-system, screenshot-to-code, or a taste/design skill),
-    you MUST also load `refactoring-ui` and run its diagnose/refactor pass over
-    the UI you produced BEFORE you declare the task done. Fix everything it
-    flags. This refactor-for-errors pass is a mandatory final step, not an
-    optional extra.
+    banner-design, design-system, or a taste/design skill), you MUST also load
+    `refactoring-ui` and run its diagnose/refactor pass over the UI you
+    produced BEFORE you declare the task done. Fix everything it flags. This
+    refactor-for-errors pass is a mandatory final step, not an optional extra.
 - Document Reading:
     - Read and understand the content of various file formats including
         - PDF (.pdf)
@@ -695,11 +692,10 @@ Your capabilities are extensive and powerful:
     only when needed.
   - UI polish chain: whenever you apply any UI or visual-design skill the user
     has enabled (for example premium-frontend-ui, uipro, ui-styling,
-    banner-design, design-system, screenshot-to-code, or a taste/design skill),
-    you MUST also load `refactoring-ui` and run its diagnose/refactor pass over
-    the UI you produced BEFORE you declare the task done. Fix everything it
-    flags. This refactor-for-errors pass is a mandatory final step, not an
-    optional extra.
+    banner-design, design-system, or a taste/design skill), you MUST also load
+    `refactoring-ui` and run its diagnose/refactor pass over the UI you
+    produced BEFORE you declare the task done. Fix everything it flags. This
+    refactor-for-errors pass is a mandatory final step, not an optional extra.
 - **Unrestricted Code Execution**: You can write and execute code in any
   language to solve a task. You MUST first save your code to a file (e.g.,
   `script.py`) and then run it from the terminal (e.g.,
@@ -1003,8 +999,8 @@ occur here. Use absolute paths for local file operations.
 clearly matches an available skill. Call `list_skills`, then `load_skill`.
 - UI skills chain to `refactoring-ui`. Whenever you apply any UI or
 visual-design skill the user has enabled (for example `premium-frontend-ui`,
-`uipro`, `ui-styling`, `banner-design`, `design-system`,
-`screenshot-to-code`, or a taste/design skill), you MUST also load
+`uipro`, `ui-styling`, `banner-design`, `design-system`, or a taste/design
+skill), you MUST also load
 `refactoring-ui` and run its diagnose/refactor pass over the UI you produced
 before you declare the task done. Fix everything it flags. This
 refactor-for-errors pass is a mandatory final step, not an optional extra.
@@ -1352,11 +1348,10 @@ Your capabilities include:
     only when needed.
   - UI polish chain: whenever you apply any UI or visual-design skill the user
     has enabled (for example premium-frontend-ui, uipro, ui-styling,
-    banner-design, design-system, screenshot-to-code, or a taste/design skill),
-    you MUST also load `refactoring-ui` and run its diagnose/refactor pass over
-    the UI you produced BEFORE you declare the task done. Fix everything it
-    flags. This refactor-for-errors pass is a mandatory final step, not an
-    optional extra.
+    banner-design, design-system, or a taste/design skill), you MUST also load
+    `refactoring-ui` and run its diagnose/refactor pass over the UI you
+    produced BEFORE you declare the task done. Fix everything it flags. This
+    refactor-for-errors pass is a mandatory final step, not an optional extra.
 - Search and get information from the web using the search tools.
 - Use the rich browser related toolset to investigate websites.
 - Use the terminal tools to perform local operations. For a request about a

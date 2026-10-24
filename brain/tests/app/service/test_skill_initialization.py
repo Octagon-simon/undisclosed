@@ -1,4 +1,5 @@
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+# Portions Copyright 2026 Simon Ugorji. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -381,11 +382,15 @@ def test_bundled_skill_frontmatter_parses_as_yaml():
     assert broken == []
 
 
-def test_bundled_reverse_engineer_skill_ships_enabled():
+def test_bundled_reverse_engineer_skill_ships_disabled():
+    # Ships as instructions only; its tools need the REA MCP server, so
+    # enabling it for everyone would hand users a skill that cannot work.
     assert (
         BUNDLED_SKILLS_ROOT / "reverse-engineer-anything" / "SKILL.md"
     ).is_file()
+    bundled = {skill["name"] for skill in skill_service.example_skills_metadata()}
+    assert "reverse-engineer-anything" in bundled
     assert (
         "reverse-engineer-anything"
-        in skill_config_service.DEFAULT_ENABLED_EXAMPLE_SKILLS
+        not in skill_config_service.DEFAULT_ENABLED_EXAMPLE_SKILLS
     )
