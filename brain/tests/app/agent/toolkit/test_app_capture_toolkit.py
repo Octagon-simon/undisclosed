@@ -255,3 +255,25 @@ async def test_list_capture_targets_flags_missing_permission(toolkit, monkeypatc
     assert "- Notes" in text
     assert "xcrun not available" in text
     assert "adb not found" in text
+
+
+def test_single_agent_prompt_points_at_both_cameras():
+    """The single agent owns both cameras, so its prompt must name them."""
+    from app.agent.prompt import BROWSER_SYS_PROMPT, SINGLE_AGENT_SYS_PROMPT
+
+    prompt = SINGLE_AGENT_SYS_PROMPT.format(
+        platform_system="Darwin",
+        platform_machine="arm64",
+        working_directory="/tmp",
+        now_str="now",
+    )
+
+    assert "`capture_app`" in prompt
+    assert "`list_capture_targets`" in prompt
+    assert "`capture_page`" in prompt
+    assert "Page Screenshots" in prompt
+    # browser sub-agent has neither camera capability, so guidance there is
+    # dead text it cannot act on
+    for capability in ("App Screenshots", "Page Screenshots"):
+        assert capability not in BROWSER_SYS_PROMPT
+    assert "`capture_page`" not in BROWSER_SYS_PROMPT
