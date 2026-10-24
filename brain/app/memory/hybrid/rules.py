@@ -54,6 +54,16 @@ _WEAK_RULE_WORDS = frozenset(
     {"not", "never", "always", "again", "that", "this", "it", "them", "about"}
 )
 _SCOPE_RANK = {SCOPE_GLOBAL: 1, SCOPE_PROJECT: 2, SCOPE_CONVERSATION: 3}
+# Severity arrived after the first constraint rows were written, so a legacy row
+# stores "soft" (or nothing) whether or not the user made it non-negotiable. Its
+# wording is the only evidence left: only directive phrasing is promoted.
+_LEGACY_HARD_RE = re.compile(
+    r"\b(?:must|never|always|do\s+not|don'?t|from now on|going forward|"
+    r"every time|each time|make sure|ensure)\b|"
+    r"\bbefore (?:any|you|every|declaring|committing|running)\b|"
+    r"^\s*no\b[^.;]*\bunless\b",
+    re.IGNORECASE,
+)
 _HEADER = (
     "Standing constraints from this user. Treat every rule in this block as a "
     "requirement on every action in this turn, regardless of what the current "
@@ -121,6 +131,10 @@ def read_active_rules(
             by_key[identity] = memory
 
     rules = list(by_key.values())
+    # Label legacy rows from their wording before anything downstream reads
+    # ``severity``, so the sort, the budget, and the rendered tag agree.
+    for memory in rules:
+        memory.severity = _effective_severity(memory)
     rules.sort(
         key=lambda m: (
             0 if m.severity == "hard" else 1,
@@ -132,7 +146,11 @@ def read_active_rules(
 
 
 def _is_usable_rule(memory: StructuredMemory) -> bool:
-    """Hard rules and user-level rules always load; legacy project rows must earn it."""
+    """Hard rules and user-level rules always load; legacy project rows must earn it.
+
+    Runs before severity is inferred, on the recorded value, so a legacy fragment
+    cannot promote itself past the bar by happening to read like a directive.
+    """
 
     if memory.severity == "hard" or memory.scope_type == SCOPE_GLOBAL:
         return True
@@ -142,6 +160,30 @@ def _is_usable_rule(memory: StructuredMemory) -> bool:
     words = re.findall(r"[a-z0-9][a-z0-9_./-]*", text.lower())
     content = [w for w in words if len(w) > 2 and w not in _WEAK_RULE_WORDS]
     return len(content) >= _RULE_MIN_WORDS
+
+
+def _is_legacy_rule(memory: StructuredMemory) -> bool:
+    """True for constraints written before rule metadata existed.
+
+    Every writer since severity was added stamps ``original_text`` and
+    ``last_confirmed_at``, so a constraint without either was never classified.
+    Its stored ``severity`` is the schema default or a value a later round-trip
+    copied in, not a decision the user made.
+    """
+
+    return not memory.original_text and not memory.last_confirmed_at
+
+
+def _effective_severity(memory: StructuredMemory) -> str:
+    """Recorded severity, or the wording's own verdict for a legacy row."""
+
+    if memory.severity == "hard":
+        return "hard"
+    if not _is_legacy_rule(memory):
+        return "soft"
+    if memory.scope_type == SCOPE_CONVERSATION:
+        return "soft"
+    return "hard" if _LEGACY_HARD_RE.search(T.collapse(memory.value)) else "soft"
 
 
 def _precedence(memory: StructuredMemory) -> tuple[int, str]:

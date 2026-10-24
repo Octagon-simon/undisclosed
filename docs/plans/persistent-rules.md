@@ -505,6 +505,43 @@ Fixed:
 
 Regression tests: `brain/tests/app/agent/toolkit/test_memory_toolkit.py`.
 
+### 7b. Follow-up fix (2026-10-24): legacy severity and the re-key run
+
+Two items stayed open after `28b50df`.
+
+**Legacy rows rendered `[soft]`.** `severity` was added after the first
+constraint rows were written, so an old rule stored `soft` whether or not the
+user made it non-negotiable, and a restatement was the only way to change it.
+`read_active_rules()` now labels those rows from the only evidence left, their
+wording, before the sort, budget, and rendering see them:
+
+- a legacy row is one without the `original_text` / `last_confirmed_at` stamp
+  that every writer since has set (a later round-trip may have copied the
+  `soft` default in, so the stored value alone cannot identify it);
+- legacy rows that read as a policy (`must`, `never`, `always`, `do not`,
+  `don't`, `no ... unless`, `before any ...`) become `hard`;
+- legacy rows that read as description ("macOS only ...", "--init-truth refuses
+  to ...", "CIEDE2000 must be computed ..." stays hard because it says "must")
+  stay `soft`;
+- conversation-scoped legacy rows stay `soft`;
+- an explicit `soft` written after the field existed is never promoted.
+
+The quality bar runs first, on the recorded severity, so a fragment cannot
+promote itself past it (`must not` alone is still dropped). With the real store
+this moves the four global rules (tool-call visibility, typecheck-before-done,
+no Slack writes, the license reminder) to `[hard]` and leaves the descriptive
+project rows soft.
+
+**The migration had not been run.** `rekey_hybrid_constraints.py --apply`
+re-keyed all 26 active `key="constraint"` rows on this machine, 0 collisions. A
+second dry run reports 0. Superseded rows keep the old key, since history is not
+rewritten. The script now copies every file it touches into
+`<root>/.rekey-backup-<stamp>/` before rewriting and goes through the store's
+atomic writer, so a bulk edit of a user's memory tree is recoverable.
+
+Regression tests: `brain/tests/app/memory/test_hybrid_rules.py`
+(`TestLegacySeverity`) and `brain/tests/app/memory/test_rekey_hybrid_constraints.py`.
+
 ---
 
 ## 8. Non-goals

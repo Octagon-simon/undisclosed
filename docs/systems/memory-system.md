@@ -117,6 +117,14 @@ with `type="constraint"`, loaded unconditionally on every turn.
   Hard rules always load; soft project/conversation rows written by the old
   extractor must clear a small length/content bar so extraction fragments do not
   become standing instructions.
+- **Legacy severity**: rows written before `severity` existed store `soft`
+  whether or not the user made them non-negotiable. `read_active_rules()`
+  detects them by the missing `original_text` / `last_confirmed_at` stamp and
+  promotes the ones whose wording is directive (`must`, `never`, `always`,
+  `do not`, `no ... unless`, `before any ...`) to `hard`; descriptive rows stay
+  `soft`. Explicit `soft` written after the field existed is never promoted.
+  The quality bar runs first, on the recorded value, so a fragment cannot
+  promote itself past it.
 - **Prompt**: `assembler.py` emits a fixed-budget `<persistent_rules>` block
   (hard first, hard rules never dropped, each rule truncated at 400 chars). When
   no rule loads, or every tenth user turn, it emits `<recall_check>` asking for
@@ -129,8 +137,11 @@ with `type="constraint"`, loaded unconditionally on every turn.
   `remember_fact`, `Recalling from memory` / `Recalled from memory` for
   `recall_*`.
 - **Migration**: `brain/scripts/rekey_hybrid_constraints.py` prints the legacy
-  `key="constraint"` rows and their value-derived keys; `--apply` re-keys them
-  without dropping or rewording anything.
+  `key="constraint"` rows and their value-derived keys; `--apply` re-keys the
+  active ones without dropping or rewording anything, copies each touched file
+  into `<root>/.rekey-backup-<stamp>/` first, and writes through the store's
+  atomic writer. Superseded history keeps its old key. Applied to this machine
+  on 2026-10-24: 26 records, 0 collisions, second run is a no-op.
 
 ---
 

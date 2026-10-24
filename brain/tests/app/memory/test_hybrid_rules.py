@@ -27,6 +27,7 @@ from app.memory.hybrid.schema import (
     StructuredMemory,
 )
 from app.memory.hybrid.scope import GlobalMemoryStore
+from app.memory.local_store import write_json_file
 from app.memory.paths import canonical_user_id
 from app.memory.service import record_turn_rules
 
@@ -334,6 +335,91 @@ class TestReadActiveRules:
         )
         assert before == []
         assert len(after) == 1
+
+
+class TestLegacySeverity:
+    """Rows written before ``severity`` existed are labelled from their wording."""
+
+    def _write(self, path, value: str, *, scope_type: str = "project") -> None:
+        write_json_file(
+            path,
+            {
+                "memories": [
+                    {
+                        "id": "mem_legacy",
+                        "conversation_id": "project_test",
+                        "type": "constraint",
+                        "key": "constraint",
+                        "value": value,
+                        "status": "active",
+                        "scope_type": scope_type,
+                        "scope_id": (
+                            "user_42" if scope_type == "global" else "project_test"
+                        ),
+                        "created_at": "2026-09-20T00:00:00+00:00",
+                        "updated_at": "2026-09-20T00:00:00+00:00",
+                    }
+                ]
+            },
+        )
+
+    def _project_file(self, hybrid, ids):
+        return (
+            hybrid.base.project_path(
+                ids["user_key"], ids["space_id"], ids["project_id"]
+            )
+            / "memories.json"
+        )
+
+    def _load(self, hybrid, ids):
+        return rules.read_active_rules(
+            hybrid.base,
+            user_key=ids["user_key"],
+            space_id=ids["space_id"],
+            project_id=ids["project_id"],
+            conversation_id=ids["conversation_id"],
+        )
+
+    def test_legacy_directive_promotes_to_hard(self, hybrid, ids):
+        self._write(
+            self._project_file(hybrid, ids),
+            "Tool calls must not be visible on the UI",
+        )
+        loaded = self._load(hybrid, ids)
+        assert [r.severity for r in loaded] == ["hard"]
+        assert "[hard]" in rules.render_rules_block(loaded, budget_chars=1000)
+
+    def test_legacy_global_directive_promotes_to_hard(self, hybrid, ids):
+        self._write(
+            hybrid.base.user_path(ids["user_key"]) / "memories.json",
+            "No Slack writes of any kind unless the user explicitly asks",
+            scope_type="global",
+        )
+        assert [r.severity for r in self._load(hybrid, ids)] == ["hard"]
+
+    def test_legacy_description_stays_soft(self, hybrid, ids):
+        self._write(
+            self._project_file(hybrid, ids),
+            "macOS only (depends on xcrun simctl); no Windows/Linux equivalent",
+        )
+        loaded = self._load(hybrid, ids)
+        assert [r.severity for r in loaded] == ["soft"]
+        assert "[soft]" in rules.render_rules_block(loaded, budget_chars=1000)
+
+    def test_explicit_soft_rule_is_not_promoted(self, hybrid, ids):
+        hybrid.apply_ops(
+            ids["user_key"],
+            ids["space_id"],
+            ids["project_id"],
+            [_constraint("must not hide the loader", "rule_loader", severity="soft")],
+            conversation_id=ids["conversation_id"],
+            now="2026-10-23T00:00:00+00:00",
+        )
+        assert [r.severity for r in self._load(hybrid, ids)] == ["soft"]
+
+    def test_legacy_fragment_cannot_promote_past_the_bar(self, hybrid, ids):
+        self._write(self._project_file(hybrid, ids), "must not")
+        assert self._load(hybrid, ids) == []
 
 
 class TestRendering:

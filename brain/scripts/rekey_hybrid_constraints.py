@@ -20,7 +20,9 @@ New writes derive the key from the rule's wording; this tool brings old records
 in line so a later restatement merges instead of superseding the wrong rule.
 
 Dry-run by default. ``--apply`` rewrites the key only: no record is dropped,
-deleted, or reworded, and a collision is reported and left untouched.
+deleted, or reworded, and a collision is reported and left untouched. Each
+touched file is copied into a timestamped backup directory under ``--root``
+before it is rewritten, and the rewrite goes through the store's atomic writer.
 
 Usage:
     python scripts/rekey_hybrid_constraints.py
@@ -31,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -38,6 +41,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.memory.hybrid import canonical  # noqa: E402
+from app.memory.local_store import write_json_file  # noqa: E402
 
 
 def _memory_files(root: Path) -> list[Path]:
@@ -76,14 +80,23 @@ def _plan(rows: list[dict]) -> tuple[list[tuple[dict, str]], list[dict]]:
     return changes, collisions
 
 
-def _process(path: Path, *, apply: bool) -> tuple[int, int]:
+def _backup(path: Path, root: Path, backup_root: Path) -> Path:
+    target = backup_root / path.relative_to(root)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(path, target)
+    return target
+
+
+def _process(
+    path: Path, root: Path, *, apply: bool, backup_root: Path
+) -> tuple[int, int, bool]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return 0, 0
+        return 0, 0, False
     rows = payload.get("memories") if isinstance(payload, dict) else None
     if not isinstance(rows, list):
-        return 0, 0
+        return 0, 0, False
 
     changes, collisions = _plan(rows)
     for row, new_key in changes:
@@ -93,15 +106,15 @@ def _process(path: Path, *, apply: bool) -> tuple[int, int]:
             f"{path}\n  SKIP {row.get('id')}: derived key already taken\n"
             f"    {row.get('value')}"
         )
-    if apply and changes:
-        for row, new_key in changes:
-            row["key"] = new_key
-            row["updated_at"] = datetime.now(UTC).isoformat()
-        path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
-    return len(changes), len(collisions)
+    if not (apply and changes):
+        return len(changes), len(collisions), False
+
+    _backup(path, root, backup_root)
+    for row, new_key in changes:
+        row["key"] = new_key
+        row["updated_at"] = datetime.now(UTC).isoformat()
+    write_json_file(path, payload)
+    return len(changes), len(collisions), True
 
 
 def main() -> int:
@@ -120,18 +133,26 @@ def main() -> int:
     args = parser.parse_args()
 
     files = _memory_files(args.root)
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    backup_root = args.root / f".rekey-backup-{stamp}"
     total_changes = 0
     total_collisions = 0
+    written = 0
     for path in files:
-        changes, collisions = _process(path, apply=args.apply)
+        changes, collisions, changed = _process(
+            path, args.root, apply=args.apply, backup_root=backup_root
+        )
         total_changes += changes
         total_collisions += collisions
+        written += int(changed)
 
     verb = "Re-keyed" if args.apply else "Would re-key"
     print(
         f"\n{verb} {total_changes} record(s) across {len(files)} file(s); "
         f"{total_collisions} collision(s) left untouched."
     )
+    if written:
+        print(f"Originals copied to {backup_root}")
     return 0
 
 
