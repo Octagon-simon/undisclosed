@@ -173,7 +173,7 @@ async def test_text_only_model_gets_paths_not_images(
     calls = []
     monkeypatch.setattr(IrisToolkit, "_run", _fake_run(calls))
     monkeypatch.setattr(
-        "app.agent.toolkit.iris_toolkit.vision_backend_for", lambda _agent: None
+        "app.agent.toolkit.shot_vision.vision_backend_for", lambda _agent: None
     )
     toolkit.model_type = "deepseek-chat"
 
@@ -344,14 +344,14 @@ class _FakeBackend:
 async def test_text_only_chat_model_is_read_by_the_vision_model(
     monkeypatch, toolkit, tmp_path
 ):
-    import app.agent.toolkit.iris_toolkit as iris_module
+    import app.agent.toolkit.shot_vision as shot_vision
 
     calls = []
     monkeypatch.setattr(IrisToolkit, "_run", _fake_run(calls))
     monkeypatch.setattr(
-        iris_module, "vision_backend_for", lambda _agent: _FakeBackend()
+        shot_vision, "vision_backend_for", lambda _agent: _FakeBackend()
     )
-    monkeypatch.setattr(iris_module, "ChatAgent", _FakeVisionAgent)
+    monkeypatch.setattr(shot_vision, "ChatAgent", _FakeVisionAgent)
     _FakeVisionAgent.calls = []
     toolkit.model_type = "deepseek-v4-flash"
     toolkit._agent = object()
@@ -378,14 +378,14 @@ async def test_text_only_chat_model_is_read_by_the_vision_model(
 async def test_vision_fallback_runs_without_a_bound_agent(
     monkeypatch, toolkit, tmp_path
 ):
-    import app.agent.toolkit.iris_toolkit as iris_module
+    import app.agent.toolkit.shot_vision as shot_vision
 
     calls = []
     monkeypatch.setattr(IrisToolkit, "_run", _fake_run(calls))
     monkeypatch.setattr(
-        iris_module, "vision_backend_for", lambda _agent: _FakeBackend()
+        shot_vision, "vision_backend_for", lambda _agent: _FakeBackend()
     )
-    monkeypatch.setattr(iris_module, "ChatAgent", _FakeVisionAgent)
+    monkeypatch.setattr(shot_vision, "ChatAgent", _FakeVisionAgent)
     toolkit.model_type = "deepseek-v4-flash"
     toolkit._agent = None
 
@@ -402,11 +402,11 @@ async def test_vision_fallback_runs_without_a_bound_agent(
 async def test_text_only_model_without_a_vision_model_says_so(
     monkeypatch, toolkit
 ):
-    import app.agent.toolkit.iris_toolkit as iris_module
+    import app.agent.toolkit.shot_vision as shot_vision
 
     calls = []
     monkeypatch.setattr(IrisToolkit, "_run", _fake_run(calls))
-    monkeypatch.setattr(iris_module, "vision_backend_for", lambda _agent: None)
+    monkeypatch.setattr(shot_vision, "vision_backend_for", lambda _agent: None)
     toolkit.model_type = "deepseek-v4-flash"
     toolkit._agent = object()
 
@@ -422,7 +422,7 @@ async def test_text_only_model_without_a_vision_model_says_so(
 async def test_vision_failure_falls_back_to_the_plain_message(
     monkeypatch, toolkit
 ):
-    import app.agent.toolkit.iris_toolkit as iris_module
+    import app.agent.toolkit.shot_vision as shot_vision
 
     calls = []
     monkeypatch.setattr(IrisToolkit, "_run", _fake_run(calls))
@@ -430,7 +430,7 @@ async def test_vision_failure_falls_back_to_the_plain_message(
     def boom(_agent):
         raise RuntimeError("no provider config")
 
-    monkeypatch.setattr(iris_module, "vision_backend_for", boom)
+    monkeypatch.setattr(shot_vision, "vision_backend_for", boom)
     toolkit.model_type = "deepseek-v4-flash"
     toolkit._agent = object()
 
@@ -453,14 +453,14 @@ class _FailingVisionAgent:
 async def test_vision_read_failure_is_reported_not_hidden(
     monkeypatch, toolkit, tmp_path
 ):
-    import app.agent.toolkit.iris_toolkit as iris_module
+    import app.agent.toolkit.shot_vision as shot_vision
 
     calls = []
     monkeypatch.setattr(IrisToolkit, "_run", _fake_run(calls))
     monkeypatch.setattr(
-        iris_module, "vision_backend_for", lambda _agent: _FakeBackend()
+        shot_vision, "vision_backend_for", lambda _agent: _FakeBackend()
     )
-    monkeypatch.setattr(iris_module, "ChatAgent", _FailingVisionAgent)
+    monkeypatch.setattr(shot_vision, "ChatAgent", _FailingVisionAgent)
     toolkit.model_type = "deepseek-v4-flash"
     toolkit._agent = object()
 
@@ -476,7 +476,7 @@ async def test_vision_read_failure_is_reported_not_hidden(
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_undecodable_shot_is_reported(monkeypatch, toolkit, tmp_path):
-    import app.agent.toolkit.iris_toolkit as iris_module
+    import app.agent.toolkit.shot_vision as shot_vision
 
     async def run(_self, args):
         Path(args[args.index("--out") + 1]).write_bytes(b"not a png")
@@ -484,7 +484,7 @@ async def test_undecodable_shot_is_reported(monkeypatch, toolkit, tmp_path):
 
     monkeypatch.setattr(IrisToolkit, "_run", run)
     monkeypatch.setattr(
-        iris_module, "vision_backend_for", lambda _agent: _FakeBackend()
+        shot_vision, "vision_backend_for", lambda _agent: _FakeBackend()
     )
     toolkit.model_type = "deepseek-v4-flash"
     toolkit._agent = object()

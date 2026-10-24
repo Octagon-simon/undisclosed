@@ -32,6 +32,7 @@ from camel.toolkits import (
     WebFetchToolkit,
 )
 
+from app.agent.toolkit.app_capture_toolkit import AppCaptureToolkit
 from app.agent.toolkit.code_query_toolkit import CodeQueryToolkit
 from app.agent.toolkit.code_review_toolkit import CodeReviewToolkit
 from app.agent.toolkit.code_search_toolkit import CodeSearchToolkit
@@ -100,6 +101,10 @@ DEFAULT_SINGLE_AGENT_TOOLKIT_CONFIG: dict[str, Any] = {
     # Live web-page camera (bundled iris binary). Deferred by default: it costs
     # one line in <loadable_capabilities> until a task actually needs pixels.
     "page_screenshot": {"enabled": True},
+    # Running-app camera: macOS app windows, booted iOS Simulators, Android
+    # devices. Off the tool list until a task asks for it (same deferral as the
+    # page camera), and advertised only when a backend exists on this host.
+    "app_screenshot": {"enabled": True},
     "skill": {"enabled": True},
     "todo": {"enabled": True},
     "memory": {"enabled": True},
@@ -347,6 +352,30 @@ async def _build_single_agent_iris(
     if agent is None:
         assembly.toolkits_to_register_agent.append(toolkit)
         assembly.add_tools(tools, IrisToolkit.toolkit_name())
+    else:
+        _register_lazy_toolkit(agent, toolkit)
+    return tools
+
+
+async def _build_single_agent_app_capture(
+    options, config, working_directory, message_integration, assembly, agent
+):
+    """Build + register the running-app camera. Nothing is captured at build
+    time, so this only costs the tool schemas once the model loads it."""
+    toolkit = AppCaptureToolkit(
+        options.project_id,
+        Agents.single_agent,
+        working_directory=working_directory,
+        model_type=getattr(options, "model_type", None),
+        model_platform=getattr(options, "model_platform", None),
+        **_options(config, "app_screenshot"),
+    )
+    registered = message_integration.register_toolkits(toolkit)
+    tools = registered.get_tools()
+    _tag_tools(tools, AppCaptureToolkit.toolkit_name())
+    if agent is None:
+        assembly.toolkits_to_register_agent.append(toolkit)
+        assembly.add_tools(tools, AppCaptureToolkit.toolkit_name())
     else:
         _register_lazy_toolkit(agent, toolkit)
     return tools
@@ -610,6 +639,29 @@ async def assemble_single_agent_toolkits(
                 "for %s-%s; run `npm run fetch:iris` and restart the brain.",
                 platform.system().lower(),
                 platform.machine().lower(),
+            )
+
+    # Same rule as the page camera: only advertise a capability that can
+    # actually produce a file here. Android-only hosts (Windows, Linux with
+    # adb) still qualify; a host with no backend at all does not.
+    if _enabled(config, "app_screenshot"):
+        if AppCaptureToolkit.available_backends():
+            if _lazy_single_agent_extras():
+                assembly.deferred_capabilities[
+                    AppCaptureToolkit.toolkit_name()
+                ] = lambda agent: _build_single_agent_app_capture(
+                    options, config, working_directory, message_integration,
+                    assembly, agent,
+                )
+            else:
+                await _build_single_agent_app_capture(
+                    options, config, working_directory, message_integration,
+                    assembly, None,
+                )
+        else:
+            logger.info(
+                "App Screenshots disabled: no window, simulator or Android "
+                "backend available on this host."
             )
 
     if _enabled(config, "skill"):

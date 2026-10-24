@@ -42,6 +42,7 @@ import {
   Rocket,
   Search,
   Sheet,
+  Smartphone,
   StickyNote,
   Terminal,
   User,
@@ -60,6 +61,7 @@ const toolkitIconMap: Record<string, LucideIcon> = {
   // Legacy label: sessions created before the rename still tag tools with it.
   'Screenshot Toolkit': Camera,
   'Page Screenshots': Camera,
+  'App Screenshots': Smartphone,
   'Py Auto Gui Toolkit': MousePointer,
 
   // Browser/Web

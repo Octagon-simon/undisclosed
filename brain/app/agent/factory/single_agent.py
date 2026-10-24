@@ -47,6 +47,12 @@ _CAPABILITY_ALIASES = {
     "read image": "Image Reader",
     "page screenshot": "Page Screenshots",
     "page camera": "Page Screenshots",
+    "app screenshot": "App Screenshots",
+    "app screenshots": "App Screenshots",
+    "app camera": "App Screenshots",
+    "simulator screenshot": "App Screenshots",
+    "mobile screenshot": "App Screenshots",
+    "device screenshot": "App Screenshots",
 }
 
 # Purpose hints for the capabilities the model kept confusing. Names alone made
@@ -54,6 +60,10 @@ _CAPABILITY_ALIASES = {
 _CAPABILITY_HINTS = {
     "Image Reader": "read an image file on disk, or capture the user's desktop",
     "Page Screenshots": "capture a live web page URL (including localhost)",
+    "App Screenshots": (
+        "capture a running app: macOS app window, iOS Simulator, or Android "
+        "device or emulator"
+    ),
 }
 
 

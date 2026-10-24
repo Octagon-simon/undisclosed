@@ -120,6 +120,7 @@ videos/
 .tmp-ocr.*
 
 # Scratch dumps from debugging/build runs (screenshots are already covered by *.png)
+.scratch/
 agent-progress*.html
 chat_history_preserve.txt
 COMMIT_MESSAGES.md

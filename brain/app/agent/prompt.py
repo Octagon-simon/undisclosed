@@ -1281,6 +1281,11 @@ The current date is {now_str}(Accurate to the hour). For any date-related tasks,
     load the `Page Screenshots` capability and call `capture_page`. One call
     can capture desktop + mobile + dark together, and the image comes back
     with the result.
+- To SEE a running app that is not a web page (an iOS app in the Simulator, an
+    Android app on a device or emulator, or a native macOS app window), load the
+    `App Screenshots` capability and call `capture_app`. Call
+    `list_capture_targets` first when you do not know the app or device name.
+    Do not pass a URL to it, and do not use the desktop capture for this.
 
 - When you complete your task, your final response must be a comprehensive
     summary of your findings, presented in a clear, detailed, and

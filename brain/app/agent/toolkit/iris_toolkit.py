@@ -15,7 +15,6 @@ single model step.
 """
 
 import asyncio
-import base64
 import hashlib
 import json
 import logging
@@ -28,17 +27,17 @@ import sys
 import tempfile
 from pathlib import Path
 
-from camel.agents import ChatAgent
-from camel.messages import BaseMessage
 from camel.toolkits import BaseToolkit, FunctionTool, RegisteredAgentToolkit
 from camel.utils.tool_result import ToolResult
-from PIL import Image
 
 from app.agent.toolkit.abstract_toolkit import AbstractToolkit
+from app.agent.toolkit.shot_vision import (
+    agent_sees_images,
+    describe_images,
+    load_images,
+)
 from app.component.environment import env
 from app.utils.listen.toolkit_listen import listen_toolkit
-from app.utils.model_capabilities import model_supports_vision
-from app.utils.vision_backend import vision_backend_for
 
 logger = logging.getLogger("iris_toolkit")
 
@@ -215,7 +214,9 @@ class IrisToolkit(BaseToolkit, RegisteredAgentToolkit, AbstractToolkit):
         r"""Capture a live web page to PNG, then see it.
 
         Use this to verify rendered UI: after building or editing a page, to
-        check layout, spacing, theme, or responsive breakpoints. The shot is
+        check layout, spacing, theme, or responsive breakpoints. Web pages
+        only: for a native app, a Simulator, or an Android device load App
+        Screenshots and call `capture_app`. The shot is
         attached to your context when your model can see images, so one call
         is enough. When your model is text-only but a vision model is
         configured, that model reads each shot and its description is
@@ -495,94 +496,21 @@ class IrisToolkit(BaseToolkit, RegisteredAgentToolkit, AbstractToolkit):
     async def _describe_images(
         self, shots: list[dict]
     ) -> tuple[str, str] | None:
-        # the chat model is text-only; let the configured image model read them.
-        # vision_backend_for accepts a missing agent: it resolves the configured
-        # image model first and only then falls back to the agent's backend.
-        try:
-            backend = vision_backend_for(self._agent)
-        except Exception:
-            logger.warning("vision backend lookup failed", exc_info=True)
-            return None
-        if backend is None:
-            return None
-
-        raw_name = getattr(backend, "model_type", None)
-        vision_model = str(
-            getattr(raw_name, "value", raw_name) or "vision model"
+        # the chat model is text-only; let the configured image model read them
+        return await describe_images(
+            self._agent,
+            [
+                {"path": shot["path"], "label": shot.get("viewport")}
+                for shot in shots
+            ],
+            prompt=_READ_PROMPT,
+            limit=_MAX_ATTACHED,
         )
 
-        async def describe(shot: dict) -> str | None:
-            try:
-                with Image.open(shot["path"]) as handle:
-                    image = handle.convert("RGB")
-            except (OSError, ValueError) as exc:
-                logger.warning("cannot open %s: %s", shot["path"], exc)
-                return None
-            message = BaseMessage.make_user_message(
-                role_name="User", content=_READ_PROMPT, image_list=[image]
-            )
-            extra = {}
-            step_timeout = getattr(self._agent, "step_timeout", None)
-            if step_timeout:
-                extra["step_timeout"] = step_timeout
-            try:
-                vision_agent = ChatAgent(
-                    system_message=(
-                        "You are a careful visual assistant. Describe only "
-                        "what is actually visible in the image."
-                    ),
-                    model=backend,
-                    tools=[],
-                    **extra,
-                )
-                response = await vision_agent.astep(message)
-            except Exception:
-                logger.warning(
-                    "vision read of %s failed", shot["path"], exc_info=True
-                )
-                return None
-            msg = getattr(response, "msg", None)
-            if msg is not None and getattr(msg, "content", None):
-                return str(msg.content).strip()
-            msgs = getattr(response, "msgs", None)
-            if msgs and getattr(msgs[0], "content", None):
-                return str(msgs[0].content).strip()
-            return None
-
-        selected = shots[:_MAX_ATTACHED]
-        parts = await asyncio.gather(*(describe(shot) for shot in selected))
-        described = [
-            f"- {shot['viewport']}: {text}"
-            for shot, text in zip(selected, parts)
-            if text
-        ]
-        return vision_model, "\n".join(described)
-
     def _load_images(self, shots: list[dict]) -> list[str]:
-        images: list[str] = []
-        for shot in shots[:_MAX_ATTACHED]:
-            try:
-                data = Path(shot["path"]).read_bytes()
-            except OSError:
-                continue
-            if not data:
-                continue
-            suffix = Path(shot["path"]).suffix.lower().lstrip(".") or "png"
-            mime = "jpeg" if suffix in {"jpg", "jpeg"} else suffix
-            images.append(
-                f"data:image/{mime};base64," + base64.b64encode(data).decode()
-            )
-        return images
+        return load_images(shots, limit=_MAX_ATTACHED)
 
     def _agent_sees_images(self) -> bool:
-        if self.model_type or self.model_platform:
-            return model_supports_vision(self.model_platform, self.model_type)
-        try:
-            # Only reached when the constructor got no model identity. Unwrap
-            # ModelType so enum and string backends match the same markers.
-            backend = self.agent.model_backend if self.agent else None
-            model_type = getattr(backend, "model_type", None)
-            value = getattr(model_type, "value", model_type)
-            return model_supports_vision(None, str(value) if value else None)
-        except Exception:
-            return False
+        return agent_sees_images(
+            self._agent, self.model_type, self.model_platform
+        )

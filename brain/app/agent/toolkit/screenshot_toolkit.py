@@ -65,8 +65,10 @@ class ScreenshotToolkit(BaseScreenshotToolkit, AbstractToolkit):
 
         Use this for a saved PNG/JPG/WebP: a diagram, a previous screenshot,
         a chart the task produced. It captures nothing. For a live web page
-        load Page Screenshots and call `capture_page`; to capture the user's
-        desktop screen call `take_screenshot_and_read_image`.
+        load Page Screenshots and call `capture_page`; for a running app
+        (Simulator, Android device, macOS window) load App Screenshots and
+        call `capture_app`; to capture the user's whole desktop screen call
+        `take_screenshot_and_read_image`.
 
         Args:
             image_path (str): Path to the image file.
