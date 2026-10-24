@@ -112,3 +112,139 @@ def test_no_user_key_is_safe(tmp_path):
         api_task_id="project_x", user_key=None, space_id=None, store=store
     )
     assert "cumulative" not in toolkit.recall_turns(3).lower()
+
+
+def test_rule_is_saved_when_the_request_omits_space_id(tmp_path, monkeypatch):
+    """A chat may send no space_id; a rule must still reach the always-on store.
+
+    RunContext resolves the space as ``space_id or project_id``, so the toolkit
+    has to do the same or the structured write fails while the index succeeds.
+    """
+    from app.agent.toolkit import memory_toolkit as mt_mod
+    from app.memory.hybrid.rules import read_active_rules
+
+    monkeypatch.setattr(mt_mod.semantic_store, "remember", lambda *a, **k: None)
+    store = LocalMemoryStore(root=tmp_path)
+    toolkit = MemoryToolkit(
+        api_task_id="project_x", user_key="user_42", space_id=None, store=store
+    )
+
+    result = toolkit.remember_fact(
+        fact="Always run the license header check before committing",
+        kind="rule",
+        scope="global",
+        key="",
+        category="licensing",
+    )
+
+    assert result == "Saved to memory."
+    rules = read_active_rules(
+        store,
+        user_key="user_42",
+        space_id="project_x",
+        project_id="project_x",
+        conversation_id="project_x",
+    )
+    assert [r.value for r in rules] == [
+        "Always run the license header check before committing"
+    ]
+    assert rules[0].severity == "hard"
+    assert rules[0].scope_type == "global"
+
+
+def test_rule_write_failure_names_the_reason(tmp_path, monkeypatch):
+    from app.agent.toolkit import memory_toolkit as mt_mod
+
+    monkeypatch.setattr(mt_mod.semantic_store, "remember", lambda *a, **k: None)
+    store = LocalMemoryStore(root=tmp_path)
+    toolkit = MemoryToolkit(
+        api_task_id="project_x", user_key=None, space_id="space_x", store=store
+    )
+
+    result = toolkit.remember_fact(
+        fact="Always run the license header check before committing",
+        kind="rule",
+        scope="global",
+        key="",
+        category="licensing",
+    )
+
+    #not the old blanket "store was unavailable": the reason is the user key.
+    assert "no user key" in result
+
+
+def test_rule_write_exception_is_reported_not_raised(tmp_path, monkeypatch):
+    from app.agent.toolkit import memory_toolkit as mt_mod
+
+    monkeypatch.setattr(mt_mod.semantic_store, "remember", lambda *a, **k: None)
+
+    def _boom(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(mt_mod.GlobalMemoryStore, "apply_ops", _boom)
+    store = LocalMemoryStore(root=tmp_path)
+    toolkit = MemoryToolkit(
+        api_task_id="project_x", user_key="user_42", space_id="space_x", store=store
+    )
+
+    result = toolkit.remember_fact(
+        fact="Always run the license header check before committing",
+        kind="rule",
+        scope="global",
+        key="",
+        category="licensing",
+    )
+
+    assert "store write raised OSError" in result
+
+
+def test_restated_legacy_rule_reports_saved_and_is_not_duplicated(
+    tmp_path, monkeypatch
+):
+    from app.agent.toolkit import memory_toolkit as mt_mod
+    from app.memory.hybrid.schema import MemoryOp
+    from app.memory.hybrid.scope import GlobalMemoryStore
+
+    monkeypatch.setattr(mt_mod.semantic_store, "remember", lambda *a, **k: None)
+    store = LocalMemoryStore(root=tmp_path)
+    GlobalMemoryStore(store).apply_ops(
+        "user_42",
+        "space_x",
+        "project_x",
+        [
+            MemoryOp(
+                op="UPSERT",
+                type="constraint",
+                key="license_rule_reminder",
+                value="always remember the previously given license rule",
+            )
+        ],
+        conversation_id="project_x",
+        now="2026-01-01T00:00:00+00:00",
+        scope_type="global",
+        scope_id="user_42",
+        user_id="user_42",
+    )
+    toolkit = MemoryToolkit(
+        api_task_id="project_x", user_key="user_42", space_id="space_x", store=store
+    )
+
+    result = toolkit.remember_fact(
+        fact="always remember the previously given license rule",
+        kind="rule",
+        scope="global",
+        key="",
+        category="licensing",
+    )
+
+    assert result == "Saved to memory."
+    active = [
+        m
+        for m in GlobalMemoryStore(store).read_active_memories(
+            "user_42", "space_x", "project_x"
+        )
+        if m.type == "constraint"
+    ]
+    assert len(active) == 1
+    assert active[0].key == "license_rule_reminder"
+    assert active[0].severity == "hard"

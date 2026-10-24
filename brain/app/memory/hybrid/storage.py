@@ -40,8 +40,10 @@ from typing import Any
 
 from app.memory.hybrid import canonical
 from app.memory.hybrid.schema import (
+    ENFORCEMENT_MODES,
     MEMORY_TYPES,
     SCOPE_PROJECT,
+    SEVERITIES,
     Episode,
     MemoryOp,
     StructuredMemory,
@@ -266,6 +268,14 @@ class HybridStore:
                 # record by id and legitimately have no type of their own.
                 if (op.type or "").lower() not in MEMORY_TYPES:
                     return False
+                # An empty value means "leave the default"; an unknown one is a
+                # malformed proposal and is dropped like an unknown type.
+                severity = (op.severity or "").strip().lower()
+                if severity and severity not in SEVERITIES:
+                    return False
+                enforcement = (op.enforcement or "").strip().lower()
+                if enforcement and enforcement not in ENFORCEMENT_MODES:
+                    return False
             elif name not in {"SUPERSEDE", "DELETE", "MERGE"}:
                 return False
             return _has_provenance(op)
@@ -308,6 +318,27 @@ class HybridStore:
                 return memory
         return None
 
+    @staticmethod
+    def _existing_by_value(
+        by_id: dict[str, StructuredMemory], memory_type: str, value: str
+    ) -> StructuredMemory | None:
+        """Active record with the same wording, whatever its key.
+
+        Legacy constraints were stored under human keys (``license_rule``) or the
+        shared ``constraint`` key. Matching on wording first means a restatement
+        merges into that record instead of creating a near-duplicate rule.
+        """
+
+        wanted = canonical.normalize_wording(value)
+        if not wanted:
+            return None
+        for memory in by_id.values():
+            if memory.status != "active" or memory.type != memory_type:
+                continue
+            if canonical.normalize_wording(memory.value) == wanted:
+                return memory
+        return None
+
     def _apply_upsert(
         self,
         by_id: dict[str, StructuredMemory],
@@ -324,7 +355,15 @@ class HybridStore:
             return
         key = canonical.normalize_key(op.key) or canonical.normalize_key(op.type)
         existing = self._existing_active(by_id, op.type, key)
+        if existing is None and (op.type or "").lower() == "constraint":
+            existing = self._existing_by_value(by_id, "constraint", value)
+            if existing is not None:
+                key = existing.key
         sources = list(op.source_message_ids)
+        severity = (op.severity or "").strip().lower()
+        enforcement = (op.enforcement or "").strip().lower()
+        category = (op.category or "").strip().lower()
+        original = (op.original_text or "").strip()
         # A brand-new record inherits the scope of the write (§2, §6, §23): a
         # global write lands user-level, a project write lands project-level,
         # and a conversation write stays in its thread. ``origin_project_id`` is
@@ -349,12 +388,19 @@ class HybridStore:
                 source_message_ids=sources,
                 created_at=now,
                 updated_at=now,
+                severity=severity or "soft",
+                enforcement=enforcement or "prompt",
+                category=category,
+                original_text=original or value,
+                last_confirmed_at=now,
                 **stamp,
             )
             by_id[record.id] = record
             return
         if existing.value.strip().lower() == value.lower():
             # Idempotent re-statement: refresh provenance + timestamps only.
+            # Repeating a rule is also the signal that promotes it to hard and
+            # bumps ``last_confirmed_at`` ("I've told you five times").
             merged_sources = list(
                 dict.fromkeys([*existing.source_message_ids, *sources])
             )
@@ -364,6 +410,17 @@ class HybridStore:
                     "source_message_ids": merged_sources,
                     "confidence": max(existing.confidence, op.confidence),
                     "updated_at": now,
+                    "severity": (
+                        "hard"
+                        if "hard" in (existing.severity, severity)
+                        else (existing.severity or "soft")
+                    ),
+                    "enforcement": (
+                        enforcement or existing.enforcement or "prompt"
+                    ),
+                    "category": category or existing.category,
+                    "original_text": existing.original_text or original,
+                    "last_confirmed_at": now,
                 }
             )
             return
@@ -387,6 +444,11 @@ class HybridStore:
             source_message_ids=sources,
             created_at=now,
             updated_at=now,
+            severity=severity or "soft",
+            enforcement=enforcement or "prompt",
+            category=category,
+            original_text=original or value,
+            last_confirmed_at=now,
             **stamp,
         )
         by_id[record.id] = record

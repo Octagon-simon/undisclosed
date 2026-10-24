@@ -496,8 +496,8 @@ const PAST_TO_GERUND: Record<string, string> = {
   Processed: 'Processing',
   Counted: 'Counting',
   Viewed: 'Viewing',
-  Remembered: 'Remembering',
-  Recalled: 'Recalling',
+  'Written to memory': 'Writing to memory',
+  'Recalled from memory': 'Recalling from memory',
   'Loaded skill': 'Loading skill',
   Visited: 'Visiting',
   Clicked: 'Clicking',
@@ -664,17 +664,11 @@ export function classifyToolItem(item: ToolItem): ActivityItem {
     // MemoryToolkit · remember_fact / recall_facts
     category = 'memory';
     if (method.includes('remember')) {
-      verb = 'Remembered';
-      object =
-        extractParam(item.input, ['fact', 'text']) ||
-        truncate(item.input, 60) ||
-        'a fact';
+      verb = 'Written to memory';
+      object = '';
     } else {
-      verb = 'Recalled';
-      object =
-        extractParam(item.input, ['query', 'q']) ||
-        truncate(item.input, 60) ||
-        'from memory';
+      verb = 'Recalled from memory';
+      object = '';
     }
   } else if (
     toolkit.includes('diff') ||
@@ -741,7 +735,9 @@ export function classifyToolItem(item: ToolItem): ActivityItem {
   // Prefer the agent's own message_title/description as the label — but not for
   // file rows, whose object is a click-to-open filename we must keep.
   const narrated =
-    filePath || capabilities ? null : labelFromNarration(item.input);
+    filePath || capabilities || category === 'memory'
+      ? null
+      : labelFromNarration(item.input);
   if (narrated) {
     verb = narrated.verb;
     object = narrated.object;
@@ -836,7 +832,7 @@ const CATEGORY_NOUNS: Record<
   search: ['search', 'searches'],
   browser: ['browser action', 'browser actions'],
   shell: ['command', 'commands'],
-  memory: ['memory', 'memories'],
+  memory: ['memory write', 'memory writes'],
   mcp: ['connector action', 'connector actions'],
   capabilities: ['capability loaded', 'capabilities loaded'],
 };

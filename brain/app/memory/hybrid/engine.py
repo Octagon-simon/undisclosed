@@ -43,17 +43,16 @@ from app.memory.events import ConversationEvent
 from app.memory.hybrid import (
     assembler,
     extractor,
+    jobs as jobs_mod,
     lexical,
     llm_extract,
     ranking,
+    resolver as resolver_mod,
     router,
+    scope as scope_mod,
+    text as T,
     vector,
 )
-from app.memory.hybrid import jobs as jobs_mod
-from app.memory.hybrid import resolver as resolver_mod
-from app.memory.hybrid import scope as scope_mod
-from app.memory.hybrid import text as T
-from app.memory.hybrid.project import ProjectStore
 from app.memory.hybrid.config import (
     LLM_EXTRACTION_OFF,
     LLM_EXTRACTION_WRITE,
@@ -61,6 +60,7 @@ from app.memory.hybrid.config import (
     durable_jobs,
     exact_top_k,
     extraction_enabled,
+    hard_threshold,
     lexical_top_k,
     llm_extraction_mode,
     llm_extraction_turn_ops,
@@ -68,9 +68,9 @@ from app.memory.hybrid.config import (
     rerank_top_k,
     semantic_top_k,
     soft_threshold,
-    hard_threshold,
     token_estimate,
 )
+from app.memory.hybrid.project import ProjectStore
 from app.memory.hybrid.schema import (
     LEVEL_BROAD,
     LEVEL_RECENT,
@@ -608,6 +608,8 @@ def build_context(
     token_budget: int,
     events: list[ConversationEvent] | None = None,
     explicit_project_id: str = "",
+    rules: list[StructuredMemory] | None = None,
+    recall_check: bool = False,
 ) -> str:
     """Retrieve + assemble the tagged context block. Empty string when nothing."""
 
@@ -623,7 +625,11 @@ def build_context(
         explicit_project_id=explicit_project_id,
     )
     rendered = assembler.assemble(
-        result, recent_events=recent_events, token_budget=token_budget
+        result,
+        recent_events=recent_events,
+        token_budget=token_budget,
+        rules=rules,
+        recall_check=recall_check,
     )
     result.diagnostics["final_token_estimate"] = token_estimate(rendered)
     return rendered

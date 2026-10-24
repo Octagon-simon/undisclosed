@@ -718,7 +718,8 @@ async def assemble_single_agent_toolkits(
         memory_toolkit = MemoryToolkit(
             api_task_id=options.project_id,
             user_key=memory_user_key,
-            space_id=options.space_id,
+            #same resolution as RunContext: a request may omit space_id
+            space_id=options.space_id or options.project_id,
         )
         assembly.add_tools(
             memory_toolkit.get_tools(), MemoryToolkit.toolkit_name()

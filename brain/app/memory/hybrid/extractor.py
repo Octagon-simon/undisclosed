@@ -38,13 +38,12 @@ from dataclasses import dataclass
 from typing import Iterable
 
 from app.memory.events import ConversationEvent
-from app.memory.hybrid import canonical
-from app.memory.hybrid import text as T
-from app.memory.hybrid.schema import Episode, MemoryOp, WorkingMemory
+from app.memory.hybrid import canonical, text as T
 from app.memory.hybrid.config import (
     episode_max_turns,
     episode_summary_max_chars,
 )
+from app.memory.hybrid.schema import Episode, MemoryOp, WorkingMemory
 
 # ----- Eviction planning (§5-6) -----
 
@@ -507,10 +506,13 @@ def propose_memory_ops(
         for pattern in _CONSTRAINT_RES:
             for match in pattern.finditer(text):
                 value = _clean_value(f"not {match.group('value')}")
-                key = _key_from_text(text) or "constraint"
                 op = _make_op(
-                    "constraint", _constraint_key(key, value), value, event
+                    "constraint",
+                    canonical.rule_key(value),
+                    value,
+                    event,
                 )
+                op.original_text = _sentence_at(text, match.start())
                 _remember(ops, seen, op)
 
         for pattern in _PREFERENCE_RES:
@@ -533,8 +535,28 @@ def propose_memory_ops(
     return ops
 
 
-def _constraint_key(key: str, value: str) -> str:
-    return key if key and key != "constraint" else "constraint"
+def _sentence_at(text: str, index: int, *, max_chars: int = 400) -> str:
+    """The sentence containing ``index``, verbatim (for ``original_text``)."""
+
+    start = max(
+        text.rfind(". ", 0, index),
+        text.rfind("! ", 0, index),
+        text.rfind("? ", 0, index),
+        text.rfind("\n", 0, index),
+    )
+    start = 0 if start < 0 else start + 1
+    ends = [
+        pos
+        for pos in (
+            text.find(". ", index),
+            text.find("! ", index),
+            text.find("? ", index),
+            text.find("\n", index),
+        )
+        if pos >= 0
+    ]
+    end = min(ends) + 1 if ends else len(text)
+    return T.truncate(text[start:end].strip(), max_chars)
 
 
 def _make_op(

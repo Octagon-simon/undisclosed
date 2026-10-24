@@ -49,6 +49,7 @@ from app.memory import (
     build_durable_context_for_task_lock,
     finalize_task_lock_run_memory,
     read_rolling_summary_for_task_lock,
+    record_turn_rules,
 )
 from app.model.chat import Chat, sse_json
 from app.model.enums import Status
@@ -232,6 +233,13 @@ def _build_single_agent_context(
     current_user_prompt: str = "",
     memory_enabled: bool = True,
 ) -> str:
+    # 0. Persist any standing rule stated in this message before assembly, so
+    #    the rule is in the prompt for the very turn that stated it.
+    try:
+        record_turn_rules(task_lock, current_user_prompt)
+    except Exception:  # noqa: BLE001 - memory must never break the turn
+        pass
+
     # 1. Durable cross-restart context from LocalMemoryStore (M4 path).
     durable = build_durable_context_for_task_lock(
         task_lock,

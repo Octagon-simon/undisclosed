@@ -78,7 +78,7 @@ function extractPromptBlocks(content: string): { promptBlocks: PromptBlock[]; cl
     const rawBlock = cleaned.slice(rememberedStart, rememberedEnd + '</remembered_facts>'.length);
     const innerContent = cleaned.slice(rememberedStart + '<remembered_facts>'.length, rememberedEnd).trim();
     promptBlocks.push({
-      title: 'Remembered Facts',
+      title: 'Memory',
       content: innerContent,
     });
     cleaned = cleaned.replace(rawBlock, '');

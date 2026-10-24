@@ -148,11 +148,11 @@ class TestRecoveryFlag:
     def test_default_follows_the_master_hybrid_switch(self, monkeypatch):
         monkeypatch.delenv("UNDISCLOSED_HYBRID_JOB_RECOVERY", raising=False)
         monkeypatch.delenv("UNDISCLOSED_HYBRID_MEMORY", raising=False)
-        assert config.recover_jobs_on_startup() is False
-        monkeypatch.setenv("UNDISCLOSED_HYBRID_MEMORY", "1")
         assert config.recover_jobs_on_startup() is True
-        monkeypatch.setenv("UNDISCLOSED_HYBRID_JOB_RECOVERY", "0")
+        monkeypatch.setenv("UNDISCLOSED_HYBRID_MEMORY", "0")
         assert config.recover_jobs_on_startup() is False
+        monkeypatch.setenv("UNDISCLOSED_HYBRID_JOB_RECOVERY", "1")
+        assert config.recover_jobs_on_startup() is True
 
 
 class TestDurableSchedule:

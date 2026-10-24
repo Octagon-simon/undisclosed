@@ -1,4 +1,5 @@
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+# Portions Copyright 2026 Simon Ugorji. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -64,6 +65,7 @@ from app.memory import (
     build_durable_context_for_task_lock,
     finalize_task_lock_run_memory,
     read_rolling_summary_for_task_lock,
+    record_turn_rules,
 )
 from app.model.chat import Chat, NewAgent, Status, TaskContent, sse_json
 from app.model.subscription_runtime import is_subscription_auth
@@ -440,6 +442,10 @@ def build_context_for_workforce(
     still appended afterward because it is the live state for the current
     session and may contain turns not yet flushed to disk.
     """
+    try:
+        record_turn_rules(task_lock, task_content or "")
+    except Exception:  # noqa: BLE001 - memory must never break the turn
+        pass
     durable = build_durable_context_for_task_lock(
         task_lock,
         mode="workforce_coordinator",
@@ -2750,7 +2756,8 @@ async def construct_workforce(
             mt = MemoryToolkit(
                 api_task_id=options.project_id,
                 user_key=mem_user_key,
-                space_id=options.space_id,
+                #same resolution as RunContext: a request may omit space_id
+                space_id=options.space_id or options.project_id,
             )
             return list(mt.get_tools()), [MemoryToolkit.toolkit_name()]
         except Exception:  # noqa: BLE001

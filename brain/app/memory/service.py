@@ -41,9 +41,6 @@ from typing import Any, Literal
 
 from app.memory import rolling_summary
 from app.memory.context_builder import ContextMode, ProjectContextBuilder
-from app.memory.hybrid import config as hybrid_config
-from app.memory.hybrid import engine as hybrid_engine
-from app.memory.hybrid.storage import HybridStore
 from app.memory.events import (
     ConversationEvent,
     MemoryArtifact,
@@ -53,6 +50,20 @@ from app.memory.events import (
     SpaceMemory,
     ToolEvent,
 )
+from app.memory.hybrid import (
+    config as hybrid_config,
+    engine as hybrid_engine,
+    rule_detect,
+    rules as rules_mod,
+)
+from app.memory.hybrid.schema import (
+    SCOPE_CONVERSATION,
+    SCOPE_GLOBAL,
+    SCOPE_PROJECT,
+    MemoryOp,
+)
+from app.memory.hybrid.scope import GlobalMemoryStore
+from app.memory.hybrid.storage import HybridStore
 from app.memory.local_store import LocalMemoryStore
 from app.memory.paths import canonical_user_id
 from app.run_context import RunContext
@@ -104,6 +115,20 @@ def _default_memory_token_budget() -> int:
         return 8000
 
 
+def _turn_index(task_lock: Any) -> int:
+    """1-based index of the turn being built, from existing state (no counter)."""
+
+    history = getattr(task_lock, "conversation_history", None) or []
+    if not isinstance(history, list):
+        return 0
+    user_turns = sum(
+        1
+        for entry in history
+        if isinstance(entry, dict) and entry.get("role") == "user"
+    )
+    return user_turns + 1
+
+
 def build_durable_context_for_task_lock(
     task_lock: Any,
     *,
@@ -145,6 +170,21 @@ def build_durable_context_for_task_lock(
         else _default_memory_token_budget()
     )
 
+    # Standing rules are loaded unconditionally, before (and independently of)
+    # query retrieval. No cache: a stale or empty cache is how a rule gets lost.
+    conversation_id = run_context.project_id
+    rules = rules_mod.read_active_rules(
+        service.store,
+        user_key=user_key,
+        space_id=run_context.space_id,
+        project_id=run_context.project_id,
+        conversation_id=conversation_id,
+    )
+    probe = rules_mod.should_probe(rules, _turn_index(task_lock))
+    rules_block = rules_mod.render_rules_block(
+        rules, budget_chars=int(budget * 0.15 * 4)
+    )
+
     # Hybrid path (§19, §45): when enabled, the hybrid engine runs the routed,
     # parallel retrieval and assembles a tagged context block. Best-effort: an
     # empty/failed result falls through to the durable-bundle path below.
@@ -156,6 +196,8 @@ def build_durable_context_for_task_lock(
             project_id=run_context.project_id,
             query=current_user_prompt or "",
             token_budget=budget,
+            rules=rules,
+            recall_check=probe,
         )
         if hybrid_fragment:
             facts_section = (
@@ -211,9 +253,107 @@ def build_durable_context_for_task_lock(
         else None
     )
 
-    if base and facts_section:
-        return f"{base}\n\n{facts_section}"
-    return base or facts_section or None
+    # The non-hybrid path renders the same rule block, so behaviour does not
+    # depend on the master switch being on.
+    probe_block = (
+        rules_mod.render_recall_check(empty_block=not rules) if probe else ""
+    )
+    return (
+        "\n\n".join(
+            part for part in (rules_block, probe_block, base, facts_section) if part
+        )
+        or None
+    )
+
+
+def record_turn_rules(task_lock: Any, user_prompt: str) -> int:
+    """Persist standing rules stated in the incoming message (same turn).
+
+    Call this BEFORE building the context for the turn: detect, write through
+    ``apply_ops``, then load, so the rule is in the prompt that answers the
+    message that stated it. Returns the number of rules actually present after
+    the write; a failed write is logged and contributes zero, never a claim.
+    """
+
+    run_context = getattr(task_lock, "run_context", None)
+    service = getattr(task_lock, "memory_service", None)
+    store = getattr(service, "store", None)
+    if run_context is None or store is None:
+        return 0
+    try:
+        user_key = canonical_user_id(
+            run_context.user_id, email=run_context.email
+        )
+    except ValueError:
+        return 0
+
+    candidates = rule_detect.detect(user_prompt or "")
+    if not candidates:
+        return 0
+
+    project_id = run_context.project_id
+    space_id = run_context.space_id or project_id
+    conversation_id = project_id
+    now = _utc_now()
+    written = 0
+
+    for candidate in candidates:
+        if candidate.scope == SCOPE_GLOBAL:
+            target = GlobalMemoryStore(store)
+            scope_type, scope_id, user_id = (
+                SCOPE_GLOBAL,
+                user_key,
+                user_key,
+            )
+        elif candidate.scope == SCOPE_CONVERSATION:
+            target = HybridStore(store)
+            scope_type, scope_id, user_id = (
+                SCOPE_CONVERSATION,
+                conversation_id,
+                "",
+            )
+        else:
+            target = HybridStore(store)
+            scope_type, scope_id, user_id = (SCOPE_PROJECT, project_id, "")
+        op = MemoryOp(
+            op="UPSERT",
+            type="constraint",
+            key=candidate.key,
+            value=candidate.text,
+            confidence=candidate.confidence,
+            importance=0.9 if candidate.severity == "hard" else 0.7,
+            severity=candidate.severity,
+            enforcement="prompt",
+            category=candidate.category,
+            original_text=candidate.original,
+        )
+        try:
+            updated = target.apply_ops(
+                user_key,
+                space_id,
+                project_id,
+                [op],
+                conversation_id=conversation_id,
+                now=now,
+                scope_type=scope_type,
+                scope_id=scope_id,
+                user_id=user_id,
+            )
+        except Exception:  # noqa: BLE001 - never break the turn on a write
+            logger.warning(
+                "rules: write failed; continuing without rule",
+                extra={"project_id": project_id},
+                exc_info=True,
+            )
+            continue
+        wanted = candidate.text.strip().lower()
+        if any(
+            memory.status == "active"
+            and memory.value.strip().lower() == wanted
+            for memory in updated
+        ):
+            written += 1
+    return written
 
 
 def _build_semantic_recall_section(
@@ -248,6 +388,8 @@ def _build_hybrid_context_section(
     project_id: str,
     query: str,
     token_budget: int,
+    rules: list[Any] | None = None,
+    recall_check: bool = False,
 ) -> str | None:
     """Run the hybrid retrieval + assembler for one turn. None on failure/empty.
 
@@ -265,6 +407,8 @@ def _build_hybrid_context_section(
             conversation_id=project_id,
             query=query,
             token_budget=token_budget,
+            rules=rules,
+            recall_check=recall_check,
         )
     except Exception:  # noqa: BLE001 — best-effort read
         logger.warning(

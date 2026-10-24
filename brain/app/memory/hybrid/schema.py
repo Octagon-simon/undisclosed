@@ -42,6 +42,22 @@ SCHEMA_VERSION: int = 1
 MEMORY_TYPES = ("fact", "preference", "decision", "constraint", "goal")
 MEMORY_STATUSES = ("active", "superseded", "deleted")
 
+# A "persistent rule" is a ``constraint`` with these extra dimensions. They are
+# data, not behaviour: ``severity`` lets the assembler say "non-negotiable", and
+# ``enforcement``/``guard`` are reserved so a future tool-boundary guard is
+# additive rather than another migration.
+SEVERITIES = ("hard", "soft")
+ENFORCEMENT_MODES = ("prompt", "tool_guard", "both")
+RULE_CATEGORIES = (
+    "licensing",
+    "security",
+    "coding",
+    "workflow",
+    "product",
+    "privacy",
+    "other",
+)
+
 # Explicit memory scope (``memory-cross-session-feature.md`` §2, §6, §23). Scope
 # is what lets a brand-new thread tell "this belongs to this one chat" apart from
 # "this is a durable user-level fact" and "this belongs to a recurring project".
@@ -144,6 +160,14 @@ class StructuredMemory:
     scope_id: str = ""
     user_id: str = ""
     importance: float = 0.5
+    # Rule fields. Older records load unchanged and default to soft/prompt, so
+    # no migration is needed to read an existing ``memories.json``.
+    severity: str = "soft"
+    enforcement: str = "prompt"
+    category: str = ""
+    original_text: str = ""
+    last_confirmed_at: str = ""
+    guard: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -318,6 +342,12 @@ class MemoryOp:
     # know the user/project/conversation ids themselves.
     scope_type: str = ""
     scope_id: str = ""
+    # Rule metadata, carried by the proposal so the mutation gate stamps the
+    # record without re-deriving anything from the conversation.
+    severity: str = ""
+    enforcement: str = ""
+    category: str = ""
+    original_text: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

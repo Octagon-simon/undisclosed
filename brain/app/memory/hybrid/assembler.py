@@ -30,13 +30,14 @@ carries empty scaffolding.
 from __future__ import annotations
 
 from app.memory.events import ConversationEvent
-from app.memory.hybrid import text as T
+from app.memory.hybrid import rules as rules_mod, text as T
 from app.memory.hybrid.config import section_budget_fractions, token_estimate
 from app.memory.hybrid.schema import (
     LEVEL_EXACT,
     LEVEL_RECENT,
     RetrievalResult,
     RetrievedItem,
+    StructuredMemory,
 )
 
 _INSTRUCTIONS = (
@@ -168,6 +169,8 @@ def assemble(
     recent_events: list[ConversationEvent],
     token_budget: int,
     include_instructions: bool = True,
+    rules: list[StructuredMemory] | None = None,
+    recall_check: bool = False,
 ) -> str:
     """Render the retrieved state into the tagged context block.
 
@@ -190,6 +193,17 @@ def assemble(
                 ),
             )
         )
+
+    blocks.append(
+        rules_mod.render_rules_block(
+            rules or [],
+            budget_chars=_char_budget(
+                token_budget, fractions.get("persistent_rules", 0.15)
+            ),
+        )
+    )
+    if recall_check:
+        blocks.append(rules_mod.render_recall_check(empty_block=not rules))
 
     historical = _render_episodes(
         result.episodes, _char_budget(token_budget, fractions["historical"])

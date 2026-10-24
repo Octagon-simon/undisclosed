@@ -4,8 +4,10 @@
 #
 # Enforce attribution on the areas this repo changes:
 #   - every source file carries a copyright header in its first 4 lines
-#   - new files name Simon Ugorji within the first 15 lines
-#   - modified upstream files carry a "Portions Copyright ... Simon Ugorji" line
+#   - a file we created carries Simon's copyright as line 1, no Portions line
+#   - a pre-existing file that already had a copyright header keeps line 1 and
+#     gets "Portions Copyright 2026 Simon Ugorji. All Rights Reserved." as line 2
+#   - a pre-existing file with no copyright header gets Simon's banner
 #   - files in simon-owned-files.txt carry the Simon banner only
 #   - no file repeats the Simon attribution
 #
@@ -100,20 +102,57 @@ if [ "$count" -eq 0 ]; then
   exit 1
 fi
 
-# 3. New files must name Simon. Both banners are fine: the Eigent block comes
-#    from the neighbouring file, the Portions line marks the new authorship.
+# The Portions line belongs directly under the copyright line it qualifies, so a
+# header that dropped it into the middle of the block is still wrong.
+portions_after_copyright() {
+  local f="$1" n
+  n=$(grep -n 'Portions Copyright.*Simon Ugorji' "$f" 2>/dev/null | head -1 | cut -d: -f1)
+  [ -n "$n" ] || return 1
+  [ "$n" -le 4 ] || return 1
+  sed -n "$((n - 1))p" "$f" | grep -q 'Copyright'
+}
+
+# Who held the copyright before this work: eigent | simon | other | none.
+# Falls back to the current file when the base ref or the path is missing.
+base_copyright_holder() {
+  local f="$1" line
+  if git rev-parse --verify --quiet "$BASE:$f" >/dev/null 2>&1; then
+    line=$(git show "$BASE:$f" | head -4 | grep 'Copyright' | head -1)
+  else
+    line=$(head -4 "$f" | grep 'Copyright' | head -1)
+  fi
+  if [ -z "$line" ]; then
+    echo none
+  elif printf '%s' "$line" | grep -q 'Eigent\.ai'; then
+    echo eigent
+  elif printf '%s' "$line" | grep -q 'Simon Ugorji'; then
+    echo simon
+  else
+    echo other
+  fi
+}
+
+# 3. A file we created carries Simon's copyright as the main header line, no
+#    Portions line, and never the upstream banner.
 for f in "${new_files[@]:-}"; do
   [ -n "$f" ] || continue
   [ -f "$f" ] || continue
   in_scope "$f" || continue
   is_src "$f" || continue
-  if ! head -15 "$f" | grep -q 'Simon Ugorji'; then
-    fail_msg "new file missing Simon Ugorji attribution: $f"
+  if head -4 "$f" | grep -q 'Eigent\.ai'; then
+    fail_msg "new file uses the Eigent banner (line 1 must be Simon's copyright): $f"
+  fi
+  if head -4 "$f" | grep -q 'Portions Copyright'; then
+    fail_msg "new file carries a Portions line (created files get the banner only): $f"
+  fi
+  if ! head -4 "$f" | grep -q 'Copyright.*Simon Ugorji'; then
+    fail_msg "new file missing Simon Ugorji copyright header: $f"
   fi
 done
 
-# 4. Modified upstream files must say which parts are Simon's. This is the check
-#    that catches a forgotten Portions line on an existing file.
+# 4. A modified upstream file keeps line 1 and says which parts are Simon's. If
+#    it had no copyright header to begin with, it gets the Simon banner instead
+#    of a Portions line, because there is nothing to attach the line to.
 for f in "${mod_files[@]:-}"; do
   [ -n "$f" ] || continue
   [ -f "$f" ] || continue
@@ -121,9 +160,24 @@ for f in "${mod_files[@]:-}"; do
   is_src "$f" || continue
   is_in "$f" "${new_files[@]:-}" && continue
   is_owned "$f" && continue
-  if ! head -4 "$f" | grep -q 'Portions Copyright.*Simon Ugorji'; then
-    fail_msg "modified file missing 'Portions Copyright ... Simon Ugorji': $f"
-  fi
+  case "$(base_copyright_holder "$f")" in
+    eigent | other)
+      portions_after_copyright "$f" ||
+        fail_msg "modified file missing 'Portions Copyright 2026 Simon Ugorji. All Rights Reserved.' as line 2: $f"
+      ;;
+    none)
+      if head -4 "$f" | grep -q 'Portions Copyright'; then
+        fail_msg "headerless file got a Portions line (it needs Simon's banner as line 1): $f"
+      elif ! head -4 "$f" | grep -q 'Copyright.*Simon Ugorji'; then
+        fail_msg "headerless file missing Simon Ugorji copyright header: $f"
+      fi
+      ;;
+    simon)
+      if head -4 "$f" | grep -q 'Portions Copyright'; then
+        fail_msg "Simon-authored file carries a Portions line (banner only): $f"
+      fi
+      ;;
+  esac
 done
 
 # 5. Simon-owned files carry that banner only.
@@ -135,6 +189,9 @@ for f in "${owned[@]:-}"; do
   fi
   if head -4 "$f" | grep -q 'Eigent\.ai'; then
     fail_msg "owned file uses the Eigent banner: $f"
+  fi
+  if head -4 "$f" | grep -q 'Portions Copyright'; then
+    fail_msg "owned file carries a Portions line (banner only): $f"
   fi
 done
 

@@ -1,4 +1,5 @@
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+# Portions Copyright 2026 Simon Ugorji. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -287,6 +288,7 @@ def test_get_working_directory_falls_back_to_file_save_path():
 
 def test_get_working_directory_no_new_folder_path_uses_env(temp_dir):
     options = MagicMock()
+    options.space_root_path = None
     task_lock = MagicMock()
     task_lock.new_folder_path = None
     task_lock.working_directory = None
@@ -297,6 +299,7 @@ def test_get_working_directory_no_new_folder_path_uses_env(temp_dir):
 
 def test_get_working_directory_task_lock_without_attribute(temp_dir):
     options = MagicMock()
+    options.space_root_path = None
     task_lock = MagicMock(spec=[])  # no new_folder_path attribute
     with patch("app.utils.file_utils.env", return_value=str(temp_dir)):
         result = get_working_directory(options, task_lock)

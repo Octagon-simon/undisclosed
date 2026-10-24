@@ -22,6 +22,7 @@ creating a near-duplicate. This is the single place the key vocabulary lives.
 
 from __future__ import annotations
 
+import hashlib
 import re
 
 _NON_KEY = re.compile(r"[^a-z0-9]+")
@@ -90,3 +91,44 @@ def identity(memory_type: str, key: str) -> str:
     """Stable identity for dedup/supersession: ``type::normalized_key``."""
 
     return f"{(memory_type or '').strip().lower()}::{normalize_key(key)}"
+
+
+def normalize_wording(text: str) -> str:
+    """Lowercase, punctuation-free form of a value, for re-statement matching."""
+
+    return _NON_KEY.sub(" ", (text or "").lower()).strip()
+
+
+# Words that carry no identity in a rule value. Without this every prohibition
+# starting "not ..." would share a prefix and collide.
+_RULE_FILLER = frozenset(
+    {
+        "not", "never", "always", "the", "a", "an", "my", "our", "your",
+        "this", "that", "these", "those", "to", "in", "on", "at", "of",
+        "for", "with", "and", "or", "but", "is", "are", "be", "been",
+        "do", "does", "did", "must", "should", "would", "could", "will",
+        "have", "has", "had", "any", "all", "from", "into", "about",
+    }
+)
+_RULE_KEY_WORDS = 4
+
+
+def rule_key(value: str) -> str:
+    """A stable, value-derived key for a standing rule.
+
+    Two different prohibitions get different identities, so the second one can
+    no longer supersede the first (the old fallback key was the literal
+    ``"constraint"``). The same value always maps to the same key, which makes a
+    repeat statement an idempotent merge instead of a duplicate.
+    """
+
+    text = (value or "").strip().lower()
+    words = [
+        word
+        for word in _NON_KEY.split(text)
+        if len(word) > 2 and word not in _RULE_FILLER
+    ][:_RULE_KEY_WORDS]
+    if words:
+        return "rule_" + "_".join(words)
+    digest = hashlib.sha1(text.encode("utf-8")).hexdigest()[:8]
+    return f"rule_{digest}"

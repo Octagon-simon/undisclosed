@@ -61,6 +61,7 @@ from app.memory.service import (
     get_memory_service,
     read_rolling_summary_for_task_lock,
     record_run_tool_event,
+    record_turn_rules,
 )
 
 # Hybrid conversational memory (``hybrid_memory.md``). Additive + env-gated;
@@ -96,6 +97,7 @@ __all__ = [
     "project_dir",
     "read_rolling_summary_for_task_lock",
     "record_run_tool_event",
+    "record_turn_rules",
     "render_md",
     "run_dir",
     "space_dir",

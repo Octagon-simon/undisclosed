@@ -21,11 +21,23 @@ the durable context automatically (see MemoryService), so recall is opt-in.
 """
 
 import logging
+from datetime import UTC, datetime
+from typing import Any
 
 from camel.toolkits import FunctionTool
 
 from app.agent.toolkit.abstract_toolkit import AbstractToolkit
 from app.memory import LocalMemoryStore, hybrid, semantic_store
+from app.memory.hybrid.canonical import identity, normalize_wording, rule_key
+from app.memory.hybrid.schema import (
+    MEMORY_SCOPES,
+    MEMORY_TYPES,
+    SCOPE_CONVERSATION,
+    SCOPE_GLOBAL,
+    SCOPE_PROJECT,
+    MemoryOp,
+)
+from app.memory.hybrid.scope import GlobalMemoryStore
 from app.memory.hybrid.storage import HybridStore
 from app.memory.rolling_summary import RollingSummary
 from app.service.task import Agents
@@ -60,6 +72,27 @@ def _is_broad_query(query: str) -> bool:
     return any(term in q for term in _BROAD_QUERY_TERMS)
 
 
+def _kept(
+    memories: list[Any], memory_type: str, key: str, fact: str
+) -> bool:
+    """Whether an active record now holds this fact, by identity or by wording.
+
+    A re-statement can merge into an existing rule whose value differs only in
+    punctuation, so an exact string compare would wrongly report a failed write.
+    """
+
+    wanted_identity = identity(memory_type, key)
+    wanted_wording = normalize_wording(fact)
+    for memory in memories:
+        if memory.status != "active":
+            continue
+        if identity(memory.type, memory.key) == wanted_identity:
+            return True
+        if normalize_wording(memory.value) == wanted_wording:
+            return True
+    return False
+
+
 class MemoryToolkit(AbstractToolkit):
     """`remember_fact` / `recall_facts` scoped to the current user+project."""
 
@@ -76,7 +109,10 @@ class MemoryToolkit(AbstractToolkit):
         # api_task_id == project_id (matches the other Undisclosed toolkits).
         self.api_task_id = api_task_id
         self.user_key = user_key
-        self.space_id = space_id
+        #a chat request may omit space_id; the run context resolves it as
+        #``space_id or project_id`` (chat_controller). Mirror that here so the
+        #tool writes where the rest of the run's memory already writes.
+        self.space_id = space_id or (str(api_task_id) if api_task_id else None)
         self._store = store
         if agent_name is not None:
             self.agent_name = agent_name
@@ -109,22 +145,45 @@ class MemoryToolkit(AbstractToolkit):
             return None
         return RollingSummary.from_dict(payload)
 
-    def remember_fact(self, fact: str) -> str:
-        """Save a durable fact worth recalling in future conversations.
+    def remember_fact(
+        self,
+        fact: str,
+        kind: str = "fact",
+        scope: str = "auto",
+        key: str = "",
+        category: str = "",
+    ) -> str:
+        """Save something durable without waiting to be asked.
 
-        Call this PROACTIVELY — without being asked — whenever you learn
-        something durable about the user or their project: their name or how they
-        want to be addressed, their preferences (tools, style, stack), stable
-        environment details, and key decisions or constraints. Do it as soon as
-        you learn the fact. You do NOT need the user to say "remember"; use your
-        judgment, the same way a thoughtful assistant would.
+        Save as soon as you learn it, silently, in one call. Do not narrate
+        "let me remember that" and do not ask permission to save a fact the user
+        just stated. Save when:
+
+        - the user states a constraint, prohibition, or approval requirement;
+        - the user corrects you about how you should work ("don't do that
+          again", "always X");
+        - the user states a preference or a stack choice that affects future
+          work;
+        - you make a decision the user should not have to re-explain next
+          session;
+        - you learn a stable environment fact (paths, versions, accounts,
+          tooling).
 
         Keep each fact concise and self-contained. Do NOT store transient state,
-        routine step results, or things that won't matter next time. Avoid
-        duplicates (identical facts are de-duplicated automatically).
+        routine step results, or things that won't matter next time.
 
         Args:
-            fact (str): One concise, self-contained fact to remember.
+            fact (str): One concise, self-contained fact or rule.
+            kind (str): ``fact`` | ``preference`` | ``decision`` |
+                ``constraint`` | ``rule`` | ``goal``. Use ``rule`` for a
+                standing requirement: it becomes always-on, applies to every
+                later turn, and needs no keyword match.
+            scope (str): ``auto`` | ``global`` | ``project`` | ``conversation``.
+                ``auto`` stores a rule at user level and other facts at project
+                level.
+            key (str): Optional stable key. Rules derive one from the wording.
+            category (str): Optional rule category (licensing, security, coding,
+                workflow, product, privacy, other).
 
         Returns:
             str: Confirmation message.
@@ -132,6 +191,10 @@ class MemoryToolkit(AbstractToolkit):
         fact = (fact or "").strip()
         if not fact:
             return "Nothing to remember (empty fact)."
+        kind = (kind or "fact").strip().lower()
+        scope = (scope or "auto").strip().lower()
+        category = (category or "").strip().lower()
+
         semantic_store.remember(
             self.user_key,
             self.space_id,
@@ -139,7 +202,111 @@ class MemoryToolkit(AbstractToolkit):
             fact,
             source="agent",
         )
-        return f"Remembered: {fact}"
+
+        is_rule = kind in {"rule", "constraint"}
+        target_scope = scope if scope in MEMORY_SCOPES else ""
+        if not target_scope:
+            target_scope = SCOPE_GLOBAL if is_rule else SCOPE_PROJECT
+
+        if is_rule:
+            memory_type = "constraint"
+            memory_key = key or rule_key(fact)
+            ok, reason = self._write_structured(
+                fact=fact,
+                memory_type=memory_type,
+                scope=target_scope,
+                key=memory_key,
+                category=category,
+                severity="hard",
+                original_text=fact,
+            )
+            if ok:
+                return "Saved to memory."
+            return (
+                "Saved to the memory index, but the always-on rule store "
+                f"write failed ({reason}); do not assume this rule applies "
+                "automatically."
+            )
+
+        if key or scope in MEMORY_SCOPES:
+            ok, reason = self._write_structured(
+                fact=fact,
+                memory_type=kind if kind in MEMORY_TYPES else "fact",
+                scope=target_scope,
+                key=key or rule_key(fact),
+                category=category,
+                severity="",
+                original_text=fact,
+            )
+            if not ok:
+                return (
+                    "Saved to the memory index, but the structured memory "
+                    f"write failed ({reason})."
+                )
+        return "Saved to memory."
+
+    def _write_structured(
+        self,
+        *,
+        fact: str,
+        memory_type: str,
+        scope: str,
+        key: str,
+        category: str,
+        severity: str,
+        original_text: str,
+    ) -> tuple[bool, str]:
+        """Write one structured record; ``(False, reason)`` when it cannot land."""
+
+        #A global record lives at the user root, so it needs no space or project;
+        #only a project/conversation write resolves through the space tree.
+        if not self.user_key:
+            return False, "no user key for this run"
+        if scope != SCOPE_GLOBAL and not self.space_id:
+            return False, "no space for this run"
+        store = self._store_or_default()
+        if scope == SCOPE_GLOBAL:
+            target = GlobalMemoryStore(store)
+            scope_id, user_id = self.user_key, self.user_key
+        elif scope == SCOPE_CONVERSATION:
+            target = HybridStore(store)
+            scope_id, user_id = str(self.api_task_id), ""
+        else:
+            target = HybridStore(store)
+            scope_id, user_id = str(self.api_task_id), ""
+        op = MemoryOp(
+            op="UPSERT",
+            type=memory_type,
+            key=key,
+            value=fact,
+            confidence=0.9,
+            importance=0.9 if memory_type == "constraint" else 0.6,
+            severity=severity,
+            enforcement="prompt" if memory_type == "constraint" else "",
+            category=category,
+            original_text=original_text,
+        )
+        try:
+            updated = target.apply_ops(
+                self.user_key,
+                self.space_id,
+                self.api_task_id,
+                [op],
+                conversation_id=str(self.api_task_id),
+                now=datetime.now(UTC).isoformat(),
+                scope_type=scope,
+                scope_id=scope_id,
+                user_id=user_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - tool must not raise
+            logger.warning("remember_fact: structured write failed", exc_info=True)
+            return False, f"store write raised {type(exc).__name__}"
+        if _kept(updated, memory_type, key, fact):
+            return True, ""
+        logger.warning(
+            "remember_fact: store rejected %s/%s for %s", memory_type, key, scope
+        )
+        return False, "store rejected the record"
 
     def recall_facts(self, query: str) -> str:
         """Recall previously remembered facts relevant to a query. Relevant facts

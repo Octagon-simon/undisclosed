@@ -28,9 +28,8 @@ Layer map:
     assembler   tagged, budgeted context (§24-27)
     engine      parallel retrieval + async run-end pipeline (§19, §28)
 
-The whole layer is additive and gated behind ``UNDISCLOSED_HYBRID_MEMORY``; the
-proven rolling-summary path keeps serving until the hybrid retrieval is
-evaluated.
+The layer is on by default; ``UNDISCLOSED_HYBRID_MEMORY=0`` falls back to the
+rolling-summary path.
 """
 
 from app.memory.hybrid import (
@@ -47,6 +46,8 @@ from app.memory.hybrid import (
     ranking,
     resolver,
     router,
+    rule_detect,
+    rules,
     schema,
     storage,
     text,
@@ -120,6 +121,8 @@ __all__ = [
     "resolver",
     "retrieve",
     "router",
+    "rule_detect",
+    "rules",
     "schedule_process_run_end",
     "schema",
     "storage",

@@ -74,8 +74,8 @@ re-answer earlier turns.
 
 ### 4. Hybrid conversational memory (`hybrid/`)
 
-An additive, env-gated engine (`UNDISCLOSED_HYBRID_MEMORY`, default off) that
-implements the `hybrid_memory.md` spec. Read
+The engine (`UNDISCLOSED_HYBRID_MEMORY`, default on) that implements the
+`hybrid_memory.md` spec. Read
 [plans/hybrid-memory-implementation.md](../plans/hybrid-memory-implementation.md)
 for the full module-to-spec-section map. Highlights:
 
@@ -88,12 +88,49 @@ for the full module-to-spec-section map. Highlights:
   parallel, then a deterministic router chooses the plan and a ranker blends the
   signals. No LLM on the critical retrieval path.
 - **Budgeted, tagged context**: `assembler.py` renders `<memory_rules>`,
-  `<historical_evidence>`, `<exact_historical_evidence>`, `<active_memory>`,
-  `<working_memory>`, `<recent_conversation>` with per-query-type budget shifts.
+  `<persistent_rules>`, `<historical_evidence>`, `<exact_historical_evidence>`,
+  `<active_memory>`, `<working_memory>`, `<recent_conversation>` with
+  per-query-type budget shifts.
 - **Durable jobs**: post-run extraction runs off the response path; with
   `UNDISCLOSED_HYBRID_DURABLE_JOBS` (default on) it is a recoverable job in
   `<user>/memory_jobs.json`, so a lost thread or a restart does not lose the
   memory (see `brain/app/memory/hybrid/jobs.py`).
+
+### 5. Persistent rules (`hybrid/rules.py`, `hybrid/rule_detect.py`)
+
+A "persistent rule" is not a second store: it is an active `StructuredMemory`
+with `type="constraint"`, loaded unconditionally on every turn.
+
+- **Write path**: `rule_detect.detect()` runs on the incoming user message
+  before context assembly. `service.record_turn_rules()` writes each candidate
+  through `apply_ops`, so the rule is live on the same turn and survives a
+  restart. Detection is a deterministic regex pass (no model), and it reads the
+  user's wording; no rule text is hardcoded anywhere.
+- **Identity**: `canonical.rule_key(value)` derives the key from the wording, so
+  two prohibitions cannot collide. A restatement with identical wording merges,
+  bumps `last_confirmed_at`, and promotes the rule to `severity="hard"`. Legacy
+  records keyed `constraint` are matched by wording and keep their key.
+- **Read path**: `rules.read_active_rules()` reads the same project
+  `memories.json` and user-level file the injected memory already uses. No
+  Chroma call, no query match, no lane gating, and **no cache**. Conversation
+  scope is filtered by `conversation_id`; project beats global for the same key.
+  Hard rules always load; soft project/conversation rows written by the old
+  extractor must clear a small length/content bar so extraction fragments do not
+  become standing instructions.
+- **Prompt**: `assembler.py` emits a fixed-budget `<persistent_rules>` block
+  (hard first, hard rules never dropped, each rule truncated at 400 chars). When
+  no rule loads, or every tenth user turn, it emits `<recall_check>` asking for
+  one `recall_facts("standing rules constraints preferences")` call; the wording
+  forbids claiming a rule the tool did not return.
+- **Agent saves**: `remember_fact(..., kind="rule")` writes the same structured
+  constraint (`severity="hard"`, `original_text`) and still indexes the text for
+  discovery. Without `kind="rule"` a save stays a discovery fact.
+- **Trace** (agent-ui): `Writing to memory` / `Written to memory` for
+  `remember_fact`, `Recalling from memory` / `Recalled from memory` for
+  `recall_*`.
+- **Migration**: `brain/scripts/rekey_hybrid_constraints.py` prints the legacy
+  `key="constraint"` rows and their value-derived keys; `--apply` re-keys them
+  without dropping or rewording anything.
 
 ---
 
@@ -127,8 +164,8 @@ about" answerable.
 
 All knobs are in `.env.sample`. The ones you are most likely to touch:
 
-- Master switch: `UNDISCLOSED_HYBRID_MEMORY` (off by default; the proven rolling
-  summary path serves until hybrid retrieval is evaluated)
+- Master switch: `UNDISCLOSED_HYBRID_MEMORY` (on by default; set `0` to fall
+  back to the rolling-summary path)
 - Window/thresholds: `UNDISCLOSED_HYBRID_RECENT_TOKENS`, `..._SOFT_THRESHOLD`, `..._HARD_THRESHOLD`
 - Retrieval sizes: `UNDISCLOSED_HYBRID_{SEMANTIC,LEXICAL,EXACT,RERANK}_K`
 - Jobs: `UNDISCLOSED_HYBRID_DURABLE_JOBS`, `UNDISCLOSED_HYBRID_JOB_RECOVERY`

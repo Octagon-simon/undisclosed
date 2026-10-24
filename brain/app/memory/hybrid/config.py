@@ -63,12 +63,11 @@ def _env_float(name: str, default: float) -> float:
 def enabled() -> bool:
     """Master switch.
 
-    Default OFF: the hybrid path is additive and the proven rolling-summary path
-    keeps serving traffic until the hybrid retrieval is evaluated (``§40-41``).
-    Flip ``UNDISCLOSED_HYBRID_MEMORY=1`` to route through it.
+    Default ON: the hybrid path is the shipped memory path. Set
+    ``UNDISCLOSED_HYBRID_MEMORY=0`` to fall back to the rolling-summary path.
     """
 
-    return _env_flag("UNDISCLOSED_HYBRID_MEMORY", False)
+    return _env_flag("UNDISCLOSED_HYBRID_MEMORY", True)
 
 
 def token_estimate(text: str) -> int:
@@ -157,6 +156,11 @@ def ranking_weights() -> dict[str, float]:
 def section_budget_fractions() -> dict[str, float]:
     return {
         "instructions": _env_float("UNDISCLOSED_HYBRID_B_INSTRUCTIONS", 0.06),
+        # Fixed slice for standing rules: a continuation turn needs them as much
+        # as a fresh one, so they are not subject to query-type adjustments.
+        "persistent_rules": _env_float(
+            "UNDISCLOSED_HYBRID_B_PERSISTENT_RULES", 0.15
+        ),
         "active_memory": _env_float("UNDISCLOSED_HYBRID_B_ACTIVE_MEMORY", 0.10),
         "working_memory": _env_float("UNDISCLOSED_HYBRID_B_WORKING_MEMORY", 0.08),
         "historical": _env_float("UNDISCLOSED_HYBRID_B_HISTORICAL", 0.26),
@@ -275,13 +279,14 @@ _LLM_WRITE_TOKENS = frozenset({"write", "live", "apply", "authoritative"})
 def llm_extraction_mode() -> str:
     """How the optional LLM extraction pass runs.
 
-    - ``off`` (default): no model call at all; the deterministic planner is the
-      only extractor.
+    - ``off``: no model call at all; the deterministic planner is the only
+      extractor.
     - ``shadow``: the model runs alongside the planner and the two outputs are
       logged for comparison, but only the deterministic result is written.
-    - ``write``: the model authors the episode prose and proposes memory ops;
-      the deterministic planner stays the fallback and every proposal still
-      passes through ``HybridStore.apply_ops`` validation before it is stored.
+    - ``write`` (default): the model authors the episode prose and proposes
+      memory ops; the deterministic planner stays the fallback and every proposal
+      still passes through ``HybridStore.apply_ops`` validation before it is
+      stored.
 
     A bare truthy value (``1``/``true``/``yes``/``on``) maps to ``shadow`` --
     per ``research1.md`` we never make the model authoritative just by flipping a
@@ -290,7 +295,7 @@ def llm_extraction_mode() -> str:
 
     raw = (os.environ.get("UNDISCLOSED_HYBRID_LLM_EXTRACTION") or "").strip().lower()
     if not raw:
-        return LLM_EXTRACTION_OFF
+        return LLM_EXTRACTION_WRITE
     if raw in _LLM_OFF_TOKENS:
         return LLM_EXTRACTION_OFF
     if raw in _LLM_SHADOW_TOKENS:

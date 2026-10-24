@@ -106,9 +106,9 @@ _VALID = json.dumps(
 
 
 class TestModeConfig:
-    def test_default_is_off(self, monkeypatch):
+    def test_default_is_write(self, monkeypatch):
         monkeypatch.delenv("UNDISCLOSED_HYBRID_LLM_EXTRACTION", raising=False)
-        assert config.llm_extraction_mode() == config.LLM_EXTRACTION_OFF
+        assert config.llm_extraction_mode() == config.LLM_EXTRACTION_WRITE
 
     @pytest.mark.parametrize("value", ["1", "true", "yes", "on", "shadow"])
     def test_truthy_values_shadow(self, monkeypatch, value):
@@ -409,7 +409,7 @@ class TestEngineIntegration:
         )
 
     def test_off_mode_never_calls_the_model(self, hybrid, monkeypatch):
-        monkeypatch.delenv("UNDISCLOSED_HYBRID_LLM_EXTRACTION", raising=False)
+        monkeypatch.setenv("UNDISCLOSED_HYBRID_LLM_EXTRACTION", "off")
         calls = {"n": 0}
 
         def _fake(*_a, **_k):
