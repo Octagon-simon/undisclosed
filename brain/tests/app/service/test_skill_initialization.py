@@ -394,3 +394,14 @@ def test_bundled_reverse_engineer_skill_ships_disabled():
         "reverse-engineer-anything"
         not in skill_config_service.DEFAULT_ENABLED_EXAMPLE_SKILLS
     )
+
+
+def test_bundled_reverse_engineer_skill_explains_connector_setup():
+    # It is opt-in, so the skill body is the only place a user learns that
+    # its tools need a connector they have not added yet.
+    skill_md = (
+        BUNDLED_SKILLS_ROOT / "reverse-engineer-anything" / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    assert '"rea-agents@latest"' in skill_md
+    assert '"mcp"' in skill_md
+    assert "Add custom" in skill_md

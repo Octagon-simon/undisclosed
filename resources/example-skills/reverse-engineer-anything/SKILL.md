@@ -1,6 +1,6 @@
 ---
 name: reverse-engineer-anything
-description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
+description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis. Its tools need the REA connector; the setup steps are in this skill.
 metadata:
   version: "46"
 ---
@@ -17,6 +17,21 @@ readiness or provider commands.
 
 Installing this skill supplies instructions; it does not register the REA MCP
 server, install analysis engines, or add tools to an already-running agent.
+
+### Add the connector in this app
+
+This app is not one of REA's `--client` targets, so `rea setup` cannot register
+it. The user adds the connector once. Ask them to open **Connectors**, choose
+**Add custom**, keep the **Local** tab, and paste:
+
+```json
+{"mcpServers": {"rea": {"command": "npx", "args": ["-y", "rea-agents@latest", "mcp"]}}}
+```
+
+Then start a new chat so the session picks up the REA tools. Do not write
+`~/.undisclosed/mcp.json` behind the user's back, and do not run
+`rea setup --client <name>` here. Until the connector exists, the CLI fallback
+below still covers static JavaScript and ASAR targets.
 
 If REA tools are available and their registration is not known to be stale,
 proceed directly to the target. Do not run diagnostics or setup before every

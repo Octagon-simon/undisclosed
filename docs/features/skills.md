@@ -73,8 +73,10 @@ enable toggle and delete, and adds a skill via zip upload. (A device symlink
   Electron/JavaScript, Android and runtime evidence. It ships instructions only,
   so its tools need REA's MCP server in `~/.undisclosed/mcp.json`
   (`npx -y rea-agents@latest mcp`); it is bundled but **off by default**, and
-  each user enables it after registering that server. Without the server the
-  skill's own recovery path falls back to the `npx` CLI. Extra skills (video/media/motion) are no longer vendored;
+  each user enables it after registering that server through Connectors -> Add
+  custom -> Local. The skill's own setup section spells that out, because
+  `rea setup` has no target for this client. Without the server the skill's
+  recovery path falls back to the `npx` CLI. Extra skills (video/media/motion) are no longer vendored;
   they live in their upstream GitHub projects and install on demand - see
   `docs/extra-skills.md`.
 - Packaging: the examples ship via electron-builder `extraResources` to
