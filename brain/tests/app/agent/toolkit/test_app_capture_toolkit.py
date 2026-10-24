@@ -277,3 +277,24 @@ def test_single_agent_prompt_points_at_both_cameras():
     for capability in ("App Screenshots", "Page Screenshots"):
         assert capability not in BROWSER_SYS_PROMPT
     assert "`capture_page`" not in BROWSER_SYS_PROMPT
+
+
+def test_single_agent_prompt_covers_screenshot_to_code():
+    """The skill is gone, so its block-then-fidelity method lives in the prompt."""
+    from app.agent.prompt import SINGLE_AGENT_SYS_PROMPT
+
+    prompt = SINGLE_AGENT_SYS_PROMPT.format(
+        platform_system="Darwin",
+        platform_machine="arm64",
+        working_directory="/tmp",
+        now_str="now",
+    )
+
+    for phrase in (
+        "header/nav, hero, content rows",
+        "semantic HTML5",
+        ":root` custom properties",
+        "under 640px",
+        "do not invent placeholder copy",
+    ):
+        assert phrase in prompt
