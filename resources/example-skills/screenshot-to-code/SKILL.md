@@ -1,6 +1,6 @@
 ---
 name: screenshot-to-code
-description: Convert a UI screenshot or design mockup into clean, production-ready HTML/CSS (and optional React/Tailwind). Works from any screenshot/image of an interface — web pages, dashboard mockups, mobile app screens, desktop app UIs, Figma/design exports, or design DPs. Use whenever the user shares a screenshot and asks to reproduce it as code, build a matching frontend, generate HTML for a design image, or turn a mockup into a page. Trigger phrases: "convert this screenshot to code", "build this as HTML", "recreate this design", "turn this mockup into a page", "make code for this image". The workflow detects UI blocks, understands the layout structure, and synthesizes faithful, editable front-end code.
+description: Convert a UI screenshot or design mockup into clean, production-ready HTML/CSS (and optional React/Tailwind). Works from any screenshot/image of an interface — web pages, dashboard mockups, mobile app screens, desktop app UIs, Figma/design exports, or design DPs. Use whenever the user shares a screenshot and asks to reproduce it as code, build a matching frontend, generate HTML for a design image, or turn a mockup into a page. Trigger phrases include "convert this screenshot to code", "build this as HTML", "recreate this design", "turn this mockup into a page", "make code for this image". The workflow detects UI blocks, understands the layout structure, and synthesizes faithful, editable front-end code.
 license: Proprietary. LICENSE.txt has complete terms
 ---
 

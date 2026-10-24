@@ -43,6 +43,7 @@ DEFAULT_ENABLED_EXAMPLE_SKILLS = frozenset(
         "ui-styling",
         "skill-creator",
         "skill-security-auditor",
+        "reverse-engineer-anything",
     }
 )
 

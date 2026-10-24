@@ -13,13 +13,19 @@
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
 
 import json
+from pathlib import Path
 
 import pytest
+import yaml
 
 from app.agent.toolkit import skill_toolkit as agent_skill_toolkit
 from app.service import skill_config_service, skill_service
 
 pytestmark = pytest.mark.unit
+
+BUNDLED_SKILLS_ROOT = (
+    Path(__file__).resolve().parents[4] / "resources" / "example-skills"
+)
 
 
 def write_skill(
@@ -354,3 +360,32 @@ def test_parse_skill_frontmatter_block_scalar_stops_at_dedent():
 def test_parse_skill_frontmatter_returns_none_without_description():
     content = "\n".join(["---", "name: only-name", "---"])
     assert skill_service._parse_skill_frontmatter(content) is None
+
+
+def test_bundled_skill_frontmatter_parses_as_yaml():
+    # CAMEL rejects a skill whose frontmatter is invalid YAML, so an unquoted
+    # colon in a description silently makes the skill unloadable.
+    assert BUNDLED_SKILLS_ROOT.is_dir()
+    broken = []
+    for skill_md in sorted(BUNDLED_SKILLS_ROOT.glob("*/SKILL.md")):
+        frontmatter = skill_md.read_text(encoding="utf-8").split("---", 2)[1]
+        try:
+            meta = yaml.safe_load(frontmatter)
+        except yaml.YAMLError as exc:
+            broken.append(f"{skill_md.parent.name}: {exc}")
+            continue
+        if not isinstance(meta, dict) or not all(
+            isinstance(meta.get(key), str) for key in ("name", "description")
+        ):
+            broken.append(f"{skill_md.parent.name}: missing name or description")
+    assert broken == []
+
+
+def test_bundled_reverse_engineer_skill_ships_enabled():
+    assert (
+        BUNDLED_SKILLS_ROOT / "reverse-engineer-anything" / "SKILL.md"
+    ).is_file()
+    assert (
+        "reverse-engineer-anything"
+        in skill_config_service.DEFAULT_ENABLED_EXAMPLE_SKILLS
+    )

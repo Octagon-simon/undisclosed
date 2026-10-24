@@ -68,7 +68,12 @@ enable toggle and delete, and adds a skill via zip upload. (A device symlink
 - Bundled examples: `resources/example-skills/` (frontend/design/authoring, shipped
   and auto-installed). `refactoring-ui` is the design-rules skill (`SKILL.md` +
   `references/diagnose.md`, `references/systems.md`, `references/techniques.md`, and
-  `assets/tokens.css`, MIT). Extra skills (video/media/motion) are no longer vendored;
+  `assets/tokens.css`, MIT). `reverse-engineer-anything` (`SKILL.md` + six
+  `references/*.md`, MIT, vendored from github.com/morluto/rea) covers binaries,
+  Electron/JavaScript, Android and runtime evidence; it ships instructions only,
+  so its tools need REA's MCP server in `~/.undisclosed/mcp.json`
+  (`npx -y rea-agents@latest mcp`). Without that the skill's own recovery path
+  falls back to the `npx` CLI. Extra skills (video/media/motion) are no longer vendored;
   they live in their upstream GitHub projects and install on demand - see
   `docs/extra-skills.md`.
 - Packaging: the examples ship via electron-builder `extraResources` to
