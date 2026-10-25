@@ -5,8 +5,8 @@ from Eigent, and the **editor shell + packaging** that is ours. The agent UI was
 an Electron app. To be an editor-first product, the agent had to live *inside* the
 editor as a first-class panel, not in a separate window docked next to it.
 
-**Solution.** Host the agent UI as a native Theia dock widget, over a portable
-transport seam, with the brain and the UI vendored into this repo so the whole
+**Solution.** Host the agent UI as a native Theia dock widget, behind a single
+host contract, with the brain and the UI vendored into this repo so the whole
 product builds and runs on its own.
 
 ---

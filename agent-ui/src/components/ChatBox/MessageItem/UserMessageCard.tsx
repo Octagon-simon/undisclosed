@@ -285,10 +285,16 @@ export function UserMessageCard({
                                 }
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  ipcRenderer?.invoke(
-                                    'reveal-in-folder',
-                                    file.filePath
-                                  );
+                                  // same path as the visible chips: desktop
+                                  // reveals, the embed opens the editor
+                                  if (ipcRenderer?.invoke) {
+                                    ipcRenderer.invoke(
+                                      'reveal-in-folder',
+                                      file.filePath
+                                    );
+                                  } else {
+                                    void host?.openFile?.(file.filePath);
+                                  }
                                   setIsRemainingOpen(false);
                                 }}
                               >
