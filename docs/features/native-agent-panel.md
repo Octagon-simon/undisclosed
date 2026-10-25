@@ -45,7 +45,11 @@ capability is optional except the two preload handles.
 
 - `electronAPI`, `ipcRenderer` — the desktop preload bridge. `null` in every
   other mount (the Theia panel, the web build). Only code that legitimately
-  cannot work without a desktop shell should read them.
+  cannot work without a desktop shell should read them, and that is enforced:
+  `agent-ui/eslint.config.mjs` runs `no-restricted-syntax` over all of `src/`
+  except `src/host/` and the 58 files in its `DESKTOP_SHELL_FILES` burn-down
+  list. A new file that reaches for the bridge fails lint instead of failing
+  silently when someone clicks it.
 - `openFile(path)` — open a file the agent touched. The widget resolves it
   (`file://`, POSIX/Windows absolute, or workspace-relative) and opens a real
   Theia editor tab through `OpenerService`.
