@@ -13,7 +13,7 @@
 // ========= Copyright 2026 Simon Ugorji. All Rights Reserved. =========
 
 // Minimal static server for the render harness: serves e2e/harness.html plus
-// the built agent-embed bundle + css from packages/eigent-agent/assets.
+// the built agent-embed bundle + css from packages/undisclosed-agent/assets.
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -22,7 +22,7 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ASSETS = path.resolve(
   __dirname,
-  '../../packages/eigent-agent/assets/agent-embed'
+  '../../packages/undisclosed-agent/assets/agent-embed'
 );
 const PORT = Number(process.env.HARNESS_PORT || 4599);
 

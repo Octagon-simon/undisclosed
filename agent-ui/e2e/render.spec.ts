@@ -19,8 +19,8 @@ import { test, expect, Page } from '@playwright/test';
 // (no "stacking") — both on first load and after a full page reload (retention).
 //
 // Prereqs: `./scripts/brain.sh start` (brain on :5001) and
-// `node e2e/seed-conversation.mjs` (seeds the conversation). The npm script
-// `test:render` wires both up.
+// `node e2e/seed-conversation.mjs` (seeds the conversation). Then run:
+// `npx playwright test -c e2e/playwright.config.ts` from agent-ui.
 
 const Q1 = 'E2E-Q1 what is two plus two';
 const A1 = 'E2E-A1 the answer is four';

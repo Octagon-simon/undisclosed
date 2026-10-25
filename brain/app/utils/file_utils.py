@@ -18,7 +18,6 @@
 import logging
 import os
 import platform
-import shutil
 import time
 from pathlib import Path
 
@@ -360,36 +359,3 @@ def get_working_directory(options: Chat, task_lock=None) -> str:
         raw = Path(env("file_save_path", options.file_save_path()))
 
     return normalize_working_path(raw)
-
-
-def sync_eigent_skills_to_project(working_directory: str) -> None:
-    """
-    Copy skills from ~/.undisclosed/skills into the project's .undisclosed/skills
-    so the agent can load and execute them from the project working directory.
-    """
-    src = Path.home() / ".undisclosed" / "skills"
-    dst = Path(working_directory) / ".undisclosed" / "skills"
-    if not src.is_dir():
-        return
-    try:
-        dst.mkdir(parents=True, exist_ok=True)
-        for skill_dir in src.iterdir():
-            if skill_dir.is_dir():
-                dest_skill = dst / skill_dir.name
-                if dest_skill.exists():
-                    shutil.rmtree(dest_skill)
-                shutil.copytree(skill_dir, dest_skill)
-        logger.debug(
-            "Synced eigent skills to project",
-            extra={
-                "working_directory": working_directory,
-                "destination": str(dst),
-            },
-        )
-    except OSError as e:
-        logger.warning(
-            "Failed to sync ~/.undisclosed/skills to project %s: %s",
-            working_directory,
-            e,
-            exc_info=True,
-        )

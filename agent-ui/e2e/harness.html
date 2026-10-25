@@ -24,7 +24,7 @@
       // conversation (the seeded one), and renders it via the SAME reload path
       // (loadProjectFromHistory + ProjectSection). Reloading this page re-runs
       // that path, which is what we assert against.
-      const mod = window.EigentAgentEmbed;
+      const mod = window.UndisclosedAgentEmbed;
       const mount = mod.mountAgentPanel || (mod.default && mod.default.mountAgentPanel);
       mount(document.getElementById('agent-root'), {
         baseUrl: 'http://localhost:5001',
