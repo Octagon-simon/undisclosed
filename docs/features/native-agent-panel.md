@@ -35,21 +35,38 @@ product builds and runs on its own.
 mounted into the dock widget's DOM. The same source runs in the Electron app; the
 embed entry (`agent-ui/src/agent-embed/`) is the panel-specific bootstrap.
 
-## The transport seam (`packages/agent-net`)
+## The host seam (`agent-ui/src/host/types.ts`)
 
-`@undisclosed/agent-net` is the decoupling: a framework-agnostic fetch HTTP client
-and an SSE client whose base URL, auth token, user id, session id, and host
-capabilities are all **injected** (no Electron, no authStore, no IPC).
+The decoupling lives inside the UI, not in a separate transport package.
+`AppHost` in `agent-ui/src/host/types.ts` is the single host contract, and
+`useHost()` (`agent-ui/src/host/context.tsx`) is the only way a component reaches
+the host. A mount supplies the capabilities it has and omits the rest; every
+capability is optional except the two preload handles.
 
-- `AgentNetConfig(baseUrl, getToken, getUserId, getSessionId)`
-- `AppHost` interface (the audited host surface) + a `noopHost`
-- `http: fetch client` (Bearer only on brain-relative paths)
-- `sse: fetch-event-source` with injected auth, `openWhenHidden`, content-type guard
+- `electronAPI`, `ipcRenderer` — the desktop preload bridge. `null` in every
+  other mount (the Theia panel, the web build). Only code that legitimately
+  cannot work without a desktop shell should read them.
+- `openFile(path)` — open a file the agent touched. The widget resolves it
+  (`file://`, POSIX/Windows absolute, or workspace-relative) and opens a real
+  Theia editor tab through `OpenerService`.
+- `readFileAsDataUrl(path)` — the bytes of an agent-output image, as a `data:`
+  URL, read through Theia's `FileService`. Used by the markdown renderer when
+  `electronAPI.readFileAsDataUrl` is absent.
+- `getActiveEditor()` / `onActiveEditorChanged(cb)` — the file and selection the
+  user is looking at, so the agent gets editor context without shell calls.
+- `getTheme()` / `onThemeChanged(cb)` — the host's own light/dark answer. The
+  editor theme is the surface the panel sits on (`theme.css`), so it wins over
+  the panel's stored appearance.
+- `openSkillFolder(name)` — a `#skill` chip. Desktop reveals the folder in the
+  OS file manager; the widget has no shell, so it asks the brain for the skill's
+  folder (`GET /skills/path`) and opens `SKILL.md` in an editor tab. Skills live
+  under `~/.undisclosed/skills`, outside the workspace, so the navigator cannot
+  reveal them.
 
-This is the seam the Theia widget and the Electron app both drive. Host
-capabilities the panel needs (`openFile`, `readFileAsDataUrl`,
-`getSystemLanguage`, and so on) are implemented by the widget, so a file chip or
-path in chat opens a real Theia editor tab (`OpenerService`).
+`packages/agent-net` (an earlier `AppHost` + fetch/SSE client) was retired: no
+`package.json` or source file ever imported it, so it described a seam nothing
+crossed, with a second, stale copy of the host contract. `agent-ui/src/api/http.ts`
+owns the transport, and the table above owns the host surface.
 
 ## Self-contained build
 
@@ -74,7 +91,7 @@ path in chat opens a real Theia editor tab (`OpenerService`).
 
 ## Key commits
 
-`1dbcdc2` (native panel), `4759561` (`@undisclosed/agent-net`),
+`1dbcdc2` (native panel), `4759561` (`@undisclosed/agent-net`, since retired),
 `23f139a` (mount the real UI), `e8166d0` (webviews/auto-login/theme),
 `deff604` (vendor the brain), `00a5a82` (vendor the UI), `b078ccf` (CDP Chromium),
 `228c7bc` (follow agent tabs, brain stop/restart).

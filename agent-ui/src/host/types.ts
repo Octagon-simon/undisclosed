@@ -39,6 +39,13 @@ export interface HostThemeInfo {
   label?: string;
 }
 
+/**
+ * The ONE host contract. Every capability a mount can provide is declared here;
+ * a mount supplies what it has and omits the rest. `electronAPI`/`ipcRenderer`
+ * are the desktop preload bridge and are null in every other mount (the Theia
+ * panel, the web build), so new panel-path features must add a typed capability
+ * below instead of reaching through them.
+ */
 export interface AppHost {
   electronAPI: any;
   ipcRenderer: any;
@@ -85,4 +92,11 @@ export interface AppHost {
    * function. Optional.
    */
   onThemeChanged?(cb: (theme: HostThemeInfo) => void): () => void;
+  /**
+   * Show a skill's folder when the user clicks a `#skill` chip. Desktop reveals
+   * it in the OS file manager; the Theia embed has no shell access and skills
+   * live under the user's home (not in the workspace), so it opens the skill's
+   * `SKILL.md` in an editor tab instead. Optional: without it the chip is inert.
+   */
+  openSkillFolder?(name: string): void | Promise<void>;
 }

@@ -77,8 +77,9 @@ customizations, the persistent terminal, and the VS Code git UI suppressor.
 - `apps/desktop`: Theia **electron** target, its own `package-lock.json` and
   its own `node_modules` (currently `@theia/core` 1.60.0). This is what ships.
 - Extension packages: `undisclosed-agent`, `undisclosed-languages`,
-  `undisclosed-import`, `agent-net` (framework-agnostic transport, no Theia
-  dependency), plus `brain/` (Python, independent of the Node toolchain).
+  `undisclosed-import`, plus `brain/` (Python, independent of the Node
+  toolchain). `agent-net` (framework-agnostic transport) has since been retired;
+  the host seam is now `agent-ui/src/host/types.ts`.
 
 ### Where our customizations live
 - `packages/undisclosed-agent/src/browser/undisclosed-agent-frontend-module.ts`

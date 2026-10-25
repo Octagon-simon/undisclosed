@@ -1,4 +1,5 @@
 // ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+// Portions Copyright 2026 Simon Ugorji. All Rights Reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -147,7 +148,13 @@ export function UserMessageRichContent({
 
   const handleOpenSkillFolder = (skillName: string) => {
     if (!isSafeSkillFolderName(skillName)) return;
-    host?.electronAPI?.openSkillFolder?.(skillName);
+    // desktop reveals the folder in the OS; any other mount (the Theia panel)
+    // gets the same click through its own host capability
+    if (host?.electronAPI?.openSkillFolder) {
+      host.electronAPI.openSkillFolder(skillName);
+      return;
+    }
+    void host?.openSkillFolder?.(skillName);
   };
 
   // Desktop: links open in this project's preview browser; on the web host

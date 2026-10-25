@@ -4,6 +4,7 @@ dist-agent-embed
 dist-web
 *.log
 .DS_Store
+coverage
 
 # E2E render harness: keep the harness/test/config, ignore generated output
 # and the throwaway debug scratch script.

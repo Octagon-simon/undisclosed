@@ -463,8 +463,6 @@ packages/
                            plus inline diff / commit-widget styling
   undisclosed-languages/   Monaco/Monarch language support + native media preview
   undisclosed-import/      VS Code settings/extensions import
-  agent-net/               Framework-agnostic transport (fetch + SSE) shared by the
-                           agent widget and the Electron app
 apps/desktop/        Electron Theia app (packaging target; electron-builder.yml)
 scripts/             brain.sh, build-brain.sh (PyInstaller), release.sh, dev.sh
 docs/                PACKAGING.md, design & dev notes (assistant_message_persistence.md)

@@ -38,7 +38,7 @@ Grouped by what they deliver to a user.
 
 | Doc | Feature |
 | --- | --- |
-| [features/native-agent-panel.md](features/native-agent-panel.md) | The agent UI as a first-class Theia dock widget (`undisclosed-agent`), the `@undisclosed/agent-net` transport seam, and how the brain + UI were made self-contained. |
+| [features/native-agent-panel.md](features/native-agent-panel.md) | The agent UI as a first-class Theia dock widget (`undisclosed-agent`), the `AppHost` host seam (`agent-ui/src/host/types.ts`), and how the brain + UI were made self-contained. |
 | [features/tool-rag.md](features/tool-rag.md) | Per-turn tool selection: the LLM router, atomic toolkits, `load_capability`, similarity threshold. |
 | [features/reasoning-and-thinking.md](features/reasoning-and-thinking.md) | Live "Thinking…" streaming, the collapsible thinking block, and per-provider reasoning request wiring. |
 | [features/browser-automation.md](features/browser-automation.md) | Standalone CDP Chromium, the live browser view, and take-control. |

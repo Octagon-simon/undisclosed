@@ -86,6 +86,7 @@ type MountFn = (
       ipcRenderer: unknown;
       openFile?(path: string): void | Promise<void>;
       readFileAsDataUrl?(path: string): Promise<string | null>;
+      openSkillFolder?(name: string): void | Promise<void>;
       onActiveEditorChanged?(
         cb: (info: ActiveEditorInfo | null) => void
       ): () => void;
@@ -268,20 +269,22 @@ export class UndisclosedAgentWidget extends BaseWidget {
   private async openFileInEditor(path: string): Promise<void> {
     if (!path) return;
     try {
-      let uri: URI;
-      if (path.startsWith('file://')) {
-        uri = new URI(path);
-      } else if (path.startsWith('/')) {
-        uri = new URI('file://' + path);
-      } else {
-        const roots = await this.workspaceService.roots;
-        const root = roots[0]?.resource;
-        uri = root ? root.resolve(path) : new URI('file://' + path);
-      }
-      await open(this.openerService, uri);
+      await open(this.openerService, await this.uriFor(path));
     } catch (err) {
       console.warn('[undisclosed-agent] openFile failed for', path, err);
     }
+  }
+
+  /** A file URI for a `file://`, POSIX-absolute, Windows-absolute or
+   *  workspace-relative path (the last resolves against the first root). */
+  private async uriFor(path: string): Promise<URI> {
+    if (path.startsWith('file://')) return new URI(path);
+    if (path.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(path)) {
+      return URI.fromFilePath(path);
+    }
+    const roots = await this.workspaceService.roots;
+    const root = roots[0]?.resource;
+    return root ? root.resolve(path) : URI.fromFilePath(path);
   }
 
   /**
@@ -295,16 +298,7 @@ export class UndisclosedAgentWidget extends BaseWidget {
   private async readFileAsDataUrl(path: string): Promise<string | null> {
     if (!path) return null;
     try {
-      let uri: URI;
-      if (path.startsWith('file://')) {
-        uri = new URI(path);
-      } else if (path.startsWith('/')) {
-        uri = new URI('file://' + path);
-      } else {
-        const roots = await this.workspaceService.roots;
-        const root = roots[0]?.resource;
-        uri = root ? root.resolve(path) : new URI('file://' + path);
-      }
+      const uri = await this.uriFor(path);
       const content = await this.fileService.readFile(uri);
       const bytes = content.value.buffer;
       let binary = '';
@@ -316,6 +310,32 @@ export class UndisclosedAgentWidget extends BaseWidget {
     } catch (err) {
       console.warn('[undisclosed-agent] readFileAsDataUrl failed for', path, err);
       return null;
+    }
+  }
+
+  /**
+   * A `#skill` chip asks to see the skill's folder. Desktop reveals it in the OS
+   * file manager; the embed has no shell, and skills live under
+   * `~/.undisclosed/skills` (outside the workspace, so the navigator cannot
+   * reveal them). Open the skill's `SKILL.md` in an editor tab instead: same
+   * intent, and it is editable. The brain owns the name -> folder resolution,
+   * because a skill's folder name is not always its display name.
+   */
+  private async openSkillFolder(name: string): Promise<void> {
+    if (!name) return;
+    try {
+      const res = await fetch(
+        `${BRAIN_BASE_URL}/skills/path?name=${encodeURIComponent(name)}`
+      );
+      if (!res.ok) return;
+      const body = (await res.json()) as { path?: string };
+      if (!body.path) return;
+      await open(
+        this.openerService,
+        URI.fromFilePath(body.path).resolve('SKILL.md')
+      );
+    } catch (err) {
+      console.warn('[undisclosed-agent] openSkillFolder failed for', name, err);
     }
   }
 
@@ -488,6 +508,7 @@ export class UndisclosedAgentWidget extends BaseWidget {
           ipcRenderer: null,
           openFile: (path: string) => this.openFileInEditor(path),
           readFileAsDataUrl: (path: string) => this.readFileAsDataUrl(path),
+          openSkillFolder: (name: string) => this.openSkillFolder(name),
           // Live editor-context sync: the agent learns which file the user is
           // looking at (and the selection) with zero shell calls.
           getActiveEditor: () => this.activeEditorInfo(),
