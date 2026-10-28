@@ -27,6 +27,12 @@ import {
 } from '@/api/http';
 import { showCreditsToast } from '@/components/Toast/creditsToast';
 import { showStorageToast } from '@/components/Toast/storageToast';
+import {
+  attentionPromptId,
+  clearAgentAttention,
+  previewText,
+  requestAgentAttention,
+} from '@/host/attention';
 import type { AppHost } from '@/host/types';
 import { generateUniqueId, uploadLog } from '@/lib';
 import { feDebug } from '@/lib/debug';
@@ -126,6 +132,20 @@ type ConfirmedUserPromptSources = {
 
 const nonEmptyString = (value: unknown): string | undefined =>
   typeof value === 'string' && value.length > 0 ? value : undefined;
+
+// Only a live, user-driven run can block on a human. Replay/share transcripts
+// and finished runs re-render asks visually, so alerting for them would bounce
+// the Dock for a prompt nobody can answer.
+function shouldAnnounceAttention(
+  task: { type?: string; status?: string } | undefined
+): boolean {
+  return (
+    !!task &&
+    task.type !== 'replay' &&
+    task.type !== 'share' &&
+    task.status !== ChatTaskStatus.FINISHED
+  );
+}
 
 export function resolveConfirmedUserMessageContent({
   lastMessageContent,
@@ -898,7 +918,7 @@ export interface ChatStore {
   setTaskAssigning: (taskId: string, taskAssigning: Agent[]) => void;
   setTaskInfo: (taskId: string, taskInfo: TaskInfo[]) => void;
   setTaskRunning: (taskId: string, taskRunning: TaskInfo[]) => void;
-  setActiveAsk: (taskId: string, agentName: string) => void;
+  setActiveAsk: (taskId: string, agentName: string, question?: string) => void;
   setActiveAskList: (taskId: string, message: Message[]) => void;
   setActiveApproval: (taskId: string, approval: ActiveApproval | null) => void;
   addWebViewUrl: (
@@ -5033,7 +5053,11 @@ const chatStore = (initial?: Partial<ChatStore>) =>
             const [nextAsk, ...remainingAsks] = tasks[currentTaskId].askList;
             setActiveAskList(currentTaskId, remainingAsks);
             if (nextAsk) {
-              setActiveAsk(currentTaskId, nextAsk.agent_name || '');
+              setActiveAsk(
+                currentTaskId,
+                nextAsk.agent_name || '',
+                nextAsk.content
+              );
               addMessages(currentTaskId, nextAsk);
             } else {
               setActiveAsk(currentTaskId, '');
@@ -5066,7 +5090,11 @@ const chatStore = (initial?: Partial<ChatStore>) =>
             // tasks from live input timers. Keeping the state here lets a
             // recorded HUMAN_REPLY promote queued historical questions in
             // the same order as the original run.
-            setActiveAsk(currentTaskId, agentMessages.data.agent || '');
+            setActiveAsk(
+              currentTaskId,
+              agentMessages.data.agent || '',
+              newMessage.content
+            );
             setIsPending(currentTaskId, false);
             addMessages(currentTaskId, newMessage);
             return;
@@ -5809,6 +5837,8 @@ const chatStore = (initial?: Partial<ChatStore>) =>
       }));
     },
     setActiveApproval(taskId, approval) {
+      const previous = get().tasks[taskId];
+      const previousApprovalId = previous?.activeApproval?.approval_id;
       set((state) => ({
         ...state,
         tasks: {
@@ -5819,6 +5849,29 @@ const chatStore = (initial?: Partial<ChatStore>) =>
           },
         },
       }));
+      if (previousApprovalId && previousApprovalId !== approval?.approval_id) {
+        clearAgentAttention(
+          attentionPromptId(taskId, 'approval', previousApprovalId)
+        );
+      }
+      // A timeout re-sets the same card with `expired: true`; the user has
+      // already been alerted for this approval id.
+      if (
+        !approval ||
+        approval.expired ||
+        !shouldAnnounceAttention(previous)
+      ) {
+        return;
+      }
+      requestAgentAttention({
+        id: attentionPromptId(taskId, 'approval', approval.approval_id),
+        taskId,
+        kind: 'approval',
+        title: `Approve "${approval.tool_name}" to continue`,
+        body:
+          previewText(approval.description || approval.detail) ||
+          'The agent is paused until you approve this command.',
+      });
     },
     setTaskAssigning(taskId, taskAssigning) {
       set((state) => ({
@@ -5965,7 +6018,8 @@ const chatStore = (initial?: Partial<ChatStore>) =>
         setTaskAssigning(taskId, taskAssigning);
       }
     },
-    setActiveAsk(taskId, agentName) {
+    setActiveAsk(taskId, agentName, question) {
+      const previousAgent = get().tasks[taskId]?.activeAsk || '';
       set((state) => ({
         ...state,
         tasks: {
@@ -5976,6 +6030,23 @@ const chatStore = (initial?: Partial<ChatStore>) =>
           },
         },
       }));
+      if (previousAgent && previousAgent !== agentName) {
+        clearAgentAttention(
+          attentionPromptId(taskId, 'question', previousAgent)
+        );
+      }
+      if (!agentName || !shouldAnnounceAttention(get().tasks[taskId])) {
+        return;
+      }
+      requestAgentAttention({
+        id: attentionPromptId(taskId, 'question', agentName),
+        taskId,
+        kind: 'question',
+        title: `${agentName} needs your reply`,
+        body:
+          previewText(question) ||
+          'The agent is waiting for your answer to continue.',
+      });
     },
     setProgressValue(taskId: string, progressValue: number) {
       set((state) => ({

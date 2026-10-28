@@ -1050,7 +1050,11 @@ export default function ChatBox(): JSX.Element {
           let activeAskList = chatStore.tasks[_taskId].askList;
           let message = activeAskList.shift();
           chatStore.setActiveAskList(_taskId, [...activeAskList]);
-          chatStore.setActiveAsk(_taskId, message?.agent_name || '');
+          chatStore.setActiveAsk(
+            _taskId,
+            message?.agent_name || '',
+            message?.content
+          );
           chatStore.setIsPending(_taskId, false);
           chatStore.addMessages(_taskId, message!);
         }

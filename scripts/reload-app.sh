@@ -15,6 +15,11 @@
 # packages/ changed. Python edits are different — a running brain keeps the
 # modules it imported, so this script warns when brain/app is newer than the
 # brain process and restarts it only when asked (a restart drops task state).
+#
+# Electron main-process and window-preload edits are the other exception: files
+# under packages/undisclosed-agent/src/electron-*/ are compiled into the Theia
+# bundles, so they need `npm run build` in apps/desktop and a repackage. This
+# script does not install those.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

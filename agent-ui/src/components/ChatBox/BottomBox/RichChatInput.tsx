@@ -14,6 +14,15 @@
 // ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
 
 import {
+  CHAT_HISTORY_EVENT,
+  createChatHistory,
+  recordChatHistory,
+  redoChatHistory,
+  undoChatHistory,
+  type ChatHistory,
+  type ChatHistoryRequest,
+} from '@/lib/chatHistory';
+import {
   httpUrlOrNull,
   segmentsToHtml,
   tokenizeRichPlainText,
@@ -214,6 +223,9 @@ export const RichChatInput = React.forwardRef<
   const internalUpdate = useRef(false);
   const composingRef = useRef(false);
   const scrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Every keystroke rewrites innerHTML to re-render chips, which throws away
+  // Chromium's native undo stack, so the input keeps its own.
+  const historyRef = useRef<ChatHistory>(createChatHistory(value));
 
   const setRootRef = useCallback(
     (node: HTMLDivElement | null) => {
@@ -253,6 +265,61 @@ export const RichChatInput = React.forwardRef<
     el.style.height = 'auto';
     el.style.height = `${Math.min(el.scrollHeight, maxHeightPx)}px`;
   }, [maxHeightPx]);
+
+  const recordHistory = useCallback(
+    (nextValue: string, caret: number, breakRun = false) => {
+      recordChatHistory(historyRef.current, nextValue, caret, { breakRun });
+    },
+    []
+  );
+
+  const applyHistoryEntry = useCallback(
+    (entry: { value: string; caret: number }) => {
+      internalUpdate.current = true;
+      onChange(entry.value, entry.caret);
+      applyHtml(entry.value, entry.caret);
+      resizeHeight();
+    },
+    [applyHtml, onChange, resizeHeight]
+  );
+
+  const undo = useCallback((): boolean => {
+    const entry = undoChatHistory(historyRef.current);
+    if (!entry) return false;
+    applyHistoryEntry(entry);
+    return true;
+  }, [applyHistoryEntry]);
+
+  const redo = useCallback((): boolean => {
+    const entry = redoChatHistory(historyRef.current);
+    if (!entry) return false;
+    applyHistoryEntry(entry);
+    return true;
+  }, [applyHistoryEntry]);
+
+  /** Cmd/Ctrl+Z undoes; Cmd+Shift+Z and Ctrl+Y redo. */
+  const handleHistoryChord = useCallback(
+    (e: {
+      key: string;
+      metaKey: boolean;
+      ctrlKey: boolean;
+      shiftKey: boolean;
+      altKey: boolean;
+      preventDefault: () => void;
+      stopPropagation: () => void;
+    }): boolean => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey) return false;
+      const key = e.key.toLowerCase();
+      if (key !== 'z' && key !== 'y') return false;
+      // The native undo is unusable here (see historyRef), so never fall through.
+      e.preventDefault();
+      e.stopPropagation();
+      if (key === 'y' || e.shiftKey) redo();
+      else undo();
+      return true;
+    },
+    [redo, undo]
+  );
 
   const handleBlur = useCallback(() => {
     const el = rootRef.current;
@@ -295,6 +362,7 @@ export const RichChatInput = React.forwardRef<
       internalUpdate.current = false;
       // External value may have changed in the same tick (e.g. example prompt click).
       if (el && getPlainTextFromRoot(el) !== value) {
+        recordHistory(value, value.length, true);
         applyHtml(value);
       }
       resizeHeight();
@@ -316,9 +384,25 @@ export const RichChatInput = React.forwardRef<
       sel.rangeCount > 0 &&
       el.contains(sel.anchorNode);
     const caretBefore = shouldRestoreCaret ? getCaretOffset(el) : undefined;
+    recordHistory(value, caretBefore ?? value.length, true);
     applyHtml(value, caretBefore);
     resizeHeight();
-  }, [value, applyHtml, resizeHeight]);
+  }, [value, applyHtml, recordHistory, resizeHeight]);
+
+  // The host's key guard runs in window capture, ahead of anything bound in
+  // here, so it hands the chord over as an event instead of a keydown.
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    const onHistoryRequest = (event: Event) => {
+      event.preventDefault();
+      const request = (event as CustomEvent<ChatHistoryRequest>).detail;
+      if (request?.redo) redo();
+      else undo();
+    };
+    el.addEventListener(CHAT_HISTORY_EVENT, onHistoryRequest);
+    return () => el.removeEventListener(CHAT_HISTORY_EVENT, onHistoryRequest);
+  }, [redo, undo]);
 
   const handleInput = () => {
     const el = rootRef.current;
@@ -326,6 +410,7 @@ export const RichChatInput = React.forwardRef<
     const plain = getPlainTextFromRoot(el);
     const caret = getCaretOffset(el);
     internalUpdate.current = true;
+    recordHistory(plain, caret);
     onChange(plain, caret);
     applyHtml(plain, caret);
     resizeHeight();
@@ -361,6 +446,7 @@ export const RichChatInput = React.forwardRef<
           e.preventDefault();
           const newValue = value.slice(0, start) + value.slice(end);
           internalUpdate.current = true;
+          recordHistory(newValue, start, true);
           onChange(newValue, start);
           applyHtml(newValue, start);
           resizeHeight();
@@ -370,7 +456,7 @@ export const RichChatInput = React.forwardRef<
       }
       return false;
     },
-    [applyHtml, onChange, resizeHeight, value]
+    [applyHtml, onChange, recordHistory, resizeHeight, value]
   );
 
   const handlePaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
@@ -472,6 +558,7 @@ export const RichChatInput = React.forwardRef<
         onInput={handleInput}
         onPaste={handlePaste}
         onKeyDown={(e) => {
+          if (handleHistoryChord(e)) return;
           if (handleChipAwareDelete(e)) return;
           onKeyDown?.(e);
         }}

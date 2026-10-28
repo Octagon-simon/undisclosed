@@ -35,6 +35,7 @@ import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { ConnectionProvider } from '@/context/ConnectionContext';
 import { createHost, HostProvider } from '@/host';
+import { CHAT_HISTORY_EVENT, type ChatHistoryRequest } from '@/lib/chatHistory';
 import { setOpenFolderRoot } from '@/lib/openFolder';
 import type { AppHost } from '@/host/types';
 import i18n from '@/i18n';
@@ -248,11 +249,27 @@ export function mountAgentPanel(
       return;
     }
 
-    // C/X/V and Z/Y (undo/redo): stop Theia's global keybinding from hijacking
-    // the chord (but do NOT preventDefault) so the browser/native performs the
-    // clipboard edit / undo / redo on the focused input — same reason Cmd+Z
-    // "worked in the editor but not the built app" (Monaco self-handles undo;
-    // our plain inputs need the native path, which Theia's binding was eating).
+    if (isUndoRedo) {
+      // The chatbox rewrites innerHTML on every keystroke to re-render chips, so
+      // its native undo stack is useless; it keeps its own and claims the chord
+      // here. Unclaimed (a plain input, the editor) keeps the native path.
+      const claimed = !t.dispatchEvent(
+        new CustomEvent<ChatHistoryRequest>(CHAT_HISTORY_EVENT, {
+          bubbles: true,
+          cancelable: true,
+          detail: { redo: key === 'y' || e.shiftKey },
+        })
+      );
+      if (claimed) e.preventDefault();
+      e.stopImmediatePropagation();
+      e.stopPropagation();
+      return;
+    }
+
+    // C/X/V: stop Theia's global keybinding from hijacking the chord (but do
+    // NOT preventDefault) so the browser/native performs the clipboard edit on
+    // the focused input — same reason C/X/V "worked in the editor but not the
+    // built app" (Monaco self-handles its clipboard).
     e.stopPropagation();
   };
   window.addEventListener('keydown', panelEditChordGuard, true);

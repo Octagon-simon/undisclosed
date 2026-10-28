@@ -32,6 +32,7 @@ import {
   ElectronMainApplicationContribution,
 } from '@theia/core/lib/electron-main/electron-main-application';
 import * as cp from 'child_process';
+import { AgentAttentionContribution } from './agent-attention';
 import { MainAppBridgeContribution } from './main-app-bridge';
 
 /**
@@ -145,6 +146,11 @@ export class BrainTeardownContribution
 }
 
 export default new ContainerModule((bind) => {
+  // Works in dev and packaged builds: the panel can ask for the user's attention
+  // wherever the app is running.
+  bind(ElectronMainApplicationContribution)
+    .to(AgentAttentionContribution)
+    .inSingletonScope();
   if (resourcesPresent()) {
     bind(ElectronMainApplicationContribution)
       .to(BrainTeardownContribution)

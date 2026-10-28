@@ -129,3 +129,4 @@ dist/*.skill
 # The `!site/**` exception above re-includes everything under site/, including
 # editor auto-backups. Keep those out of the deployable tree.
 site/**/*.bak
+apps/desktop/dist-signed/
