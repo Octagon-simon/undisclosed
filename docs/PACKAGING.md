@@ -278,12 +278,10 @@ produces an unsigned app no matter which certificates sit in the keychain.
 Unsigned is noisy for users (Gatekeeper warns on first open) but it is safe:
 it cannot accidentally carry a real identity.
 
-**The release identity must be Simon's own team.** The Developer ID on this
-machine, `Developer ID Application: KABO CASH TECHNOLOGIES (U) - SMC LIMITED
-(BUK7UV2C7T)`, is a company asset issued to an organisation Simon leads as
-senior lead. It is real and `codesign --verify --deep --strict` passes on builds
-signed with it, but it is **not** to sign distributed builds, DMGs included.
-Local dev installs may use it; a release may not.
+**The release identity must be Simon's own Apple Developer team.** A Developer
+ID issued to any other team (an employer's, a client's, or a borrowed cert) is
+not to sign distributed builds, DMGs included, even when `codesign --verify`
+passes on it. Local dev installs are the only exception.
 
 **When your own Developer ID exists**, three things have to change together:
 
