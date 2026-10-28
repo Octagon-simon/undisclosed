@@ -269,11 +269,76 @@ The bump is committed on the **current branch** only, so `main` is untouched.
 
 ---
 
-## 4. Caveats / decisions still open
+## 4. Code signing: whose identity ships
+
+**Default state: nothing is signed.** `electron-builder.yml` sets
+`mac.identity: null` and `.github/workflows/release.yml` sets
+`CSC_IDENTITY_AUTO_DISCOVERY: "false"`, so `npm run dist:mac` (local or CI)
+produces an unsigned app no matter which certificates sit in the keychain.
+Unsigned is noisy for users (Gatekeeper warns on first open) but it is safe:
+it cannot accidentally carry a real identity.
+
+**The release identity must be Simon's own team.** The Developer ID on this
+machine, `Developer ID Application: KABO CASH TECHNOLOGIES (U) - SMC LIMITED
+(BUK7UV2C7T)`, is a company asset issued to an organisation Simon leads as
+senior lead. It is real and `codesign --verify --deep --strict` passes on builds
+signed with it, but it is **not** to sign distributed builds, DMGs included.
+Local dev installs may use it; a release may not.
+
+**When your own Developer ID exists**, three things have to change together:
+
+1. Point the build at your identity. Either drop `identity: null` and let
+   electron-builder auto-discover (disambiguate with `CSC_NAME`), or set the
+   full common name explicitly:
+
+   ```yaml
+   mac:
+     identity: "Developer ID Application: <Your Name> (<YOURTEAMID>)"
+     hardenedRuntime: true      # notarization requires it
+     entitlements: "build/entitlements.mac.plist"
+     entitlementsInherit: "build/entitlements.mac.plist"
+   ```
+
+2. Ship entitlements. Electron plus Theia's native modules (`node-pty`,
+   ripgrep) need at minimum `com.apple.security.cs.allow-jit`,
+   `com.apple.security.cs.allow-unsigned-executable-memory` and
+   `com.apple.security.cs.disable-library-validation`. Without the last one the
+   plugin host fails to load its `.node` binaries under hardened runtime.
+
+3. Notarize after signing, inside the same job:
+
+   ```sh
+   ditto -c -k --keepParent "apps/desktop/dist/mac-arm64/Undisclosed.app" app.zip
+   xcrun notarytool submit app.zip --apple-id "$APPLE_ID" \
+     --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
+   xcrun stapler staple "apps/desktop/dist/mac-arm64/Undisclosed.app"
+   ```
+
+   Notarization requires a **secure timestamp** (`--timestamp` on
+   `codesign`). On the network used during the 2026-10-28 attempt, Apple's
+   timestamp server was unreachable, so that build could not be notarized even
+   though it signed. Check `xcrun notarytool` reachability before promising a
+   notarized release.
+
+Verify before publishing, not after:
+
+```sh
+codesign -dv --verbose=4 /Applications/Undisclosed.app   # Identifier + TeamIdentifier
+codesign --verify --deep --strict --verbose=2 /Applications/Undisclosed.app
+spctl -a -vvv /Applications/Undisclosed.app              # accepted / notarized
+```
+
+Keep the `.p12`, the app-specific password and the team id in CI secrets. Never
+in the repo, and never as a literal in `electron-builder.yml`.
+
+---
+
+## 5. Caveats / decisions still open
 
 - **Code signing.** Unsigned macOS/Windows builds trigger Gatekeeper/SmartScreen
-  warnings. macOS needs an Apple Developer cert + **notarization**; Windows
-  needs an Authenticode cert. Wire the secrets shown above when you have them.
+  warnings, and macOS notifications stay denied until the bundle is signed
+  under its real bundle id. See "Code signing: whose identity ships" above for
+  what has to be in place. Windows needs an Authenticode cert.
 - **Playwright/Chromium for the browser toolkit.** The brain launches a CDP
   Chromium. Decide whether to bundle a browser or rely on the user's Chrome
   (`UNDISCLOSED_CHROME_PATH` / `UNDISCLOSED_CDP_URL`). This affects install size.
@@ -285,7 +350,7 @@ The bump is committed on the **current branch** only, so `main` is untouched.
 
 ---
 
-## 5. TL;DR order of work
+## 6. TL;DR order of work
 
 1. Stand up an Electron Theia app package (`apps/desktop/`).
 2. Freeze the brain with PyInstaller; spawn it from Electron main.
