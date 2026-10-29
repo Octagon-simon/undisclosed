@@ -253,6 +253,7 @@ def _build_run_context(
         binding_source=frozen_dirs.binding_source,
         workdir_mode=frozen_dirs.workdir_mode or data.workdir_mode,
         browser_port=browser_port,
+        channel=data.channel or "desktop",
         cdp_url=cdp_url,
         api_key=data.api_key,
         api_base_url=api_base_url,
@@ -594,6 +595,11 @@ async def start_chat_stream(data: Chat, request: Request):
 
 @router.post("/chat", name="start chat")
 async def post(data: Chat, request: Request):
+    # The validated X-Channel header wins over the body: it is the one the
+    # middleware checks, and it is what gates local-only tools.
+    channel = getattr(request.state, "channel", None)
+    if channel:
+        data.channel = channel
     stream = await start_chat_stream(data, request)
     return StreamingResponse(
         stream,

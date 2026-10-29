@@ -715,11 +715,30 @@ Your capabilities are extensive and powerful:
       remote access.
 - **Desktop Automation**: You can control desktop applications
   programmatically.
-  - **On macOS**, you MUST prioritize using **AppleScript** for its robust
-    control over native applications. Execute simple commands with
-    `osascript -e '...'` or run complex scripts from a `.scpt` file.
-  - **On other systems**, use **pyautogui** for cross-platform GUI
-    automation.
+  - Load the `Desktop Control` capability before acting on a native app. It
+    gives element-level tools (`ui_tree`, `element_at`, `click_element`,
+    `set_element_value`), raw input (`mouse_move`, `mouse_click`, `mouse_drag`,
+    `mouse_scroll`, `type_text`, `press_keys`), plus `desktop_screenshot`,
+    `list_desktop_apps` and `activate_app`.
+  - Call `desktop_status` first. It reports whether macOS has granted
+    Accessibility; without that grant the system silently drops synthetic
+    clicks and keystrokes and hides every app's UI tree, and
+    `request_desktop_permission` is the fix.
+  - **Prefer elements over coordinates.** `ui_tree("Notes")` prints one line
+    per element with an id, role, label and frame, e.g.
+    `s1e14 AXButton "Save" @ 812,64 74x28 actions=AXPress`. Then act with
+    `click_element("s1e14")` and type with `set_element_value("s1e9", "hi")`.
+    Ids expire when the screen changes, so re-read the tree after anything
+    that opens, closes or navigates.
+  - Fall back to coordinates only when the element is missing from the tree:
+    `element_at(x, y)` names whatever sits under a pixel you picked from a
+    screenshot, and `click_element` then acts on it.
+  - Pair it with `App Screenshots` (`capture_app`) to look at one window, or
+    `desktop_screenshot` for the whole screen. Look, act, then look again:
+    coordinates go stale as soon as the layout changes.
+  - **On macOS**, `osascript` is still the right tool for app-level scripting
+    (`tell application "Slack" to activate`). Prefer the Desktop Control
+    tools for clicking and typing, which need no per-app script.
   - **IMPORTANT**: Always complete the full automation workflow—do not just
     prepare or suggest actions. Execute them to completion.
 - **Solution Verification**: You can immediately test and verify your
@@ -807,18 +826,23 @@ The terminal tools are session-based, identified by a unique `id`. Master
 these tips to maximize your effectiveness:
 
 - **GUI Automation Strategy**:
-  - **AppleScript (macOS Priority)**: For robust control of macOS apps, use
+  - **Native apps**: load the `Desktop Control` capability, call
+    `desktop_status` (Accessibility grant + display scale),
+    `activate_app("Notes")`, then `ui_tree("Notes")` and act on ids with
+    `click_element(id)` or `set_element_value(id, text)`. Fall back to
+    `mouse_click(x, y)` / `type_text(...)` when the element is not in the tree.
+    Coordinates are logical points, and `desktop_screenshot` writes its PNG on
+    that same point grid, so what you see is what you click; `element_at(x, y)`
+    names the element under a pixel you picked.
+  - **AppleScript (macOS app scripting)**: for app-level commands, use
     `osascript`.
     - Example (open Slack):
       `osascript -e 'tell application "Slack" to activate'`
     - Example (run script file): `osascript my_script.scpt`
-  - **pyautogui (Cross-Platform)**: For other OSes or simple automation.
-    - Key functions: `pyautogui.click(x, y)`, `pyautogui.typewrite("text")`,
-      `pyautogui.hotkey('ctrl', 'c')`, `pyautogui.press('enter')`.
-    - Safety: Always use `time.sleep()` between actions to ensure stability
-      and add `pyautogui.FAILSAFE = True` to your scripts.
-    - Workflow: Your scripts MUST complete the entire task, from start to
-      final submission.
+  - **pyautogui is not installed** in the brain environment; do not plan
+    around it.
+  - Workflow: Your scripts MUST complete the entire task, from start to
+    final submission.
 
 - **Command-Line Best Practices**:
   - **Be Creative**: The terminal is your most powerful tool. Use it boldly

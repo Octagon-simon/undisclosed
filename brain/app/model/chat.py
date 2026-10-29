@@ -112,6 +112,11 @@ class Chat(BaseModel):
     # from the host bridge so the agent has live "what am I looking at" context
     # without shelling out. See the frontend active-editor store.
     active_editor: dict[str, Any] | None = None
+    # Where this turn came from (the X-Channel header, see ChannelSessionMiddleware).
+    # Local-only capabilities, Desktop Control above all, are gated on it: a
+    # Slack- or WhatsApp-originated turn must not click and type on the machine
+    # the brain runs on.
+    channel: str = "desktop"
     # Internal: re-open the streaming consumer for an already-started Project
     # WITHOUT enqueueing the initial turn. Set by the client when it is
     # re-attaching to a session whose SSE stream died (brain restart, idle

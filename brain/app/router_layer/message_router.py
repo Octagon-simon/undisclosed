@@ -1,4 +1,5 @@
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+# Portions Copyright 2026 Simon Ugorji. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -166,6 +167,7 @@ class DefaultMessageRouter(IRouter):
             project_id=project_id,
             question=content,
             email=email,
+            channel=msg.channel or "desktop",
             attaches=attaches,
             model_platform=payload.get("model_platform") or "openai",
             model_type=payload.get("model_type") or "gpt-4o",

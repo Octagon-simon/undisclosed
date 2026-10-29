@@ -53,6 +53,12 @@ _CAPABILITY_ALIASES = {
     "simulator screenshot": "App Screenshots",
     "mobile screenshot": "App Screenshots",
     "device screenshot": "App Screenshots",
+    "desktop toolkit": "Desktop Control",
+    "desktop control toolkit": "Desktop Control",
+    "desktop automation": "Desktop Control",
+    "computer use": "Desktop Control",
+    "gui control": "Desktop Control",
+    "mouse and keyboard": "Desktop Control",
 }
 
 # Purpose hints for the capabilities the model kept confusing. Names alone made
@@ -63,6 +69,11 @@ _CAPABILITY_HINTS = {
     "App Screenshots": (
         "capture a running app: macOS app window, iOS Simulator, or Android "
         "device or emulator"
+    ),
+    "Desktop Control": (
+        "read a native app's accessibility tree, then press elements by id or "
+        "click, type and scroll on the user's desktop instead of only looking "
+        "at it"
     ),
 }
 

@@ -1,4 +1,5 @@
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+# Portions Copyright 2026 Simon Ugorji. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -38,6 +39,9 @@ class RunContext:
     binding_source: str
     workdir_mode: str | None
     browser_port: int
+    # Channel this run was started from (X-Channel). Local-only tools read it
+    # at call time so a resumed agent cannot outlive the rule it was built under.
+    channel: str = "desktop"
     cdp_url: str | None = None
     api_key: str | None = None
     api_base_url: str | None = None

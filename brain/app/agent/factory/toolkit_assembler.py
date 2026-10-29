@@ -39,6 +39,7 @@ from app.agent.toolkit.code_search_toolkit import CodeSearchToolkit
 from app.agent.toolkit.depth_limited_agent_toolkit import (
     DepthLimitedAgentToolkit,
 )
+from app.agent.toolkit.desktop_toolkit import LOCAL_CHANNELS, DesktopToolkit
 from app.agent.toolkit.diff_toolkit import (
     WRITE_TOOL_NAMES as DIFF_WRITE_TOOL_NAMES,
     DiffToolkit,
@@ -219,6 +220,30 @@ def _options(config: dict[str, Any], name: str) -> dict[str, Any]:
     return {key: item for key, item in value.items() if key != "enabled"}
 
 
+# Channels whose turns may drive the machine the brain runs on. A Slack, WhatsApp
+# or Lark message is written by someone who is not sitting at this Mac, so it
+# must not get a mouse and keyboard. See LOCAL_CHANNELS for why "web" counts as
+# local: it is the editor panel's self-description, not a remote client.
+_DESKTOP_CHANNELS: tuple[str, ...] = LOCAL_CHANNELS
+
+
+def _desktop_channel_allowed(config: dict[str, Any], options: Chat) -> bool:
+    """Whether this turn's channel may use Desktop Control.
+
+    `desktop.channels` widens or narrows the default (for example
+    ["desktop", "cli"] on a single-user box that also runs the CLI locally).
+    """
+    configured = _options(config, "desktop").get("channels")
+    allowed = (
+        configured
+        if isinstance(configured, (list, tuple, set))
+        else _DESKTOP_CHANNELS
+    )
+    names = {str(name).strip().lower() for name in allowed}
+    channel = str(getattr(options, "channel", "") or "desktop").strip().lower()
+    return channel in names
+
+
 def _governance_mode(config: dict[str, Any]) -> GovernanceMode:
     """Resolve the effective governance mode from the merged config."""
     value = _options(config, "governance")
@@ -376,6 +401,28 @@ async def _build_single_agent_app_capture(
     if agent is None:
         assembly.toolkits_to_register_agent.append(toolkit)
         assembly.add_tools(tools, AppCaptureToolkit.toolkit_name())
+    else:
+        _register_lazy_toolkit(agent, toolkit)
+    return tools
+
+
+async def _build_single_agent_desktop(
+    options, config, working_directory, message_integration, assembly, agent
+):
+    """Build + register desktop input. Nothing is clicked at build time; a
+    deferred build only costs the tool schemas once the model loads it."""
+    toolkit = DesktopToolkit(
+        options.project_id,
+        Agents.single_agent,
+        working_directory=working_directory,
+        **_options(config, "desktop"),
+    )
+    registered = message_integration.register_toolkits(toolkit)
+    tools = registered.get_tools()
+    _tag_tools(tools, DesktopToolkit.toolkit_name())
+    if agent is None:
+        assembly.toolkits_to_register_agent.append(toolkit)
+        assembly.add_tools(tools, DesktopToolkit.toolkit_name())
     else:
         _register_lazy_toolkit(agent, toolkit)
     return tools
@@ -662,6 +709,34 @@ async def assemble_single_agent_toolkits(
             logger.info(
                 "App Screenshots disabled: no window, simulator or Android "
                 "backend available on this host."
+            )
+
+    # Only advertise input control where synthetic events can actually be
+    # posted, and only to turns that started on this machine. Anything else
+    # would load a toolkit that either cannot post events or must not.
+    if _enabled(config, "desktop"):
+        if not _desktop_channel_allowed(config, options):
+            logger.info(
+                "Desktop Control withheld: turn came from channel %r, not %s",
+                getattr(options, "channel", "desktop"),
+                "/".join(_DESKTOP_CHANNELS),
+            )
+        elif DesktopToolkit.available():
+            if _lazy_single_agent_extras():
+                assembly.deferred_capabilities[
+                    DesktopToolkit.toolkit_name()
+                ] = lambda agent: _build_single_agent_desktop(
+                    options, config, working_directory, message_integration,
+                    assembly, agent,
+                )
+            else:
+                await _build_single_agent_desktop(
+                    options, config, working_directory, message_integration,
+                    assembly, None,
+                )
+        else:
+            logger.info(
+                "Desktop Control disabled: no input backend on this host."
             )
 
     if _enabled(config, "skill"):
