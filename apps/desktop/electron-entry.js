@@ -87,7 +87,7 @@ try {
   const http = require('http');
   const fs = require('fs');
   const os = require('os');
-  const { spawn, spawnSync } = require('child_process');
+  const { execFileSync, spawn, spawnSync } = require('child_process');
 
   // render-process-gone reasons that mean the renderer is actually dead (vs a
   // normal `clean-exit` on quit, which must NOT trigger a reload).
@@ -221,6 +221,83 @@ try {
   };
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // Theia forks the extension host as `<...>/lib/backend/plugin-host`, a child
+  // of the backend. Sleep can take it out (macOS reclaims background processes
+  // under memory pressure) and Theia never re-forks it: it only shows a
+  // "please reload the page" toast, so every extension (SCM, language servers,
+  // ...) stays dead until the window is reloaded. ppid 1 means an ORPHAN from an
+  // earlier hard kill, which is alive but useless — not a host this backend owns.
+  const pluginHostPids = () => {
+    if (process.platform !== 'darwin') {
+      return undefined; // no portable ps shape; never act on a guess
+    }
+    try {
+      const out = execFileSync('/bin/ps', ['-axo', 'pid=,ppid=,command='], {
+        encoding: 'utf8',
+        timeout: 5000,
+      });
+      return out
+        .split('\n')
+        .filter((line) => line.includes('lib/backend/plugin-host'))
+        .map((line) => line.trim().split(/\s+/))
+        .filter((fields) => fields.length > 1 && fields[1] !== '1')
+        .map((fields) => Number(fields[0]));
+    } catch (_e) {
+      return undefined; // ps unavailable: stay out of the way
+    }
+  };
+
+  /** Reload the windows when the extension host died across sleep. True if we
+   *  reloaded, so the caller knows a load in flight is ours, not the frontend's. */
+  const reloadIfExtensionHostGone = () => {
+    if ((process.env.UNDISCLOSED_RESUME_EXTENSION_RECOVERY || '1') === '0') {
+      return false;
+    }
+    const pids = pluginHostPids();
+    if (pids === undefined) {
+      return false;
+    }
+    if (pids.length > 0) {
+      logLine(`extension host alive (pid ${pids.join(',')}) — keeping UI`);
+      return false;
+    }
+    logLine(
+      'extension host is GONE after wake — reloading windows so Theia re-forks it'
+    );
+    reloadAllWindows();
+    return true;
+  };
+
+  // The frontend reloads itself when it reconnects to a backend that no longer
+  // has its connection context (`reloadOnReconnect` in the Theia frontend
+  // config). Log that, so a self-heal is distinguishable from "nothing happened".
+  const watchForFrontendSelfReload = () => {
+    const armedAt = Date.now();
+    for (const win of BrowserWindow.getAllWindows()) {
+      const wc = win.webContents;
+      if (wc.isDestroyed()) {
+        continue;
+      }
+      const onLoad = () => {
+        wc.removeListener('did-finish-load', onLoad);
+        if (Date.now() - armedAt < 30000) {
+          logLine(
+            `renderer finished loading ${Date.now() - armedAt}ms after wake — ` +
+              'frontend could not resume its backend connection and reloaded itself'
+          );
+        }
+      };
+      wc.once('did-finish-load', onLoad);
+      const timer = setTimeout(
+        () => wc.removeListener('did-finish-load', onLoad),
+        30000
+      );
+      if (timer.unref) {
+        timer.unref();
+      }
+    }
+  };
 
   /** One /health probe. True only on HTTP 200. */
   const probeBrain = (timeoutMs) =>
@@ -439,6 +516,13 @@ try {
       // renderer's SSE already retries/reconnects on its own (see fetchEventSource
       // onerror), so a healthy-brain wake needs no reload.
       logLine('brain healthy after resume — keeping brain + UI (no reload)');
+      // A surviving brain does not mean a surviving EDITOR: the extension host
+      // is a separate process, and Theia only toasts about it. Reload (which
+      // re-forks the host) when it is actually gone, and otherwise log any
+      // self-reload the frontend performs after a failed reconnect.
+      if (!reloadIfExtensionHostGone()) {
+        watchForFrontendSelfReload();
+      }
     }
   };
 

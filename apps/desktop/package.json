@@ -18,6 +18,7 @@
     "frontend": {
       "config": {
         "applicationName": "Undisclosed",
+        "reloadOnReconnect": true,
         "warnOnPotentiallyInsecureHostPattern": false,
         "electron": {
           "windowOptions": {

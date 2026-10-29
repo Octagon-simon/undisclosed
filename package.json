@@ -12,6 +12,7 @@
     "frontend": {
       "config": {
         "applicationName": "Undisclosed",
+        "reloadOnReconnect": true,
         "warnOnPotentiallyInsecureHostPattern": false,
         "preferences": {
           "security.workspace.trust.enabled": false,

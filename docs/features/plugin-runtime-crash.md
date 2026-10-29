@@ -162,3 +162,45 @@ PY
 # leaked dev plugin hosts (parents already dead -> ppid 1)
 ps -axo pid,ppid,etime,command | grep -F "eigent-theia/lib/backend/plugin-host" | grep -v grep
 ```
+
+## 7. Sleep/wake: the editor's extensions die, not the brain (2026-10-29)
+
+Symptom: after a sleep/resume the window looks fine and the brain answers `/health`, but Source
+Control says the folder is not a Git repository and every extension-backed feature (go to
+definition, hover, diagnostics, SCM decorators) is dead. Cmd+R fixes it. Nothing else does.
+
+`~/.undisclosed/logs/desktop-recovery.log` from the 2026-10-28 17:50 wake shows the split::
+
+    17:50:38 power resume (asleep 9015s) — running sleep/wake recovery
+    17:50:38 brain healthy after resume — keeping brain + UI (no reload)
+    17:50:41 backend offline in renderer (1/5)
+
+The brain was healthy. The editor's *channel* was not, and the wake path deliberately keeps the
+UI when the brain answers, so nothing repaired it. Two separate mechanisms produce this:
+
+1. **The frontend cannot resume its backend connection.** On resume socket.io reconnects and asks
+   the backend to reconnect the frontend id (`ws-connection-source.ts`). If the backend no longer
+   holds that connection context, Theia closes the channel and negotiates an *initial* connect
+   instead — unless `reloadOnReconnect` is set, which defaults to `false` in
+   `@theia/application-package`. Core services rebind to the new channel, but plugin-ext's client
+   and activation state stay bound to the old one, so every extension call is dead while the shell
+   still works. We now set `"reloadOnReconnect": true` in `theia.frontend.config` in both
+   `package.json` and `apps/desktop/package.json`, which is Theia's own remedy: reload the window in
+   exactly that case. Verified in the build output: `lib/frontend/bundle.js` carries
+   `reloadOnReconnect:!0` next to `applicationName:"Undisclosed"`.
+2. **The extension host process is gone.** `HostedPluginProcess.onChildProcessExit` logs
+   `IPC exited` and shows a "please reload the page" toast; it never re-forks the host. macOS
+   reclaims background processes under memory pressure while the machine sleeps, which is exactly
+   when this happens. `electron-entry.js` now checks on wake, only when the brain was kept, for a
+   `lib/backend/plugin-host` process whose `ppid != 1` (an orphan from an earlier hard kill does not
+   count). When there is none it reloads the windows, which re-forks the host.
+
+Both are logged, so the next occurrence is diagnosable instead of silent::
+
+    extension host alive (pid 13708) — keeping UI
+    extension host is GONE after wake — reloading windows so Theia re-forks it
+    renderer finished loading 812ms after wake — frontend could not resume its backend connection and reloaded itself
+
+Kill switch: `UNDISCLOSED_RESUME_EXTENSION_RECOVERY=0` disables the process check. It only runs on
+macOS (`ps -axo`); elsewhere it returns without acting. The `reloadOnReconnect` half is baked at
+build time, so it needs `npm run build` (dev) or a repackage before it is live.
