@@ -620,20 +620,22 @@ async def assemble_single_agent_toolkits(
         toolkit.agent_name = Agents.single_agent
         toolkit = message_integration.register_toolkits(toolkit)
         file_tools = toolkit.get_tools()
-        if governance_mode is GovernanceMode.ASK:
-            file_tools = gate_tool_if_named(
-                file_tools,
-                target_names={
-                    "write_to_file",
-                    "edit_file",
-                    "notebook_edit_cell",
-                    "delete_files",
-                    "restore_backup",
-                },
-                field_name="file_write",
-                agent_name=Agents.single_agent,
-                api_task_id=options.project_id,
-            )
+        # Wrapped in AUTO too: `delete_files` is protected, the other writes
+        # run there and only prompt in Ask.
+        file_tools = gate_tool_if_named(
+            file_tools,
+            target_names={
+                "write_to_file",
+                "edit_file",
+                "notebook_edit_cell",
+                "delete_files",
+                "restore_backup",
+            },
+            field_name="file_write",
+            agent_name=Agents.single_agent,
+            api_task_id=options.project_id,
+            mode=governance_mode,
+        )
         assembly.add_tools(file_tools, FileToolkit.toolkit_name())
 
     if _enabled(config, "web_deploy"):
@@ -952,7 +954,8 @@ async def assemble_single_agent_toolkits(
         )
         toolkit = message_integration.register_toolkits(toolkit)
         terminal_tools = toolkit.get_tools()
-        # Wrapped in AUTO too: tier 2 must prompt even with the flag off.
+        # Wrapped in AUTO too: deletion and git history still confirm there,
+        # everything else in the shell runs.
         terminal_tools = gate_tool_if_named(
             terminal_tools,
             target_names={
@@ -976,8 +979,8 @@ async def assemble_single_agent_toolkits(
         )
         toolkit = message_integration.register_toolkits(toolkit)
         git_tools = toolkit.get_tools()
-        # Wrapped in AUTO too: `git_push` is tier 2, so it prompts in every
-        # mode. `git add`/`commit` stay tier 1 and only prompt in ASK.
+        # Wrapped in AUTO too: `git_push` is irreversible, so it still
+        # prompts there. `git add`/`commit` run in AUTO and prompt in ASK.
         git_tools = gate_tool_if_named(
             git_tools,
             target_names=GIT_WRITE_TOOL_NAMES,

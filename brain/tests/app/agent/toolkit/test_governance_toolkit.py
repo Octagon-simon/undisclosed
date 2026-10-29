@@ -74,6 +74,19 @@ def _make_shell_tool() -> FunctionTool:
     return FunctionTool(_shell_tool)
 
 
+async def delete_files(paths: list[str]) -> str:
+    """Delete files.
+
+    Args:
+        paths: The paths to delete.
+    """
+    return f"deleted {paths}"
+
+
+def _make_delete_tool() -> FunctionTool:
+    return FunctionTool(delete_files)
+
+
 def _without_intent(schema: dict) -> dict:
     cloned = copy.deepcopy(schema)
     cloned["function"]["parameters"]["properties"].pop("intent", None)
@@ -277,6 +290,59 @@ class TestTieredGating:
         manager.request_approval.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_outside_workspace_write_runs_in_auto(self, monkeypatch):
+        manager = _patch_manager(monkeypatch)
+        monkeypatch.setattr(
+            "app.agent.toolkit.governance_toolkit.workspace_for_task",
+            lambda task_id: "/repo",
+        )
+        gated = self._gated(GovernanceMode.AUTO)
+
+        command = "node build.js > /tmp/build.log 2>&1"
+        assert await gated.func(command=command) == f"ran {command}"
+        manager.request_approval.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_outside_workspace_write_prompts_in_ask(self, monkeypatch):
+        manager = _patch_manager(monkeypatch)
+        monkeypatch.setattr(
+            "app.agent.toolkit.governance_toolkit.workspace_for_task",
+            lambda task_id: "/repo",
+        )
+        gated = self._gated(GovernanceMode.ASK)
+
+        await gated.func(command="node build.js > /tmp/build.log 2>&1")
+        manager.request_approval.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_delete_tool_prompts_in_auto(self, monkeypatch):
+        manager = _patch_manager(monkeypatch)
+        gated = wrap_with_approval(
+            _make_delete_tool(),
+            field_name="file_write",
+            agent_name="single_agent",
+            api_task_id="project_1",
+            mode=GovernanceMode.AUTO,
+        )
+
+        await gated.func(paths=["build"])
+        manager.request_approval.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_file_write_skips_prompt_in_auto(self, monkeypatch):
+        manager = _patch_manager(monkeypatch)
+        gated = wrap_with_approval(
+            _make_tool(),
+            field_name="file_write",
+            agent_name="single_agent",
+            api_task_id="project_1",
+            mode=GovernanceMode.AUTO,
+        )
+
+        assert await gated.func(path="notes.txt") == "wrote notes.txt"
+        manager.request_approval.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_destructive_denied_in_auto(self, monkeypatch):
         _patch_manager(monkeypatch, decision="denied")
         gated = self._gated(GovernanceMode.AUTO)
@@ -460,7 +526,7 @@ class TestTaskAllowlist:
     @pytest.mark.asyncio
     async def test_reads_prompt_when_file_reads_is_removed(self, monkeypatch):
         manager = _patch_manager(monkeypatch, allowed_scopes=set())
-        gated = self._gated(GovernanceMode.AUTO)
+        gated = self._gated(GovernanceMode.ASK)
 
         assert await gated.func(command="git status") == "ran git status"
         manager.request_approval.assert_awaited_once()
@@ -607,7 +673,7 @@ class TestTaskAllowlist:
     @pytest.mark.asyncio
     async def test_listing_card_says_reads_only(self, monkeypatch):
         manager = _patch_manager(monkeypatch, allowed_scopes=set())
-        gated = self._gated(GovernanceMode.AUTO)
+        gated = self._gated(GovernanceMode.ASK)
 
         await gated.func(command="cd /repo && find . -name '*.py'")
         kwargs = manager.request_approval.await_args.kwargs

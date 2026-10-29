@@ -43,12 +43,19 @@ class CommandTier(IntEnum):
 
 @dataclass(frozen=True)
 class CommandAssessment:
-    """Result of classifying one command line."""
+    """Result of classifying one command line.
+
+    `tier` says how much the command can change. `irreversible` is the
+    narrower axis Auto still confirms: the work cannot be recovered by the
+    user (deleted files, discarded history, an overwritten remote).
+    """
 
     tier: CommandTier
     reason: str
     segments: tuple[str, ...] = ()
     scopes: tuple[CommandScope, ...] = ()
+    irreversible: bool = False
+    irreversible_reason: str = ""
 
     @property
     def blocked(self) -> bool:
@@ -456,11 +463,16 @@ def assess_command(
     best = CommandTier.READ_ONLY
     reason = "read-only"
     scopes: list[CommandScope] = []
+    irreversible = False
+    irreversible_reason = ""
     for index, segment in enumerate(segments):
         tier, segment_reason = _classify_segment(segment)
         if index == 0 or tier > best:
             best = tier
             reason = segment_reason
+        if not irreversible and _segment_is_irreversible(segment):
+            irreversible = True
+            irreversible_reason = "it discards work or changes a remote"
         for scope in _classify_scopes(segment):
             if scope not in scopes:
                 scopes.append(scope)
@@ -471,17 +483,16 @@ def assess_command(
             escape = _write_outside_workspace(segment, root)
             if escape:
                 best = max(best, CommandTier.DESTRUCTIVE)
-                reason = (
-                    f"writes {escape} outside the workspace; that needs "
-                    "approval in every mode"
-                )
+                reason = f"writes {escape} outside the workspace"
                 break
 
-    if workspace and best != CommandTier.BLOCKED and _DELETE_CALL.search(text):
-        root = Path(workspace).expanduser().resolve()
+    if best != CommandTier.BLOCKED and _DELETE_CALL.search(text):
+        root = Path(workspace).expanduser().resolve() if workspace else None
         targets = _delete_targets(text)
         escapes = [
-            target for target in targets if _escapes_workspace(target, root)
+            target
+            for target in targets
+            if root is not None and _escapes_workspace(target, root)
         ]
         if escapes:
             best = CommandTier.BLOCKED
@@ -491,11 +502,23 @@ def assess_command(
             )
         elif not targets:
             # A variable or a glob: the target cannot be checked statically,
-            # so the call needs an approval in every mode.
+            # so the call is irreversible whatever the mode.
             best = max(best, CommandTier.DESTRUCTIVE)
             reason = "deletes files it cannot scope"
+            irreversible = True
+            irreversible_reason = "deletes files it cannot scope"
+        elif root is None:
+            irreversible = True
+            irreversible_reason = "deletes files without a known workspace"
 
-    return CommandAssessment(best, reason, tuple(segments), tuple(scopes))
+    return CommandAssessment(
+        best,
+        reason,
+        tuple(segments),
+        tuple(scopes),
+        irreversible,
+        irreversible_reason,
+    )
 
 
 def classify_scopes(command: str | None) -> tuple[CommandScope, ...]:
@@ -1357,6 +1380,74 @@ def _classify_command(
         CommandTier.WORKSPACE_WRITE,
         f"`{name}` is not a known read-only command",
     )
+
+
+#: Git subcommands that discard work or overwrite a remote. Auto runs
+#: everything else, but these stay confirmed because nothing can undo them.
+_IRREVERSIBLE_GIT_SUBCOMMANDS = frozenset(
+    {
+        "push",
+        "publish",
+        "reset",
+        "clean",
+        "rebase",
+        "filter-branch",
+        "filter-repo",
+        "restore",
+    }
+)
+
+
+def _git_is_irreversible(args: list[str]) -> bool:
+    """True for git subcommands that cannot be undone."""
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg in {"-C", "-c", "--git-dir", "--work-tree", "--namespace"}:
+            index += 2
+            continue
+        if arg.startswith("--") and arg != "--no-pager":
+            index += 1
+            continue
+        break
+    if index >= len(args):
+        return False
+
+    sub = args[index]
+    rest = args[index + 1 :]
+    if sub in _IRREVERSIBLE_GIT_SUBCOMMANDS:
+        return True
+    if sub == "branch":
+        return any(
+            arg in {"-d", "-D", "--delete", "-m", "-M", "--move"}
+            for arg in rest
+        )
+    if sub == "tag":
+        return any(arg in {"-d", "--delete"} for arg in rest)
+    if sub == "stash":
+        return bool(rest) and rest[0] in {"drop", "clear"}
+    if sub == "checkout":
+        return "--" in rest or (bool(rest) and rest[0] == ".")
+    return False
+
+
+def _segment_is_irreversible(segment: str) -> bool:
+    stripped = _strip_prefixes(_tokenize(segment))
+    if not stripped:
+        return False
+
+    name = _binary(stripped[0])
+    rest = stripped[1:]
+    if name in _SHELL_BINARIES:
+        # `bash -c "git push"` hands the command to another process, so the
+        # inner line has to be judged too.
+        for index, arg in enumerate(rest):
+            if arg == "-c" or (arg.startswith("-") and "c" in arg[1:]):
+                return assess_command(" ".join(rest[index + 1 :])).irreversible
+        return False
+    if name != "git":
+        return False
+    return _git_is_irreversible(rest)
 
 
 def _classify_git(args: list[str]) -> tuple[CommandTier, str]:

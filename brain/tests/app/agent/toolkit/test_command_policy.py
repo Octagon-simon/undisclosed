@@ -462,3 +462,62 @@ def test_process_spawn_text_in_heredoc_data_is_not_execution() -> None:
         ]
     )
     assert assess_command(command).tier == CommandTier.WORKSPACE_WRITE
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git push origin main",
+        "git push --force",
+        "git reset --hard HEAD~1",
+        "git clean -fd",
+        "git rebase main",
+        "git restore .",
+        "git checkout -- .",
+        "git branch -D feature",
+        "git stash drop",
+        "git stash clear",
+        "git tag -d v1",
+        "git filter-branch --all",
+        "bash -c 'git push origin main'",
+        "sh -lc 'git reset --hard'",
+    ],
+)
+def test_git_history_and_remote_changes_are_irreversible(
+    command: str,
+) -> None:
+    assert assess_command(command).irreversible is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git status",
+        "git add -A",
+        "git commit -m x",
+        "git checkout -b feature",
+        "git stash",
+        "git tag v1",
+        "mkdir out",
+        "npm install",
+        "pytest -q",
+        "node build.js",
+        "kill 123",
+        "bash -c 'npm test'",
+    ],
+)
+def test_repeatable_commands_are_not_irreversible(command: str) -> None:
+    assert assess_command(command).irreversible is False
+
+
+def test_write_outside_the_workspace_is_repeatable(tmp_path) -> None:
+    assessment = assess_command("npm run build > /tmp/build.log", tmp_path)
+    assert assessment.tier == CommandTier.DESTRUCTIVE
+    assert assessment.irreversible is False
+
+
+def test_unscoped_delete_is_irreversible(tmp_path) -> None:
+    command = "python3 -c 'import os; os.remove(target)'"
+    assessment = assess_command(command, tmp_path)
+    assert assessment.tier == CommandTier.DESTRUCTIVE
+    assert assessment.irreversible is True

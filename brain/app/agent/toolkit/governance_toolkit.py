@@ -15,11 +15,12 @@
 
 """Approval-gating wrappers for risky single-agent tools.
 
-- `CommandTier.BLOCKED` (tier 3) is refused before the ApprovalManager is
-  consulted. Approval cannot override it.
-- `CommandTier.DESTRUCTIVE` (tier 2) prompts in every mode, including AUTO.
-- `CommandTier.WORKSPACE_WRITE` (tier 1) prompts in ASK mode only.
-- `CommandTier.READ_ONLY` (tier 0) runs directly in every mode.
+- `GovernanceMode.AUTO` runs everything except actions that cannot be undone:
+  file deletion and git operations that discard work or overwrite a remote.
+- `GovernanceMode.ASK` asks before any workspace write or destructive action.
+- `CommandTier.BLOCKED` (tier 3) is refused in both modes, before the
+  ApprovalManager is consulted. Approval cannot override it.
+- `CommandTier.READ_ONLY` (tier 0) runs directly in both modes.
 
 The wrapper calls `ApprovalManager.request_approval(...)` (which surfaces the
 SSE prompt, fires the permission hooks, and waits - bounded by the timeout).
@@ -228,6 +229,42 @@ def _call_scopes(
         return ()
     scope = _SCOPE_BY_FIELD.get(field_name)
     return (scope,) if scope is not None else ()
+
+
+#: Tools Auto still confirms because their effect cannot be undone.
+PROTECTED_TOOL_NAMES = frozenset({"delete_files"})
+
+
+def _call_is_irreversible(
+    field_name: str,
+    name: str,
+    args: tuple,
+    kwargs: dict,
+    workspace: str | None = None,
+    *,
+    tool_command: str = "",
+) -> bool:
+    """True when the call deletes files or rewrites git state.
+
+    This is the only gate Auto keeps. Everything else, including writes
+    outside the workspace and destructive-but-repeatable commands, runs.
+    """
+    if name in PROTECTED_TOOL_NAMES:
+        return True
+    if field_name == "git_write" and name == "git_push":
+        return True
+    if field_name == "terminal" or name == "shell_exec":
+        # `shell_write_to_process` feeds a live process, so a blocked command
+        # cannot be refused the usual way; treat it as irreversible instead.
+        assessment = assess_command(
+            _command_from(name, args, kwargs), workspace
+        )
+        return assessment.irreversible or assessment.blocked
+    if field_name == "test_runner":
+        if not tool_command:
+            return False
+        return assess_command(tool_command, workspace).irreversible
+    return False
 
 
 def _allowed_scopes(task_lock) -> set[str]:
@@ -550,6 +587,10 @@ def wrap_with_approval(
             field_name, name, args, kwargs, workspace,
             tool_command=tool_command,
         )
+        irreversible = _call_is_irreversible(
+            field_name, name, args, kwargs, workspace,
+            tool_command=tool_command,
+        )
         # Resolved per call, not at construction: a worker may be built
         # before its turn's mode is recorded, and the mode can change
         # between turns on a reused agent.
@@ -575,7 +616,7 @@ def wrap_with_approval(
 
         task_lock = None
         suppressed = False
-        if scopes and tier <= CommandTier.WORKSPACE_WRITE:
+        if not irreversible and scopes and tier <= CommandTier.WORKSPACE_WRITE:
             try:
                 task_lock = get_task_lock(api_task_id)
             except Exception:  # pragma: no cover - defensive
@@ -586,21 +627,26 @@ def wrap_with_approval(
                     scope.value in allowed for scope in scopes
                 )
 
-        needs_approval = tier >= CommandTier.DESTRUCTIVE or (
-            effective_mode == GovernanceMode.ASK
-            and tier >= CommandTier.WORKSPACE_WRITE
-        )
-        if suppressed:
-            needs_approval = False
-        elif (
-            tier == CommandTier.READ_ONLY
-            and CommandScope.FILE_READS in scopes
-            and CommandScope.FILE_READS.value not in _allowed_scopes(task_lock)
-        ):
-            # Privacy switch: reads prompt in every mode once the user
-            # removes File reads from this task's allowlist. Other read-only
-            # scopes (builds/tests, searches) must not trigger it.
+        if irreversible:
+            # Deletion and git history edits are the only things Auto
+            # confirms; a task allowlist cannot suppress them.
             needs_approval = True
+        elif effective_mode is GovernanceMode.ASK:
+            needs_approval = tier >= CommandTier.WORKSPACE_WRITE
+            if suppressed:
+                needs_approval = False
+            elif (
+                tier == CommandTier.READ_ONLY
+                and CommandScope.FILE_READS in scopes
+                and CommandScope.FILE_READS.value
+                not in _allowed_scopes(task_lock)
+            ):
+                # Privacy switch: reads prompt in Ask once the user removes
+                # File reads from this task's allowlist. Other read-only
+                # scopes (builds/tests, searches) must not trigger it.
+                needs_approval = True
+        else:
+            needs_approval = False
 
         if not needs_approval:
             return await tool.async_call(*args, **kwargs)
