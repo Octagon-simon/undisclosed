@@ -2,7 +2,7 @@
 # Built after `theia build` (see the dist* scripts). Produces installers under
 # apps/desktop/dist. May need per-OS tuning on the first real packaging run —
 # see docs/PACKAGING.md.
-appId: ai.undisclosed.app
+appId: dev.octagon.undisclosed
 productName: Undisclosed
 copyright: Copyright © 2026 Simon Ugorji
 

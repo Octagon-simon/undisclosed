@@ -158,7 +158,7 @@ app.on("will-quit", () => brain?.kill());
 
 ```yaml
 # electron-builder.yml
-appId: ai.undisclosed.app
+appId: dev.octagon.undisclosed
 productName: Undisclosed
 directories:
   output: dist-installers
@@ -328,6 +328,40 @@ spctl -a -vvv /Applications/Undisclosed.app              # accepted / notarized
 
 Keep the `.p12`, the app-specific password and the team id in CI secrets. Never
 in the repo, and never as a literal in `electron-builder.yml`.
+
+### TCC permissions are user-granted, not signed
+
+Entitlements cannot grant Screen Recording or Accessibility; the user grants
+them per binary in System Settings. Two features depend on those grants:
+
+- **App Screenshots** (macOS window capture) needs Screen Recording.
+- **Desktop Control** (mouse, keyboard, scroll, and the accessibility tree) needs
+  Accessibility. The same grant covers both halves, so without it macOS drops
+  synthetic events silently and `AXUIElement` returns nothing; the toolkit
+  reports the missing grant either way instead of pretending to act.
+
+The grant attaches to the process that posts the events. In a packaged build
+that is `Undisclosed.app`; in development the brain is a child of your
+terminal, so grant the terminal (or the IDE) and restart it. A rebuild that
+changes the signature can look like a brand new binary to TCC; force a fresh
+prompt with `tccutil reset Accessibility dev.octagon.undisclosed` (and the
+Screen Recording equivalent). Resetting clears the old tick from the list;
+enable the app again and restart it, because TCC caches the decision for the
+life of the process.
+
+TCC, the notification database and macOS Launch Services all key off the
+bundle id, so changing `appId` in `electron-builder.yml` gives you a different
+app as far as macOS is concerned: the grants do not carry over, and you have to
+enable the new build again. Before `dev.octagon.undisclosed` the id was
+`ai.undisclosed.app`; installs built with that id leave stale Accessibility and
+Screen Recording rows behind, which `tccutil reset Accessibility
+ai.undisclosed.app` clears.
+
+Desktop Control is also gated by channel. Only turns that arrive on the
+`desktop` channel get it; a Slack, WhatsApp, Lark or web turn runs on the same
+brain with no mouse, because whoever wrote that message is not sitting at this
+Mac. Widen it per deployment with
+`toolkit_config={"desktop": {"channels": ["desktop", "cli"]}}`.
 
 ---
 
