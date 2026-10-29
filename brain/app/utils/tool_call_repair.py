@@ -141,3 +141,44 @@ def repair_tool_call_pairing(messages: Any) -> int:
             removed,
         )
     return removed
+
+
+def _recount_tokens(memory: Any, messages: list[dict], fallback: int) -> int:
+    """Token count for a repaired context. The original count was measured on
+    the un-repaired messages, so it over-states what will be sent."""
+    try:
+        return memory.get_context_creator().token_counter.count_tokens_from_messages(
+            messages
+        )
+    except Exception:  # pragma: no cover - defensive
+        return fallback
+
+
+class RepairingMemory:
+    """AgentMemory proxy that repairs tool-call pairing on every read.
+
+    Repairing only at the start of a turn is not enough. CAMEL rebuilds the
+    request from `get_context()` after EVERY tool round, and a tool that times
+    out, is cancelled, or never gets dispatched records no `tool` reply. That
+    mid-turn request then carries an unanswered `tool_calls` entry and the
+    provider rejects it with a 400, so the turn dies partway through instead of
+    at its first request. Everything except `get_context` is delegated.
+    """
+
+    def __init__(self, inner: Any) -> None:
+        object.__setattr__(self, "_inner", inner)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        setattr(self._inner, name, value)
+
+    def __repr__(self) -> str:
+        return f"RepairingMemory({self._inner!r})"
+
+    def get_context(self) -> tuple[list[dict], int]:
+        messages, num_tokens = self._inner.get_context()
+        if repair_tool_call_pairing(messages):
+            num_tokens = _recount_tokens(self._inner, messages, num_tokens)
+        return messages, num_tokens

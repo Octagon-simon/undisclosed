@@ -1,4 +1,5 @@
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+# Portions Copyright 2026 Simon Ugorji. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -22,11 +23,13 @@ from camel.messages import BaseMessage
 from camel.models import ModelProcessingError
 from camel.responses import ChatAgentResponse
 from camel.toolkits import FunctionTool
+from camel.types import OpenAIBackendRole
 from camel.types.agents import ToolCallingRecord
 
 from app.agent.listen_chat_agent import ListenChatAgent
 from app.model.chat import Chat
 from app.service.task import process_task
+from app.utils.tool_call_repair import RepairingMemory
 
 _LCA = "app.agent.listen_chat_agent"
 
@@ -625,6 +628,67 @@ class TestListenChatAgent:
             # Should handle task lock errors gracefully
             with pytest.raises(Exception):
                 agent.step("Test message")
+
+    def test_agent_memory_is_wrapped_for_repair(self):
+        """Every provider request must be rebuilt from repaired memory."""
+        with (
+            patch(f"{_LCA}.get_task_lock") as mock_get_lock,
+            patch("camel.models.ModelFactory.create") as mock_create_model,
+        ):
+            mock_get_lock.return_value = MagicMock()
+            mock_backend = MagicMock()
+            mock_backend.model_type = "gpt-4"
+            mock_backend.current_model = MagicMock()
+            mock_backend.current_model.model_type = "gpt-4"
+            mock_create_model.return_value = mock_backend
+
+            agent = ListenChatAgent(
+                api_task_id="test_api_task_123",
+                agent_name="TestAgent",
+                model="gpt-4",
+                tools=[],
+            )
+
+            assert isinstance(agent.memory, RepairingMemory)
+
+    @pytest.mark.asyncio
+    async def test_unparseable_tool_call_still_records_a_reply(self):
+        """A call whose arguments fail to parse must not leave the pair open."""
+        with (
+            patch(f"{_LCA}.get_task_lock") as mock_get_lock,
+            patch("camel.models.ModelFactory.create") as mock_create_model,
+        ):
+            mock_get_lock.return_value = MagicMock()
+            mock_backend = MagicMock()
+            mock_backend.model_type = "gpt-4"
+            mock_backend.current_model = MagicMock()
+            mock_backend.current_model.model_type = "gpt-4"
+            mock_create_model.return_value = mock_backend
+
+            agent = ListenChatAgent(
+                api_task_id="test_api_task_123",
+                agent_name="TestAgent",
+                model="gpt-4",
+                tools=[],
+            )
+
+            with patch.object(agent, "update_memory") as mock_update:
+                record = await agent._aexecute_tool_from_stream_data(
+                    {
+                        "id": "call-1",
+                        "function": {
+                            "name": "shell_exec",
+                            "arguments": '{"command": "echo hi"',
+                        },
+                    }
+                )
+
+            assert record is None
+            message, role = mock_update.call_args.args
+            assert message.tool_call_id == "call-1"
+            assert message.func_name == "shell_exec"
+            assert "not executed" in message.result["error"]
+            assert role == OpenAIBackendRole.FUNCTION
 
 
 @pytest.mark.model_backend

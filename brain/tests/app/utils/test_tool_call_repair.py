@@ -12,7 +12,10 @@
 # limitations under the License.
 # ========= Copyright 2026 Simon Ugorji. All Rights Reserved. =========
 
-from app.utils.tool_call_repair import repair_tool_call_pairing
+from app.utils.tool_call_repair import (
+    RepairingMemory,
+    repair_tool_call_pairing,
+)
 
 
 def _call(call_id: str, name: str = "shell_exec") -> dict:
@@ -25,6 +28,36 @@ def _call(call_id: str, name: str = "shell_exec") -> dict:
 
 def _reply(call_id: str, content: str = "ok") -> dict:
     return {"role": "tool", "tool_call_id": call_id, "content": content}
+
+
+class _Counter:
+    def count_tokens_from_messages(self, messages: list[dict]) -> int:
+        return sum(
+            len(str(message.get("content") or "")) for message in messages
+        )
+
+
+class _Creator:
+    token_counter = _Counter()
+
+
+class _Memory:
+    """Minimal stand-in for an AgentMemory: only get_context matters here."""
+
+    window_size = 42
+
+    def __init__(self, messages: list[dict]) -> None:
+        self._messages = messages
+        self.written: list[dict] = []
+
+    def get_context(self) -> tuple[list[dict], int]:
+        return list(self._messages), 9999
+
+    def get_context_creator(self) -> _Creator:
+        return _Creator()
+
+    def write(self, message: dict) -> None:
+        self.written.append(message)
 
 
 def test_paired_history_is_untouched() -> None:
@@ -145,3 +178,55 @@ def test_non_list_input_is_ignored() -> None:
     assert repair_tool_call_pairing(None) == 0
     assert repair_tool_call_pairing("nope") == 0
     assert repair_tool_call_pairing([]) == 0
+
+
+def test_memory_repairs_unpaired_tool_call_on_every_read() -> None:
+    inner = _Memory(
+        [
+            {"role": "user", "content": "run it"},
+            {"role": "assistant", "content": "", "tool_calls": [_call("a")]},
+        ]
+    )
+    memory = RepairingMemory(inner)
+
+    messages, _ = memory.get_context()
+
+    assert [message["role"] for message in messages] == ["user"]
+
+
+def test_memory_recounts_tokens_after_repair() -> None:
+    inner = _Memory(
+        [
+            {"role": "user", "content": "abcd"},
+            {"role": "assistant", "content": "", "tool_calls": [_call("a")]},
+        ]
+    )
+
+    _, tokens = RepairingMemory(inner).get_context()
+
+    assert tokens == 4
+
+
+def test_memory_leaves_a_paired_context_alone() -> None:
+    messages = [
+        {"role": "assistant", "content": "", "tool_calls": [_call("a")]},
+        _reply("a"),
+    ]
+    inner = _Memory(messages)
+
+    repaired, tokens = RepairingMemory(inner).get_context()
+
+    assert repaired == messages
+    assert tokens == 9999
+
+
+def test_memory_delegates_attributes_and_writes() -> None:
+    inner = _Memory([{"role": "user", "content": "hi"}])
+    memory = RepairingMemory(inner)
+
+    assert memory.window_size == 42
+    memory.write({"role": "user", "content": "next"})
+    memory.agent_id = "agent-1"
+
+    assert inner.written == [{"role": "user", "content": "next"}]
+    assert inner.agent_id == "agent-1"

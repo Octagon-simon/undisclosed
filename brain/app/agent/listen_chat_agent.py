@@ -29,12 +29,12 @@ from camel.agents.chat_agent import (
     StreamingChatAgentResponse,
 )
 from camel.memories import AgentMemory
-from camel.messages import BaseMessage
+from camel.messages import BaseMessage, FunctionCallingMessage
 from camel.models import BaseModelBackend, ModelManager, ModelProcessingError
 from camel.responses import ChatAgentResponse
 from camel.terminators import ResponseTerminator
 from camel.toolkits import FunctionTool, RegisteredAgentToolkit
-from camel.types import ModelPlatformType, ModelType
+from camel.types import ModelPlatformType, ModelType, OpenAIBackendRole
 from camel.types.agents import ToolCallingRecord
 from pydantic import BaseModel
 
@@ -53,7 +53,10 @@ from app.service.task import (
     set_process_task,
 )
 from app.utils.event_loop_utils import _schedule_async_task
-from app.utils.tool_call_repair import repair_tool_call_pairing
+from app.utils.tool_call_repair import (
+    RepairingMemory,
+    repair_tool_call_pairing,
+)
 
 # Logger for agent tracking
 logger = logging.getLogger("agent")
@@ -218,6 +221,9 @@ class ListenChatAgent(ChatAgent):
         )
         self._model_reload_callback = model_reload_callback
         self._model_reload_lock = threading.Lock()
+        # Every provider request is built from memory, including the ones the
+        # tool loop makes mid-turn, so the repair has to sit at that boundary.
+        self._memory = RepairingMemory(self._memory)
 
     process_task_id: str = ""
 
@@ -1130,6 +1136,7 @@ class ListenChatAgent(ChatAgent):
             return self._execute_tool(tool_call_request)
         except Exception as e:
             logger.error(f"Error processing streaming tool call: {e}")
+            self._record_dropped_tool_call(tool_call_data, str(e))
             return None
 
     async def _aexecute_tool(
@@ -1314,7 +1321,50 @@ class ListenChatAgent(ChatAgent):
             return await self._aexecute_tool(tool_call_request)
         except Exception as e:
             logger.error(f"Error processing async streaming tool call: {e}")
+            self._record_dropped_tool_call(tool_call_data, str(e))
             return None
+
+    def _record_dropped_tool_call(
+        self, tool_call_data: dict[str, Any], reason: str
+    ) -> None:
+        """Answer a tool call that never ran.
+
+        CAMEL records the assistant message with this `tool_calls` entry before
+        dispatching it, so dropping the call without a `tool` reply leaves the
+        pair incomplete and the next request in the same turn is rejected.
+        """
+        tool_call_id = tool_call_data.get("id") or tool_call_data.get(
+            "call_id"
+        )
+        if not tool_call_id:
+            return
+        func_name = (tool_call_data.get("function") or {}).get("name") or "?"
+        try:
+            self.update_memory(
+                FunctionCallingMessage(
+                    role_name=self.role_name,
+                    role_type=self.role_type,
+                    meta_dict=None,
+                    content="",
+                    func_name=func_name,
+                    result={
+                        "error": (
+                            f"Tool call '{func_name}' was not executed: "
+                            f"{reason}. The arguments were probably truncated "
+                            "by the token limit; re-issue the call with shorter "
+                            "arguments."
+                        )
+                    },
+                    tool_call_id=tool_call_id,
+                ),
+                OpenAIBackendRole.FUNCTION,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(
+                "Could not record a reply for dropped tool call %s: %s",
+                tool_call_id,
+                exc,
+            )
 
     def clone(self, with_memory: bool = False) -> ChatAgent:
         """Please see super.clone()"""
