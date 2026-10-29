@@ -20,7 +20,7 @@ import logging
 import threading
 from collections.abc import Callable
 from threading import Event
-from typing import Any
+from typing import Any, cast
 
 from camel.agents import ChatAgent
 from camel.agents._types import ToolCallRequest
@@ -223,7 +223,7 @@ class ListenChatAgent(ChatAgent):
         self._model_reload_lock = threading.Lock()
         # Every provider request is built from memory, including the ones the
         # tool loop makes mid-turn, so the repair has to sit at that boundary.
-        self._memory = RepairingMemory(self._memory)
+        self._memory = cast(AgentMemory, RepairingMemory(self._memory))
 
     process_task_id: str = ""
 
