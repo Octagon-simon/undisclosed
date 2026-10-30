@@ -426,6 +426,8 @@ export interface ActiveApproval {
   agent_name: string | null;
   /** Policy tier from the backend; absent on older payloads. */
   tier?: 'read_only' | 'workspace_write' | 'destructive';
+  /** Backend tag for the tier, overridden per action (e.g. "Deletes files"). */
+  tier_label?: string | null;
   /** Directory the call runs in, shown under the command. */
   working_directory?: string | null;
   /** Plain-language explanation of what the command does, shown under the title. */
@@ -5106,6 +5108,7 @@ const chatStore = (initial?: Partial<ChatStore>) =>
               detail?: string;
               agent_name?: string | null;
               tier?: number | null;
+              tier_label?: string | null;
               working_directory?: string | null;
               description?: string | null;
               scopes?: string[];
@@ -5125,6 +5128,7 @@ const chatStore = (initial?: Partial<ChatStore>) =>
               detail: data.detail || '',
               agent_name: data.agent_name || null,
               tier,
+              tier_label: data.tier_label ?? null,
               working_directory: data.working_directory ?? null,
               description: data.description ?? null,
               scopes: data.scopes ?? [],

@@ -186,6 +186,12 @@ const CARD_SCOPE_TO_BACKEND: Record<ApprovalScope, string> = {
   code: 'code_execution',
 };
 
+function toCardScopes(scopes: string[] | undefined): ApprovalScope[] {
+  return (scopes ?? [])
+    .map((scope) => BACKEND_SCOPE_TO_CARD[scope])
+    .filter((scope): scope is ApprovalScope => Boolean(scope));
+}
+
 const TIER_LABELS: Record<ApprovalTier, string> = {
   read_only: 'Read only',
   workspace_write: 'May change files',
@@ -205,12 +211,16 @@ export interface ApprovalRequestCardViewProps {
   toolName: string;
   command: string;
   tier?: ApprovalTier;
+  /** Backend tag for the tier, per action (e.g. "Deletes files"). */
+  tierLabel?: string | null;
   workingDirectory?: string | null;
   description?: string | null;
   submitting?: ApprovalDecision | null;
   expired?: boolean;
   /** Scopes to suppress for the rest of the task. Omit to hide the row. */
   selectedScopes?: ApprovalScope[];
+  /** Scopes offered as chips. Omit to offer every scope. */
+  availableScopes?: ApprovalScope[];
   onToggleScope?: (scope: ApprovalScope) => void;
   expiresIn?: string | null;
   onApprove?: () => void;
@@ -230,11 +240,13 @@ export function ApprovalRequestCardView({
   toolName,
   command,
   tier = 'workspace_write',
+  tierLabel = null,
   workingDirectory,
   description,
   submitting = null,
   expired = false,
   selectedScopes,
+  availableScopes,
   onToggleScope,
   expiresIn,
   onApprove,
@@ -270,7 +282,7 @@ export function ApprovalRequestCardView({
             <span
               className={`inline-flex items-center rounded-full border border-transparent px-2 py-0.5 text-label-xs font-medium ${TIER_SURFACES[tier]}`}
             >
-              {TIER_LABELS[tier]}
+              {tierLabel || TIER_LABELS[tier]}
             </span>
           </div>
           <p className="mt-1 text-label-xs leading-relaxed text-ds-text-neutral-muted-default">
@@ -319,7 +331,9 @@ export function ApprovalRequestCardView({
             Suppress prompts for the rest of this task:
           </div>
           <div className="mt-1.5 flex flex-wrap gap-1.5">
-            {SCOPE_OPTIONS.map((scope) => {
+            {SCOPE_OPTIONS.filter(
+              (scope) => !availableScopes || availableScopes.includes(scope.id)
+            ).map((scope) => {
               const selected = selectedScopes.includes(scope.id);
               return (
                 <button
@@ -448,20 +462,26 @@ export function ApprovalRequestCard({
   // no longer land once the backend waiter is gone.
   const approvalId = approval?.approval_id;
   const allowedScopes = approval?.allowed_scopes;
+  const pendingScopes = approval?.scopes;
   const expired = approval?.expired === true;
+  // The row suppresses by what THIS call does, not by what is already
+  // suppressed. Pre-ticking "File reads" on a delete card said nothing about
+  // the delete and read as if reads were part of the action.
   useEffect(() => {
     setSubmitting(null);
-    setSelectedScopes(
-      (allowedScopes ?? [])
-        .map((scope) => BACKEND_SCOPE_TO_CARD[scope])
-        .filter((scope): scope is ApprovalScope => Boolean(scope))
-    );
-  }, [approvalId, allowedScopes, expired]);
+    setSelectedScopes(toCardScopes(pendingScopes));
+  }, [approvalId, pendingScopes, expired]);
 
   if (!approval) return null;
 
+  const suppressed = new Set(toCardScopes(allowedScopes));
+  const availableScopes = SCOPE_OPTIONS.map((scope) => scope.id).filter(
+    (scope) => !suppressed.has(scope)
+  );
   const showScopeRow =
-    approval.tier !== 'destructive' && (approval.scopes?.length ?? 0) > 0;
+    approval.tier !== 'destructive' &&
+    (approval.scopes?.length ?? 0) > 0 &&
+    availableScopes.length > 0;
 
   const handleDismiss = () => {
     if (taskId) chatStore.getState().setActiveApproval(taskId, null);
@@ -578,8 +598,15 @@ export function ApprovalRequestCard({
         decided_by: 'user',
         ...(showScopeRow
           ? {
-              allow_scopes: selectedScopes.map(
-                (scope) => CARD_SCOPE_TO_BACKEND[scope]
+              // Union, not replace: approving one call must not drop the
+              // task's existing allowlist (reads are allowed by default).
+              allow_scopes: Array.from(
+                new Set([
+                  ...(approval.allowed_scopes ?? []),
+                  ...selectedScopes.map(
+                    (scope) => CARD_SCOPE_TO_BACKEND[scope]
+                  ),
+                ])
               ),
             }
           : {}),
@@ -601,9 +628,11 @@ export function ApprovalRequestCard({
         toolName={approval.tool_name}
         command={friendlyApprovalDetail(approval.detail)}
         tier={approval.tier}
+        tierLabel={approval.tier_label}
         workingDirectory={approval.working_directory}
         description={approval.description}
         selectedScopes={showScopeRow ? selectedScopes : undefined}
+        availableScopes={showScopeRow ? availableScopes : undefined}
         onToggleScope={(scope) =>
           setSelectedScopes((current) =>
             current.includes(scope)

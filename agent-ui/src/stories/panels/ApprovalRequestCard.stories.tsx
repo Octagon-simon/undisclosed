@@ -142,7 +142,7 @@ function ScopesDemo({
 /** A package install: amber "May change files" tier and the suppression row. */
 export const WorkspaceWrite: Story = {
   render: (args: ApprovalRequestCardViewProps) => (
-    <ScopesDemo {...args} initialScopes={["reads", "installs"]} />
+    <ScopesDemo {...args} initialScopes={["installs"]} />
   ),
   args: {
     tier: "workspace_write",
@@ -155,7 +155,7 @@ export const WorkspaceWrite: Story = {
 /** A file write: path and content, with File writes pre-selected. */
 export const FileWrite: Story = {
   render: (args: ApprovalRequestCardViewProps) => (
-    <ScopesDemo {...args} initialScopes={["reads", "writes"]} />
+    <ScopesDemo {...args} initialScopes={["writes"]} />
   ),
   args: {
     toolName: "write_to_file",
@@ -164,6 +164,22 @@ export const FileWrite: Story = {
     tier: "workspace_write",
     description: "Writes a new config file with the API base URL.",
     workingDirectory: "~/Documents/github/undisclosed/agent-ui",
+  },
+};
+
+/**
+ * A deletion: red tier, the action named in the tag, and no suppression row.
+ * Irreversible calls can never be suppressed, so offering the row would lie.
+ */
+export const DeleteFiles: Story = {
+  args: {
+    toolName: "delete_files",
+    command:
+      ".shots/capture-otc-headed.mjs.20261030_115756.bak\n…and 47 more",
+    tier: "destructive",
+    tierLabel: "Deletes files",
+    description:
+      "The agent will delete the 48 timestamped .bak files the user asked to clear. It deletes the named paths in your workspace, and that cannot be undone.",
   },
 };
 

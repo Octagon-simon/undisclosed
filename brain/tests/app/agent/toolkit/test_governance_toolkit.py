@@ -329,6 +329,23 @@ class TestTieredGating:
         manager.request_approval.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_delete_card_is_tagged_as_a_deletion(self, monkeypatch):
+        manager = _patch_manager(monkeypatch)
+        gated = wrap_with_approval(
+            _make_delete_tool(),
+            field_name="file_write",
+            agent_name="single_agent",
+            api_task_id="project_1",
+            mode=GovernanceMode.AUTO,
+        )
+
+        await gated.func(paths=["build"])
+        kwargs = manager.request_approval.await_args.kwargs
+        assert kwargs["tier"] == int(CommandTier.DESTRUCTIVE)
+        assert kwargs["tier_label"] == "Deletes files"
+        assert "cannot be undone" in kwargs["description"]
+
+    @pytest.mark.asyncio
     async def test_file_write_skips_prompt_in_auto(self, monkeypatch):
         manager = _patch_manager(monkeypatch)
         gated = wrap_with_approval(
@@ -1110,6 +1127,17 @@ class TestSessionMode:
         task_lock.governance_mode = "auto"
         assert session_governance_mode("project_1") is GovernanceMode.AUTO
 
+    def test_toolkit_config_parsing(self):
+        assert (
+            mode_from_toolkit_config({"governance": {"mode": "ask"}})
+            is GovernanceMode.ASK
+        )
+        assert (
+            mode_from_toolkit_config({"governance": {"mode": "auto"}})
+            is GovernanceMode.AUTO
+        )
+        assert mode_from_toolkit_config(None) is GovernanceMode.AUTO
+        assert mode_from_toolkit_config({}) is GovernanceMode.AUTO
     def test_toolkit_config_parsing(self):
         assert (
             mode_from_toolkit_config({"governance": {"mode": "ask"}})

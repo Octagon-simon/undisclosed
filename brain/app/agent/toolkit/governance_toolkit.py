@@ -132,6 +132,11 @@ _SCOPE_BY_FIELD = {
     "test_generation": CommandScope.FILE_WRITES,
 }
 
+#: Card tag overrides where the tier wording is too vague for the action.
+_TIER_LABEL_OVERRIDES = {
+    "delete_files": "Deletes files",
+}
+
 # Terminal tools that are not `shell_exec` and cannot be classified from a
 # command line. Without these, `shell_write_content_to_file` ran with no prompt
 # even in ASK mode.
@@ -199,6 +204,10 @@ def _call_tier(
             CommandTier.WORKSPACE_WRITE,
         )
     if field_name == "git_write" and name == "git_push":
+        return CommandTier.DESTRUCTIVE
+    if name in PROTECTED_TOOL_NAMES:
+        # deleting files is irreversible, so label it destructive rather than
+        # filing it under the generic file_write tier
         return CommandTier.DESTRUCTIVE
     return _TIER_BY_FIELD.get(field_name, CommandTier.WORKSPACE_WRITE)
 
@@ -374,7 +383,12 @@ def _describe_for_card(
         if summary not in {"read files", "write files"}:
             lead = f"The agent will {summary}." if summary else ""
 
-    if tier == CommandTier.DESTRUCTIVE:
+    if tool_name == "delete_files":
+        safety = (
+            "It deletes the named paths in your workspace, "
+            "and that cannot be undone."
+        )
+    elif tier == CommandTier.DESTRUCTIVE:
         safety = (
             "It changes things outside the workspace or cannot be undone."
         )
@@ -698,7 +712,7 @@ def wrap_with_approval(
             detail=detail,
             agent_name=agent_name,
             tier=int(tier),
-            tier_label=describe_tier(tier),
+            tier_label=_TIER_LABEL_OVERRIDES.get(name) or describe_tier(tier),
             scopes=[scope.value for scope in scopes],
             description=_describe_for_card(
                 tier,
