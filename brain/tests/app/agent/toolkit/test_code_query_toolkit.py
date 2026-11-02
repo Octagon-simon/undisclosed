@@ -1,4 +1,5 @@
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+# Portions Copyright 2026 Simon Ugorji. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -213,3 +214,16 @@ def test_understand_project_structure_first(tmp_path):
     assert "skeleton map" in out
     assert "greet" in out
     assert len(out) < 1500
+
+
+def test_skeleton_map_follows_dependency_rank(tmp_path, monkeypatch):
+    (tmp_path / "zz_core.py").write_text("def core():\n    pass\n", encoding="utf-8")
+    (tmp_path / "aa_leaf.py").write_text("def leaf():\n    pass\n", encoding="utf-8")
+    tk = CodeQueryToolkit(api_task_id="t", working_directory=str(tmp_path))
+    from app.agent.toolkit import project_context_toolkit as pct
+
+    monkeypatch.setattr(
+        pct, "read_order", lambda *_a, **_k: [{"path": "zz_core.py"}]
+    )
+    out = tk.skeleton_map()
+    assert out.index("## zz_core.py") < out.index("## aa_leaf.py")

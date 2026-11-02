@@ -1,4 +1,5 @@
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+# Portions Copyright 2026 Simon Ugorji. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -26,6 +27,7 @@ the same philosophy repomix already uses for the project digest.
 """
 
 import logging
+import os
 import re
 from pathlib import Path
 
@@ -611,6 +613,53 @@ def _is_top_level(node, root) -> bool:
     return True
 
 
+# Directories that never hold project source. A bare ``Path.glob("**/*")``
+# descends all of them (node_modules alone is ~150k paths in this repo), which
+# cost ~30s before the first symbol was even parsed.
+_SCAN_SKIP_DIRS = frozenset(
+    {
+        "node_modules",
+        ".git",
+        "venv",
+        ".venv",
+        "site-packages",
+        "__pycache__",
+        "dist",
+        "dist-signed",
+        "build",
+        "coverage",
+        "out",
+        "release",
+        "target",
+        "storybook-static",
+        ".next",
+        ".turbo",
+    }
+)
+_WALK_MAX_FILES = 5000
+
+
+def _walk_source_files(root: Path) -> list[Path]:
+    """Every parseable source file under ``root``, skipping vendored trees."""
+    found: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(
+            d
+            for d in dirnames
+            if d.lower() not in _SCAN_SKIP_DIRS
+            and not d.startswith(".")
+            and not d.endswith(".app")
+        )
+        base = Path(dirpath)
+        for name in filenames:
+            path = base / name
+            if _lang_for(path):
+                found.append(path)
+                if len(found) >= _WALK_MAX_FILES:
+                    return found
+    return found
+
+
 class CodeQueryToolkit(AbstractToolkit):
     """Surgical code queries over the workspace via tree-sitter syntax trees.
 
@@ -634,7 +683,9 @@ class CodeQueryToolkit(AbstractToolkit):
 
     # ---- helpers -----------------------------------------------------------
 
-    def _resolve_paths(self, paths: list[str] | None) -> list[Path]:
+    def _resolve_paths(
+        self, paths: list[str] | None, limit: int = _MAX_RESULTS
+    ) -> list[Path]:
         """Resolve user-specified paths against the working directory. If none
         given, default to the whole workspace (best-effort, bounded)."""
         root = Path(self.working_directory) if self.working_directory else Path.cwd()
@@ -647,14 +698,8 @@ class CodeQueryToolkit(AbstractToolkit):
                 expanded = list(root.glob(p))
                 candidates.extend(expanded or [root / p])
         else:
-            # Default: scan the workspace for supported source files (bounded).
-            for pat in (
-                "**/*.py", "**/*.js", "**/*.jsx", "**/*.ts", "**/*.tsx",
-                "**/*.rs", "**/*.go", "**/*.java", "**/*.rb", "**/*.php",
-                "**/*.swift", "**/*.kt", "**/*.cs",
-            ):
-                matches = [p for p in root.glob(pat) if _lang_for(p)]
-                candidates.extend(matches)
+            # Default: one pruned walk of the workspace for supported sources.
+            candidates.extend(_walk_source_files(root))
         seen: set[Path] = set()
         result: list[Path] = []
         for p in candidates:
@@ -673,7 +718,7 @@ class CodeQueryToolkit(AbstractToolkit):
             if p not in seen:
                 seen.add(p)
                 result.append(p)
-        return result[:_MAX_RESULTS]
+        return result[:limit]
 
     def _parse(self, path: Path):
         """Return (parser, language, lang_key, tree) or (None, None, None, None).
@@ -985,6 +1030,33 @@ class CodeQueryToolkit(AbstractToolkit):
             out.append(f"{marker} {i:>{pad}} | {src_lines[i - 1]}")
         return "\n".join(out)
 
+    def _order_by_dependency(self, files: list[Path]) -> list[Path]:
+        """Rank files by dependency layer so the map leads with load-bearing code."""
+        work_root = (
+            Path(self.working_directory).resolve()
+            if self.working_directory
+            else Path.cwd()
+        )
+        try:
+            from app.agent.toolkit.project_context_toolkit import read_order
+
+            ranked = [
+                row["path"] for row in read_order(str(work_root), limit=None)
+            ]
+        except Exception:  # noqa: BLE001
+            return files
+        if not ranked:
+            return files
+        rank = {rel: i for i, rel in enumerate(ranked)}
+
+        def key(path: Path) -> int:
+            try:
+                return rank.get(str(path.relative_to(work_root)), len(rank))
+            except ValueError:
+                return len(rank)
+
+        return sorted(files, key=key)
+
     def skeleton_map(
         self, paths: list[str] | None = None, max_files: int = 40
     ) -> str:
@@ -1008,7 +1080,11 @@ class CodeQueryToolkit(AbstractToolkit):
         """
         if max_files > 100:
             max_files = 100  # hard safety bound — the map must stay small
-        files = self._resolve_paths(paths)[:max_files]
+        resolved = self._resolve_paths(paths, limit=_WALK_MAX_FILES)
+        if not paths:
+            # walk order would put whichever config file sorts first at the top
+            resolved = self._order_by_dependency(resolved)
+        files = resolved[:max_files]
         if not files:
             return "No source files to index for a skeleton map."
         out: list[str] = []

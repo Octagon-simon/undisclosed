@@ -1018,6 +1018,11 @@ occur here. Use absolute paths for local file operations.
   (structure + key code) instead of running many grep/file searches.
 - Use `understand_project(focus='...')` to zoom into a specific area, and
   `refresh=True` after significant code changes.
+- The default call leads with a dependency-ordered READ ORDER (the files the
+  most of the project depends on, then the layers built on them). Follow it:
+  read the load-bearing files first instead of starting wherever a grep landed.
+- After you edit files, `project_changes()` says what you touched and how much
+  re-reading it needs (ARCHITECTURE / FULL / PARTIAL) without a full re-scan.
 - For FOLLOW-UP questions in a project you've already explored, BUILD ON what you
   already know — the digest you fetched and your earlier findings are still
   valid. Do NOT re-explore the whole codebase from scratch. Reuse the cached
