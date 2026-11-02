@@ -29,17 +29,19 @@ import {
  *   line for 1.2s (`ACCEPTED_BEAT_MS` in `UserQueryGroup`) and then says it
  *   plainly until the first token. Without it the row sat on one label and
  *   jumped straight to the overrun.
- * - past `typicalMs`: label and clock state the overrun in amber. Nothing
- *   stalls, resets or re-announces the earlier stages.
+ * - past `typicalMs`: "Almost there" in the row's own ink. Ten seconds in is
+ *   still inside a normal reasoning turn, so the row encourages rather than
+ *   warns.
+ * - past `stalledMs`: label and clock go amber and keep shimmering, now through
+ *   a brighter amber. Nothing resets or re-announces the earlier stages.
  *
  * The motion is the clock climbing, a 160ms fade when the label changes, and a
  * 2px rise on mount. The live label is the shared `ShinyText` loader, at the
  * same 2.5s speed as the thinking header and the in-flight work steps, so the
  * wait looks like the rest of the app rather than a one-off. It keeps the row's
  * ink: the sweep is a transparent band through `currentColor`, not the loader's
- * grey, so the label stays as dark as the rest of the row. On overrun the
- * label leaves `ShinyText` for plain amber, and `ShinyText`'s own stylesheet
- * drops the animation under `prefers-reduced-motion`.
+ * grey, so the label stays as dark as the rest of the row. `ShinyText`'s own
+ * stylesheet drops the animation under `prefers-reduced-motion`.
  */
 const meta: Meta<typeof FirstTokenMeter> = {
   title: "ChatBox/FirstTokenMeter",
@@ -105,7 +107,7 @@ function AckLine() {
 /** One row, driven by the controls. */
 export const Waiting: Story = {};
 
-/** The four states the row can be in, at half the app's typical of 8s. */
+/** The five states the row can be in, at the app's typical of 8s. */
 export const States: Story = {
   render: () => (
     <div className="flex flex-col gap-3">
@@ -118,15 +120,23 @@ export const States: Story = {
       <Row caption="writing">
         <FirstTokenMeter stage="writing" elapsedMs={3200} typicalMs={8000} />
       </Row>
-      <Row caption="overrun">
-        <FirstTokenMeter stage="accepted" elapsedMs={9400} typicalMs={8000} />
+      <Row caption="almost">
+        <FirstTokenMeter stage="writing" elapsedMs={9400} typicalMs={8000} />
+      </Row>
+      <Row caption="stalled">
+        <FirstTokenMeter stage="writing" elapsedMs={24000} typicalMs={8000} />
       </Row>
     </div>
   ),
 };
 
 /** The label sets, so the voice can be picked without touching the component. */
-const WORDING_STAGES: FirstTokenStage[] = ["sent", "accepted", "writing"];
+const WORDING_STEPS: { stage: FirstTokenStage; elapsedMs: number }[] = [
+  { stage: "sent", elapsedMs: 200 },
+  { stage: "accepted", elapsedMs: 1100 },
+  { stage: "writing", elapsedMs: 2900 },
+  { stage: "writing", elapsedMs: 8400 },
+];
 
 export const Wording: Story = {
   render: () => (
@@ -137,11 +147,11 @@ export const Wording: Story = {
             {set}
             {set === "calm" ? " · shipping" : ""}
           </div>
-          {WORDING_STAGES.map((stage, i) => (
+          {WORDING_STEPS.map(({ stage, elapsedMs }) => (
             <FirstTokenMeter
-              key={stage}
+              key={`${stage}-${elapsedMs}`}
               stage={stage}
-              elapsedMs={[200, 1100, 2900][i]}
+              elapsedMs={elapsedMs}
               typicalMs={8000}
               labels={FIRST_TOKEN_LABEL_SETS[set]}
             />

@@ -50,6 +50,7 @@
   "first-token-sent": "請求已傳送",
   "first-token-accepted": "智能體正在處理",
   "first-token-writing": "等待第一批文字",
+  "first-token-almost": "快好了",
   "first-token-slow": "耗時比平時更長",
   "preparing-to-execute-tasks": "正在準備執行任務",
   "failed": "失敗",

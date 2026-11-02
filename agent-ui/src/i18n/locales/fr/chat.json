@@ -50,6 +50,7 @@
   "first-token-sent": "Demande envoyée",
   "first-token-accepted": "L'agent s'en occupe",
   "first-token-writing": "En attente des premiers mots",
+  "first-token-almost": "Presque terminé",
   "first-token-slow": "Plus long que d'habitude",
   "preparing-to-execute-tasks": "Préparation de l'exécution des tâches",
   "failed": "Échoué",

@@ -50,6 +50,7 @@
   "first-token-sent": "リクエストを送信しました",
   "first-token-accepted": "エージェントが対応中",
   "first-token-writing": "最初の言葉を待っています",
+  "first-token-almost": "もうすぐです",
   "first-token-slow": "通常より時間がかかっています",
   "preparing-to-execute-tasks": "タスクの実行を準備しています",
   "failed": "失敗",

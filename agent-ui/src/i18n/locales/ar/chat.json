@@ -50,6 +50,7 @@
   "first-token-sent": "تم إرسال الطلب",
   "first-token-accepted": "الوكيل يعمل عليه",
   "first-token-writing": "بانتظار أولى الكلمات",
+  "first-token-almost": "على وشك الانتهاء",
   "first-token-slow": "يستغرق وقتًا أطول من المعتاد",
   "preparing-to-execute-tasks": "جارٍ التحضير لتنفيذ المهام",
   "failed": "فاشل",

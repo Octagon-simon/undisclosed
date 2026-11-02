@@ -29,6 +29,7 @@ export interface FirstTokenLabels {
   sent: string;
   accepted: string;
   writing: string;
+  almost: string;
   slow: string;
 }
 
@@ -38,18 +39,21 @@ export const FIRST_TOKEN_LABEL_SETS = {
     sent: "Request sent",
     accepted: "Agent is on it",
     writing: "Waiting for the first words",
+    almost: "Almost there",
     slow: "Taking longer than usual",
   },
   plain: {
     sent: "Request sent",
     accepted: "Run accepted",
     writing: "Awaiting first token",
+    almost: "Nearly there",
     slow: "Taking longer than usual",
   },
   terse: {
     sent: "Sent",
     accepted: "Accepted",
     writing: "Starting up",
+    almost: "Almost",
     slow: "Taking a while",
   },
 } satisfies Record<string, FirstTokenLabels>;
@@ -62,8 +66,10 @@ export interface FirstTokenMeterProps {
   stage: FirstTokenStage;
   /** Milliseconds since the user pressed send. */
   elapsedMs: number;
-  /** Past this, the row states the overrun in amber instead of restating the stage. */
+  /** Past this, the row encourages instead of restating the stage. */
   typicalMs?: number;
+  /** Past this, the row stops encouraging and states the wait as amber. */
+  stalledMs?: number;
   /**
    * Set when the first token lands (the first `reasoning` chunk, or the ack
    * for models that answer without thinking). The row then renders nothing.
@@ -77,6 +83,7 @@ export function FirstTokenMeter({
   stage,
   elapsedMs,
   typicalMs = 3000,
+  stalledMs = 20000,
   firstTokenMs,
   labels,
   className,
@@ -97,6 +104,11 @@ export function FirstTokenMeter({
       t("chat.first-token-writing", {
         defaultValue: FIRST_TOKEN_LABEL_SETS.calm.writing,
       }),
+    almost:
+      labels?.almost ??
+      t("chat.first-token-almost", {
+        defaultValue: FIRST_TOKEN_LABEL_SETS.calm.almost,
+      }),
     slow:
       labels?.slow ??
       t("chat.first-token-slow", { defaultValue: FIRST_TOKEN_LABEL_SETS.calm.slow }),
@@ -106,7 +118,8 @@ export function FirstTokenMeter({
   if (typeof firstTokenMs === "number") return null;
 
   const overrun = elapsedMs > typicalMs;
-  const label = overrun ? text.slow : text[stage];
+  const stalled = elapsedMs > stalledMs;
+  const label = stalled ? text.slow : overrun ? text.almost : text[stage];
 
   return (
     <motion.div
@@ -126,31 +139,30 @@ export function FirstTokenMeter({
       <div aria-hidden className="min-w-0 truncate">
         <motion.div
           key={label}
-          className="inline-block"
+          className={cn(
+            "inline-block",
+            stalled && "text-ds-text-warning-default-default",
+          )}
           initial={reduceMotion ? false : { opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.16, ease: "easeOut" }}
         >
-          {/* The live label keeps the row's ink: the sweep is a transparent
-              band through `currentColor`, not ShinyText's grey gradient. The
-              overrun label drops the shimmer entirely and goes amber. */}
-          {overrun ? (
-            <span className="text-ds-text-warning-default-default">{label}</span>
-          ) : (
-            <ShinyText
-              text={label}
-              speed={2.5}
-              color="currentColor"
-              shineColor="transparent"
-              className="!font-normal"
-            />
-          )}
+          {/* The sweep is a transparent band through the row's own ink, so the
+              label keeps its colour. Stalled turns repaint the ink amber and
+              sweep a brighter amber through it. */}
+          <ShinyText
+            text={label}
+            speed={2.5}
+            color="currentColor"
+            shineColor={stalled ? "var(--colors-yellow-200)" : "transparent"}
+            className="!font-normal"
+          />
         </motion.div>
         <span className="mx-1.5 text-ds-text-neutral-subtle-default">·</span>
         <span
           className={cn(
             "font-mono text-label-xs transition-colors duration-500",
-            overrun
+            stalled
               ? "text-ds-text-warning-default-default"
               : "text-ds-text-neutral-subtle-default",
           )}
