@@ -29,7 +29,6 @@ from camel.toolkits import (
     PlanningWorktreeToolkit,
     RegisteredAgentToolkit,
     ToolkitMessageIntegration,
-    WebFetchToolkit,
 )
 
 from app.agent.toolkit.app_capture_toolkit import AppCaptureToolkit
@@ -82,6 +81,7 @@ from app.agent.toolkit.terminal_toolkit import TerminalToolkit
 from app.agent.toolkit.test_runner_toolkit import TestRunnerToolkit
 from app.agent.toolkit.twitter_toolkit import TwitterToolkit
 from app.agent.toolkit.web_deploy_toolkit import WebDeployToolkit
+from app.agent.toolkit.web_fetch_toolkit import WebFetchToolkit
 from app.agent.toolkit.whatsapp_toolkit import WhatsAppToolkit
 from app.component.environment import env
 from app.hands.interface import IHands

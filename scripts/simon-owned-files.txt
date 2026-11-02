@@ -3,6 +3,7 @@
 # they are committed, so list them explicitly here.
 
 brain/app/agent/toolkit/iris_toolkit.py
+brain/app/agent/toolkit/web_fetch_toolkit.py
 agent-ui/src/components/BrainStatus/index.tsx
 agent-ui/src/components/BrainStatus/useBrainStatus.ts
 agent-ui/src/components/ChatBox/ContextWindowNotice.tsx
