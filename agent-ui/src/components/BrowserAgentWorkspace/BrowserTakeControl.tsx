@@ -26,6 +26,7 @@
  */
 
 import { fetchPut } from '@/api/http';
+import useChatStoreAdapter from '@/hooks/useChatStoreAdapter';
 import { getConnectionConfig } from '@/store/connectionStore';
 import { useProjectStore } from '@/store/projectStore';
 import { Loader2, MousePointerClick, Wifi, WifiOff } from 'lucide-react';
@@ -37,7 +38,10 @@ interface FrameMeta {
   deviceHeight: number;
 }
 
-function brainWsUrl(): string | null {
+function brainWsUrl(
+  projectId: string | null,
+  taskId: string | null
+): string | null {
   const base = getConnectionConfig().brainEndpoint;
   if (!base) return null;
   const ws = base.replace(/^http/i, (m) => (m.toLowerCase() === 'https' ? 'wss' : 'ws'));
@@ -47,13 +51,42 @@ function brainWsUrl(): string | null {
     : base.replace(/^https:/i, 'wss:').replace(/^http:/i, 'ws:');
   // Higher JPEG quality — it's all localhost, so bandwidth is free. The DPR is
   // sent per-frame-config via the `viewport` message (it can change per monitor).
-  return normalized.replace(/\/+$/, '') + '/browser/stream?quality=85';
+  // The chat identity scopes the stream to this conversation's browser and tab;
+  // without it several chats on one brain all stream the same page.
+  const params = new URLSearchParams({ quality: '85' });
+  if (projectId) params.set('project_id', projectId);
+  if (taskId) params.set('task_id', taskId);
+  return (
+    normalized.replace(/\/+$/, '') + '/browser/stream?' + params.toString()
+  );
 }
 
 type Status = 'connecting' | 'live' | 'error' | 'closed';
 
 export default function BrowserTakeControl() {
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
+  const { chatStore } = useChatStoreAdapter();
+  const activeTaskId = chatStore?.activeTaskId ?? null;
+
+  // Remount on a chat switch so the stream re-anchors on that chat's tab and
+  // control/frame state never leaks across conversations.
+  return (
+    <BrowserTakeControlStream
+      key={`${activeProjectId ?? ''}:${activeTaskId ?? ''}`}
+      projectId={activeProjectId}
+      taskId={activeTaskId}
+    />
+  );
+}
+
+function BrowserTakeControlStream({
+  projectId,
+  taskId,
+}: {
+  projectId: string | null;
+  taskId: string | null;
+}) {
+  const activeProjectId = projectId;
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const metaRef = useRef<FrameMeta | null>(null);
@@ -92,7 +125,7 @@ export default function BrowserTakeControl() {
 
   // Open the stream on mount; tear it down on unmount.
   useEffect(() => {
-    const url = brainWsUrl();
+    const url = brainWsUrl(projectId, taskId);
     if (!url) {
       setStatus('error');
       setErrorMsg('No brain endpoint configured.');
@@ -176,8 +209,15 @@ export default function BrowserTakeControl() {
         /* noop */
       }
       wsRef.current = null;
+      // Leaving the view while holding control would leave the agent paused.
+      if (controllingRef.current && projectId) {
+        controllingRef.current = false;
+        void fetchPut(`/task/${projectId}/take-control`, {
+          action: 'resume',
+        }).catch(() => undefined);
+      }
     };
-  }, [send, drawFrame]);
+  }, [send, drawFrame, projectId, taskId]);
 
   // Map a pointer event on the (CSS-scaled) canvas to page CSS pixels: the
   // fraction across the displayed canvas × the device dimensions the bridge

@@ -48,6 +48,7 @@ import websockets
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.component.environment import env
+from app.utils.browser_view_registry import lookup_browser, remember_browser
 
 logger = logging.getLogger("browser_stream")
 
@@ -90,11 +91,19 @@ def _browser_port(port_override: str | None) -> int:
         return 9222
 
 
-async def _discover_page(port: int) -> tuple[str, str] | None:
-    """Return (devtools_ws_url, page_url) for the page the agent is on.
+async def _discover_page(
+    port: int,
+    *,
+    preferred_target_id: str | None = None,
+    preferred_url: str | None = None,
+    sentinel_session: str | None = None,
+) -> tuple[str, str, str] | None:
+    """Return (devtools_ws_url, page_url, target_id) for the page to show.
 
-    Prefer the last non-blank page target (the agent navigates the most-recent
-    tab); fall back to the last page target.
+    With a chat context, prefer the tab that chat last used, then the tab that
+    still carries its ``about:blank#eigent-<session>`` sentinel, then the tab on
+    the chat's last URL. Without one, prefer the last non-blank page (the agent
+    navigates the most-recent tab); fall back to the last page target.
     """
     url = f"http://localhost:{port}/json"
     # Short timeout: this is localhost, and we poll it repeatedly while waiting
@@ -112,17 +121,64 @@ async def _discover_page(port: int) -> tuple[str, str] | None:
     ]
     if not pages:
         return None
+    chosen = _select_page(
+        pages,
+        preferred_target_id=preferred_target_id,
+        preferred_url=preferred_url,
+        sentinel_session=sentinel_session,
+    )
+    return (
+        chosen["webSocketDebuggerUrl"],
+        str(chosen.get("url", "")),
+        str(chosen.get("id", "")),
+    )
+
+
+def _same_url(left: str, right: str) -> bool:
+    return left.rstrip("/") == right.rstrip("/")
+
+
+def _select_page(
+    pages: list[dict[str, Any]],
+    *,
+    preferred_target_id: str | None = None,
+    preferred_url: str | None = None,
+    sentinel_session: str | None = None,
+) -> dict[str, Any]:
+    """Pick the page a chat's live view should show.
+
+    Order: the tab this chat last used, the tab still carrying its session
+    sentinel (a fresh chat's page is blank, so nothing else identifies it), the
+    tab on the URL the chat last navigated to, then the last non-blank page.
+    Blank pages are only chosen when a chat context points at them; otherwise
+    the agent has not opened anything worth showing.
+    """
+    if preferred_target_id:
+        for t in pages:
+            if str(t.get("id")) == str(preferred_target_id):
+                return t
+    if sentinel_session:
+        marker = f"#eigent-{sentinel_session}"
+        for t in pages:
+            if marker in str(t.get("url", "")):
+                return t
+    if preferred_url:
+        for t in pages:
+            if _same_url(str(t.get("url", "")), str(preferred_url)):
+                return t
     chosen = pages[-1]
     for t in pages:
         u = str(t.get("url", ""))
         if u and not u.startswith("about:blank"):
             chosen = t
-    return chosen["webSocketDebuggerUrl"], str(chosen.get("url", ""))
+    return chosen
 
 
-async def _discover_page_any_port(preferred: int) -> tuple[str, str, int] | None:
+async def _discover_page_any_port(
+    preferred: int,
+) -> tuple[str, str, int, str] | None:
     """Find a live agent page across likely CDP ports, returning
-    (devtools_ws_url, page_url, port).
+    (devtools_ws_url, page_url, port, target_id).
 
     The bridge historically assumed `browser_port` (default 9222), but the agent
     can end up on a nearby port (e.g. 9224 when 9222 is taken), which left the
@@ -140,7 +196,7 @@ async def _discover_page_any_port(preferred: int) -> tuple[str, str, int] | None
         except Exception:
             found = None
         if found is not None:
-            return found[0], found[1], p
+            return found[0], found[1], p, found[2]
     return None
 
 
@@ -324,7 +380,24 @@ async def browser_stream(websocket: WebSocket) -> None:
     width = int(websocket.query_params.get("max_width", "1280") or 1280)
     height = int(websocket.query_params.get("max_height", "800") or 800)
     device_scale = float(websocket.query_params.get("device_scale", "1") or 1)
-    port = _browser_port(websocket.query_params.get("port"))
+    # The chat this view belongs to. With it we can stream that chat's browser
+    # (its own port) and its own tab instead of whatever page happens to be on
+    # the default port. Without it (legacy clients) keep the old port scan.
+    project_id = (
+        websocket.query_params.get("project_id") or ""
+    ).strip() or None
+    task_id = (websocket.query_params.get("task_id") or "").strip() or None
+    chat_browser = lookup_browser(project_id, task_id)
+    # A known chat owns its port outright. An unknown one (brain restarted, a
+    # trigger task) keeps the legacy scan, which is better than going offline.
+    chat_scoped = bool(
+        project_id and chat_browser and chat_browser.get("port") is not None
+    )
+    port = (
+        int(chat_browser["port"])
+        if chat_scoped
+        else _browser_port(websocket.query_params.get("port"))
+    )
 
     # Current viewport (mutable: the client's `viewport` messages update it and
     # every rebind re-applies it to the new target).
@@ -464,6 +537,13 @@ async def browser_stream(websocket: WebSocket) -> None:
                     desired["url"] = tws
                     desired["id"] = tid
                     desired["page_url"] = str(target.get("url", ""))
+                    remember_browser(
+                        project_id,
+                        task_id=task_id,
+                        port=port,
+                        target_id=tid,
+                        url=desired["page_url"],
+                    )
                     rebind.set()
 
     try:
@@ -474,9 +554,27 @@ async def browser_stream(websocket: WebSocket) -> None:
         # "ready" or "error", so this just waits for the page to appear.
         loop = asyncio.get_event_loop()
         deadline = loop.time() + 12.0
+        if chat_scoped:
+            # Anchor on the tab this chat used last (or its sentinel page).
+            desired["id"] = chat_browser.get("target_id")
+        sentinel_session = (
+            chat_browser.get("session_id") if chat_scoped else None
+        )
         discovered = None
         while loop.time() < deadline:
-            discovered = await _discover_page_any_port(port)
+            if chat_scoped:
+                # A chat owns one Chromium instance. Scanning other ports here
+                # would silently show a different chat's browser.
+                found = await _discover_page(
+                    port,
+                    preferred_target_id=desired.get("id"),
+                    preferred_url=chat_browser.get("url"),
+                    sentinel_session=sentinel_session,
+                )
+                if found is not None:
+                    discovered = (found[0], found[1], port, found[2])
+            else:
+                discovered = await _discover_page_any_port(port)
             if discovered is not None:
                 break
             await asyncio.sleep(0.4)
@@ -484,13 +582,21 @@ async def browser_stream(websocket: WebSocket) -> None:
             await websocket.send_json(
                 {
                     "type": "error",
-                    "message": "The agent has no browser page open yet. Ask it "
-                    "to visit a page — this view picks it up automatically once "
-                    "it does.",
+                    "message": (
+                        "This chat has no browser page open yet. Ask the agent "
+                        "to visit a page — this view picks it up automatically "
+                        "once it does."
+                        if project_id
+                        else "The agent has no browser page open yet. Ask it to "
+                        "visit a page — this view picks it up automatically "
+                        "once it does."
+                    ),
                 }
             )
             return
-        devtools_url, page_url, port = discovered
+        devtools_url, page_url, port, found_target = discovered
+        if found_target:
+            desired["id"] = found_target
         desired["url"] = devtools_url
         desired["page_url"] = page_url
         # Seed the "seen" set + our target id from the current target list so the
@@ -506,6 +612,16 @@ async def browser_stream(websocket: WebSocket) -> None:
                     desired["id"] = str(p.get("id"))
         except Exception:
             pass
+
+        # Persist the anchor so reopening this chat's view (or another window)
+        # starts on the same tab. The watched tab is refreshed on every rebind.
+        remember_browser(
+            project_id,
+            task_id=task_id,
+            port=port,
+            target_id=desired.get("id"),
+            url=desired.get("page_url"),
+        )
 
         input_task = asyncio.create_task(_pump_input())
         watch_task = asyncio.create_task(_watch_targets())

@@ -40,6 +40,7 @@ from app.utils.browser_launcher import (
     launch_local_cdp_browser,
     normalize_cdp_url,
 )
+from app.utils.browser_view_registry import remember_browser
 from app.utils.listen.toolkit_listen import auto_listen_toolkit
 
 logger = logging.getLogger("hybrid_browser_toolkit")
@@ -377,6 +378,7 @@ class WebSocketBrowserWrapper(BaseWebSocketBrowserWrapper):
         try:
             result = await super().visit_page(url)
             logger.debug("[visit_page] Navigation completed, releasing lock")
+            self._remember_tab_url(url)
             return result
         except Exception as e:
             logger.error(f"[visit_page] Navigation failed: {e}")
@@ -384,6 +386,14 @@ class WebSocketBrowserWrapper(BaseWebSocketBrowserWrapper):
         finally:
             if acquired:
                 lock.release()
+
+    def _remember_tab_url(self, url: str | None) -> None:
+        """Point the live view at this chat's page without an extra CDP query."""
+        if not url:
+            return
+        remember_browser(
+            self.api_task_id, task_id=self._chat_task_id, url=str(url)
+        )
 
     async def get_tab_info(self) -> list[dict[str, Any]]:
         """Override get_tab_info to track and filter tabs for session isolation.
@@ -399,6 +409,9 @@ class WebSocketBrowserWrapper(BaseWebSocketBrowserWrapper):
 
         # Auto-track: add current tab to this session's tracked tabs (with global lock)
         current_tab = next((t for t in all_tabs if t.get("is_current")), None)
+        if current_tab:
+            # The real URL after redirects, unlike the one passed to visit_page.
+            self._remember_tab_url(current_tab.get("url"))
         if current_tab and current_tab.get("tab_id"):
             tab_id = current_tab["tab_id"]
             async with _global_tab_registry_lock:
@@ -607,6 +620,7 @@ class HybridBrowserToolkit(BaseHybridBrowserToolkit, AbstractToolkit):
         browser_log_to_file: bool = False,
         log_dir: str | None = None,
         session_id: str | None = None,
+        task_id: str | None = None,
         default_start_url: str | None = None,
         default_timeout: int | None = None,
         short_timeout: int | None = None,
@@ -625,6 +639,9 @@ class HybridBrowserToolkit(BaseHybridBrowserToolkit, AbstractToolkit):
             f"[HybridBrowserToolkit] Initializing with api_task_id: {api_task_id}"
         )
         self.api_task_id = api_task_id
+        # The first argument is the project id; the task id keys the live view's
+        # per-chat browser record so two chats in one project don't share a tab.
+        self._chat_task_id = task_id
         # One reachability check and at most one launch attempt per toolkit, so
         # a broken environment cannot probe or launch on every tool call.
         self._cdp_endpoint_checked = False
@@ -885,6 +902,7 @@ class HybridBrowserToolkit(BaseHybridBrowserToolkit, AbstractToolkit):
             browser_log_to_file=self._browser_log_to_file,
             log_dir=self.config_loader.get_toolkit_config().log_dir,
             session_id=new_session_id,
+            task_id=self._chat_task_id,
             default_start_url=clone_start_url,
             default_timeout=self._default_timeout,
             short_timeout=self._short_timeout,

@@ -88,6 +88,7 @@ from app.hands.interface import IHands
 from app.model.chat import Chat
 from app.service.task import Agents
 from app.utils.browser_launcher import normalize_cdp_url
+from app.utils.browser_view_registry import remember_browser
 
 logger = logging.getLogger("toolkit_assembler")
 
@@ -515,6 +516,7 @@ async def _build_single_agent_browser(
         "browser_log_to_file": True,
         "stealth": True,
         "session_id": toolkit_session_id,
+        "task_id": options.task_id,
         "cdp_url": cdp_url,
         "enabled_tools": _browser_enabled_tools(),
         **_options(config, "browser"),
@@ -523,6 +525,12 @@ async def _build_single_agent_browser(
     toolkit.agent_name = Agents.single_agent
     assembly.browser_toolkit = toolkit
     assembly.browser_port = selected_port
+    remember_browser(
+        options.project_id,
+        task_id=options.task_id,
+        port=selected_port,
+        session_id=toolkit_session_id,
+    )
     assembly.browser_cdp_url = cdp_url
     assembly.browser_session_id = toolkit_session_id
     assembly.browser_owned_by_hands = cdp_owned_by_hands

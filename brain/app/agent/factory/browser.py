@@ -1,4 +1,5 @@
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+# Portions Copyright 2026 Simon Ugorji. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -45,6 +46,7 @@ from app.hands.interface import IHands
 from app.model.chat import Chat
 from app.service.task import Agents
 from app.utils.browser_launcher import normalize_cdp_url
+from app.utils.browser_view_registry import remember_browser
 from app.utils.file_utils import get_working_directory
 
 
@@ -309,6 +311,7 @@ def browser_agent(
             browser_log_to_file=True,
             stealth=True,
             session_id=toolkit_session_id,
+            task_id=options.task_id,
             cdp_url=cdp_url,
             enabled_tools=[
                 "browser_click",
@@ -536,5 +539,11 @@ def browser_agent(
     agent._cdp_options = options
     agent._browser_toolkit = web_toolkit_for_agent_registration
     agent._cdp_owned_by_hands = cdp_owned_by_hands
+    remember_browser(
+        options.project_id,
+        task_id=options.task_id,
+        port=selected_port,
+        session_id=toolkit_session_id,
+    )
 
     return agent
