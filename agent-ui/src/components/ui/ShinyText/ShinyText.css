@@ -1,6 +1,14 @@
 .shiny-text {
-  color: transparent;
-  background: linear-gradient(120deg, #71717b 30%, #d4d4d8 50%, #71717b 70%);
+  --shiny-ink: var(--shiny-color, #71717b);
+  --shiny-highlight: var(--shiny-shine, #d4d4d8);
+  color: inherit;
+  -webkit-text-fill-color: transparent;
+  background: linear-gradient(
+    120deg,
+    var(--shiny-ink) 30%,
+    var(--shiny-highlight) 50%,
+    var(--shiny-ink) 70%
+  );
   background-size: 200% 100%;
   background-position: 50% center;
   -webkit-background-clip: text;
@@ -21,8 +29,9 @@
 
 .shiny-text.disabled {
   animation: none;
-  color: #71717b;
   background: none;
+  color: var(--shiny-ink);
+  -webkit-text-fill-color: currentColor;
 }
 
 @media (prefers-reduced-motion: reduce) {

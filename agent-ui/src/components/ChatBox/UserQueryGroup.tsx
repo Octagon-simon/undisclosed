@@ -31,7 +31,10 @@ import React, {
 import { AgentMessageCard } from './MessageItem/AgentMessageCard';
 import { ApprovalOutcomeCard } from './MessageItem/ApprovalOutcomeCard';
 import { NoticeCard } from './MessageItem/NoticeCard';
-import { PreparingToExecuteTasks } from './MessageItem/PreparingToExecuteTasks';
+import {
+  FirstTokenMeter,
+  type FirstTokenStage,
+} from './MessageItem/FirstTokenMeter';
 // NOTE: `TaskWorkLogAccordion` is intentionally retained but no longer mounted
 // here. The Execution Summary (below) replaces it; delete the component in a
 // later pass once we're sure nothing else needs the work-log view.
@@ -123,6 +126,10 @@ function extractPromptBlocks(content: string): { promptBlocks: PromptBlock[]; cl
 }
 
 const PERSISTED_CONTEXT_HEADER = 'Persisted Project Context';
+
+// Acceptance is the last event before the first token, so this beat is pacing
+// between two wordings of the same wait, not a new fact.
+const ACCEPTED_BEAT_MS = 1200;
 
 /** Collapsible card that shows the durable project context block or remembered facts, 
  * collapsed by default so it doesn't dominate the turn like the rest of the activity trace. */
@@ -448,14 +455,6 @@ export const UserQueryGroup: React.FC<UserQueryGroupProps> = ({
       (m: any) => m.step === AgentStep.TO_SUB_TASKS && m.isConfirm
     )
   );
-  const showPreparingExecute =
-    Boolean(activeTaskId && task) &&
-    task!.status === ChatTaskStatus.PENDING &&
-    (isInitialTaskPreparation ||
-      // Workforce: after the user confirms the plan, before the work log.
-      (showTaskPlanCard && hasConfirmedSubTasks) ||
-      // Single agent: from submit until the first `todo_state` arrives.
-      shouldShowSingleAgentWorkLog);
   const shouldShowPlanTaskBox = Boolean(
     !hasConfirmedSubTasks && (isLastUserQuery || queryGroup.taskMessage)
   );
@@ -558,6 +557,52 @@ export const UserQueryGroup: React.FC<UserQueryGroupProps> = ({
   // the user sees the count climb instead of a static header; on finish the
   // Thought Process shows the matching "Worked for Xs".
   const turnStartedAtMs = Date.parse(queryGroup.userMessage?.createdAt ?? '');
+
+  // The waiting row owns the slot under the user's message from Enter to the
+  // first thing the model produces. It hides on evidence rather than on a
+  // timer: any acknowledgement, thought, plan, tool run or streamed text means
+  // the wait is over, and the row gets out of the way in that same frame.
+  const modelHasSpoken = Boolean(
+    summaryTask?.acknowledgement ||
+      summaryTask?.liveReasoning ||
+      planSteps.length ||
+      summaryActivities.length ||
+      streamingDecomposeText ||
+      hasUnconfirmedPlan
+  );
+  const acceptedAtMs = summaryTask?.acceptedAtMs ?? 0;
+  const awaitingFirstToken =
+    Boolean(activeTaskId && summaryTask) &&
+    ownsLatestUserTurn &&
+    !isHumanReply &&
+    !blockedOnHuman &&
+    !modelHasSpoken &&
+    (summaryTask?.status === ChatTaskStatus.PENDING || taskIsLive);
+  // Re-tick only while the row is up; one interval for the whole wait.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (!awaitingFirstToken) return;
+    setNowMs(Date.now());
+    const timer = window.setInterval(() => setNowMs(Date.now()), 250);
+    return () => window.clearInterval(timer);
+  }, [awaitingFirstToken]);
+  // A stamp from an earlier turn on the same task does not count as this
+  // turn's acceptance, so compare it against this turn's send time.
+  const waitAccepted =
+    acceptedAtMs > 0 &&
+    (!Number.isFinite(turnStartedAtMs) || acceptedAtMs >= turnStartedAtMs);
+  const waitElapsedMs = Math.max(
+    0,
+    nowMs - (Number.isFinite(turnStartedAtMs) ? turnStartedAtMs : nowMs)
+  );
+  // `sent` until the server accepts, then "Agent is on it" for one beat, then
+  // "Waiting for the first words" until the token or the overrun. Without the
+  // middle stage the row jumped from acceptance straight to the amber overrun.
+  const waitStage: FirstTokenStage = !waitAccepted
+    ? 'sent'
+    : nowMs - acceptedAtMs >= ACCEPTED_BEAT_MS
+      ? 'writing'
+      : 'accepted';
 
   return (
     <motion.div
@@ -675,7 +720,13 @@ export const UserQueryGroup: React.FC<UserQueryGroupProps> = ({
           transition={{ duration: 0.25, delay: 0.05 }}
           className="px-sm mb-sm"
         >
-          {showPreparingExecute ? <PreparingToExecuteTasks /> : null}
+          {awaitingFirstToken ? (
+            <FirstTokenMeter
+              stage={waitStage}
+              elapsedMs={waitElapsedMs}
+              typicalMs={8000}
+            />
+          ) : null}
           {/* Inline agent progress / plan. Sits in the execution stream between
               the Thought Process and the Execution Summary (live-agent-feedback
               spec §2.1) and scrolls with the turn. It replaces the old sticky

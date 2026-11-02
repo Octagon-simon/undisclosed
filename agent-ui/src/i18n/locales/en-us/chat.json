@@ -47,6 +47,10 @@
   "reassigned": "Reassigned",
   "ongoing": "Ongoing",
   "pending": "Pending",
+  "first-token-sent": "Request sent",
+  "first-token-accepted": "Agent is on it",
+  "first-token-writing": "Waiting for the first words",
+  "first-token-slow": "Taking longer than usual",
   "preparing-to-execute-tasks": "Preparing to execute tasks",
   "preparing-to-execute-tasks-rotating": [
     "Warming up the neurons",

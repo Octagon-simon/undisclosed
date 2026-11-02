@@ -490,6 +490,8 @@ interface Task {
   liveReasoning?: string;
   /** One-time turn-start acknowledgement line (Action.acknowledge). */
   acknowledgement?: string;
+  /** When the server accepted this run (SSE response headers), Unix ms. */
+  acceptedAtMs?: number;
   // Streaming decompose text - stored separately to avoid frequent re-renders
   streamingDecomposeText: string;
   // Trigger execution ID for tracking trigger task completion
@@ -984,6 +986,7 @@ export interface ChatStore {
   clearLiveReasoning: (taskId: string) => void;
   setAcknowledgement: (taskId: string, text: string) => void;
   clearAcknowledgement: (taskId: string) => void;
+  setAcceptedAt: (taskId: string) => void;
   setNextTaskId: (taskId: string | null) => void;
   setNextUserId: (taskId: string, nextUserId: string | undefined) => void;
   setStreamingDecomposeText: (taskId: string, text: string) => void;
@@ -5238,6 +5241,9 @@ const chatStore = (initial?: Partial<ChatStore>) =>
           console.log('open', respond);
           const { setAttaches, activeTaskId } = get();
           setAttaches(activeTaskId as string, []);
+          // Headers on the wire: the brain has the run. Stamped so the waiting
+          // row can show a second, real milestone before the first token.
+          getCurrentChatStore().setAcceptedAt(getCurrentTaskId());
           if (resolveResumeOpen) {
             resolveResumeOpen();
             resolveResumeOpen = null;
@@ -6608,6 +6614,19 @@ const chatStore = (initial?: Partial<ChatStore>) =>
           tasks: {
             ...state.tasks,
             [taskId]: { ...task, acknowledgement: '' },
+          },
+        };
+      });
+    },
+    setAcceptedAt: (taskId) => {
+      set((state) => {
+        const task = state.tasks[taskId];
+        if (!task) return state;
+        return {
+          ...state,
+          tasks: {
+            ...state.tasks,
+            [taskId]: { ...task, acceptedAtMs: Date.now() },
           },
         };
       });

@@ -1,4 +1,5 @@
 // ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+// Portions Copyright 2026 Simon Ugorji. All Rights Reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -19,6 +20,10 @@ interface ShinyTextProps {
   disabled?: boolean;
   speed?: number;
   className?: string;
+  /** Ink the sweep passes through. Accepts `currentColor` to keep the caller's text colour. */
+  color?: string;
+  /** Colour of the highlight. `transparent` lets the surface show through the sweep. */
+  shineColor?: string;
 }
 
 const ShinyText: React.FC<ShinyTextProps> = ({
@@ -26,13 +31,19 @@ const ShinyText: React.FC<ShinyTextProps> = ({
   disabled = false,
   speed = 3,
   className = '',
+  color,
+  shineColor,
 }) => {
-  const animationDuration = `${speed}s`;
+  const style = {
+    animationDuration: `${speed}s`,
+    ...(color ? { '--shiny-color': color } : null),
+    ...(shineColor ? { '--shiny-shine': shineColor } : null),
+  } as React.CSSProperties;
 
   return (
     <div
       className={`shiny-text ${disabled ? 'disabled' : ''} ${className}`}
-      style={{ animationDuration }}
+      style={style}
     >
       {text}
     </div>
