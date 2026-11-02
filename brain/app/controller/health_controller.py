@@ -1,4 +1,5 @@
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+# Portions Copyright 2026 Simon Ugorji. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -34,6 +35,10 @@ class HealthResponse(BaseModel):
     #pid + owner let the launcher tell its own brain from an orphan on :5001
     pid: int | None = None
     owner: str | None = None
+    #event-loop lag: non-zero means sync work is blocking the loop
+    loop_max_lag_ms: int | None = None
+    loop_stalls: int | None = None
+    loop_last_stall_at: float | None = None
 
 
 @router.get("/health", name="health check", response_model=HealthResponse)
@@ -41,11 +46,17 @@ async def health_check(detail: bool = Query(False)):
     """Health check endpoint for verifying backend
     is ready to accept requests."""
     logger.debug("Health check requested")
+    from app.utils.loop_watchdog import watchdog_snapshot
+
+    loop_stats = watchdog_snapshot()
     response = HealthResponse(
         status="ok",
         service="undisclosed",
         pid=os.getpid(),
         owner=os.getenv("UNDISCLOSED_BRAIN_OWNER") or None,
+        loop_max_lag_ms=loop_stats.get("loop_max_lag_ms"),
+        loop_stalls=loop_stats.get("loop_stalls"),
+        loop_last_stall_at=loop_stats.get("loop_last_stall_at"),
     )
     if detail:
         hands = get_environment_hands()
@@ -60,6 +71,9 @@ async def health_check(detail: bool = Query(False)):
                 browser_port = 9222
             cdp_reachable = _is_cdp_available(browser_port)
         capabilities["browser_cdp_reachable"] = cdp_reachable
+        capabilities["loop_last_stall_stack"] = loop_stats.get(
+            "loop_last_stall_stack", ""
+        )
         response.capabilities = capabilities
     logger.debug(
         "Health check completed",

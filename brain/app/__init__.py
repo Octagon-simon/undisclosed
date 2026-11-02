@@ -1,4 +1,5 @@
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+# Portions Copyright 2026 Simon Ugorji. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -12,6 +13,7 @@
 # limitations under the License.
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
 
+import logging
 import os
 from contextlib import asynccontextmanager
 
@@ -69,12 +71,40 @@ def _start_hybrid_job_recovery() -> None:
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     _register_main_event_loop()
+    _start_loop_watchdog()
     _start_hybrid_job_recovery()
     _start_slack_socket_mode()
     try:
         yield
     finally:
         _stop_slack_socket_mode()
+        _stop_loop_watchdog()
+
+
+def _start_loop_watchdog() -> None:
+    """Report event-loop stalls from a daemon thread.
+
+    A sync call on the loop thread freezes ``/health``, so the desktop app
+    shows "brain offline" while the process is fine. The watchdog logs the
+    blocking stack so the stall is diagnosable instead of invisible.
+    """
+    try:
+        import asyncio
+
+        from app.utils.loop_watchdog import start_loop_watchdog
+
+        start_loop_watchdog(asyncio.get_running_loop())
+    except Exception:  # noqa: BLE001 - never block boot
+        pass
+
+
+def _stop_loop_watchdog() -> None:
+    try:
+        from app.utils.loop_watchdog import stop_loop_watchdog
+
+        stop_loop_watchdog()
+    except Exception:  # noqa: BLE001 - shutdown must never raise
+        pass
 
 
 def _start_slack_socket_mode() -> None:
