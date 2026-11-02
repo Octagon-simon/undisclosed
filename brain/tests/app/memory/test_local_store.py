@@ -527,3 +527,30 @@ class TestProjectSummary:
             )
             == ""
         )
+
+
+class TestClearUser:
+    def test_removes_every_file_under_the_user(self, store):
+        target = store.user_path("user_42")
+        project = target / "spaces" / "s1" / "projects" / "p1"
+        project.mkdir(parents=True)
+        (project / "conversation.jsonl").write_text("{}\n")
+        (target / "preferences.json").write_text("{}")
+
+        assert store.clear_user("user_42") == 2
+        assert not target.exists()
+
+    def test_missing_user_returns_zero(self, store):
+        assert store.clear_user("user_42") == 0
+
+    def test_never_deletes_outside_the_root(self, store, tmp_path):
+        outside = tmp_path.parent / f"{tmp_path.name}_outside"
+        outside.mkdir(parents=True, exist_ok=True)
+        marker = outside / "keep.txt"
+        marker.write_text("keep")
+
+        assert store.clear_user(f"../../{outside.name}") == 0
+        assert marker.exists()
+
+    def test_root_itself_is_refused(self, store):
+        assert store.clear_user("..") == 0

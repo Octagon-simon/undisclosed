@@ -231,17 +231,25 @@ export async function memoryStatus(
   return { count: Number(res?.count ?? 0) };
 }
 
-/** Clear this user's stored semantic-memory facts. Returns count removed. */
+/**
+ * Clear this user's stored semantic-memory facts. With `includeTranscript`,
+ * also deletes the on-disk memory tree (transcripts, summaries, episodes).
+ */
 export async function memoryClear(
   email?: string | null,
-  userId?: string | number | null
-): Promise<{ removed: number }> {
+  userId?: string | number | null,
+  opts?: { includeTranscript?: boolean }
+): Promise<{ removed: number; filesRemoved: number }> {
   const params = new URLSearchParams();
   if (email) params.set('email', String(email));
   if (userId != null && userId !== '') params.set('user_id', String(userId));
+  if (opts?.includeTranscript) params.set('include_transcript', 'true');
   const qs = params.toString();
   const res = await fetchDelete(`/memory${qs ? `?${qs}` : ''}`);
-  return { removed: Number(res?.removed ?? 0) };
+  return {
+    removed: Number(res?.removed ?? 0),
+    filesRemoved: Number(res?.files_removed ?? 0),
+  };
 }
 
 /** Structured breakdown of a conversation handoff (from the brain). */

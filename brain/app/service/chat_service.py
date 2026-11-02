@@ -17,6 +17,7 @@ import asyncio
 import datetime
 import logging
 import platform
+from dataclasses import replace
 from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
@@ -49,6 +50,7 @@ from app.agent.factory.remote_sub_agent import (
     attach_remote_sub_agent_if_enabled,
     remote_sub_agent_enabled,
 )
+from app.agent.factory.toolkit_assembler import toolkit_enabled
 from app.agent.listen_chat_agent import ListenChatAgent
 from app.agent.prompt import (
     append_connected_app_mcp_notice,
@@ -442,6 +444,12 @@ def build_context_for_workforce(
     still appended afterward because it is the live state for the current
     session and may contain turns not yet flushed to disk.
     """
+    memory_enabled = toolkit_enabled(options, "memory")
+    run_context = getattr(task_lock, "run_context", None)
+    if run_context is not None and run_context.memory_enabled != memory_enabled:
+        task_lock.run_context = replace(
+            run_context, memory_enabled=memory_enabled
+        )
     try:
         record_turn_rules(task_lock, task_content or "")
     except Exception:  # noqa: BLE001 - memory must never break the turn
@@ -450,6 +458,7 @@ def build_context_for_workforce(
         task_lock,
         mode="workforce_coordinator",
         current_user_prompt=task_content or "",
+        include_semantic=memory_enabled,
     )
     # Cumulative rolling conversation summary — the SAME one single-agent injects
     # each turn (read_rolling_summary_for_task_lock). Without this, workforce had
@@ -2744,6 +2753,8 @@ async def construct_workforce(
         to restate the goal. Single-agent has this; workforce didn't. Fail-soft:
         returns ([], []) on any error so the workforce still builds."""
         try:
+            if not toolkit_enabled(options, "memory"):
+                return [], []
             from app.agent.toolkit.memory_toolkit import MemoryToolkit
             from app.memory.paths import canonical_user_id
 

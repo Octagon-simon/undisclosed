@@ -25,6 +25,7 @@ Verifies:
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -34,6 +35,7 @@ from app.memory import (
     MemoryService,
     ProjectContextBuilder,
     finalize_task_lock_run_memory,
+    record_turn_rules,
 )
 from app.run_context import RunContext
 
@@ -663,3 +665,80 @@ class TestRollingSummaryWrite:
         )
         assert payload is not None
         assert payload["turns"][-1]["user"] == "second prompt"
+
+
+class TestMemoryToggleGate:
+    """The "Remember across conversations" switch must gate writes, not just
+    prompt recall."""
+
+    class _Lock:
+        def __init__(self, service, run_context):
+            self.memory_service = service
+            self.run_context = run_context
+            self._memory_finalized_runs = set()
+
+    def test_run_start_writes_nothing_when_disabled(self, service, run_context):
+        run_context = replace(run_context, memory_enabled=False)
+
+        assert (
+            service.on_run_start(
+                run_context=run_context,
+                space_name="W",
+                project_name="P",
+                mode="single_agent",
+                user_prompt="q",
+            )
+            is None
+        )
+        assert not service.store.user_path("user_42").exists()
+
+    def test_finalize_writes_nothing_when_disabled(self, service, run_context):
+        run_context = replace(run_context, memory_enabled=False)
+        lock = self._Lock(service, run_context)
+
+        assert (
+            finalize_task_lock_run_memory(
+                lock, state="done", final_result="answer"
+            )
+            is False
+        )
+        assert not service.store.user_path("user_42").exists()
+
+    def test_run_end_skips_transcript_and_summary_when_disabled(
+        self, service, run_context
+    ):
+        service.on_run_start(
+            run_context=run_context,
+            space_name="W",
+            project_name="P",
+            mode="single_agent",
+            user_prompt="q",
+        )
+        run_context = replace(run_context, memory_enabled=False)
+
+        service.on_run_end(
+            run_context=run_context, state="done", final_result="answer"
+        )
+
+        tail = service.store.read_conversation_tail(
+            "user_42", run_context.space_id, run_context.project_id, limit=10
+        )
+        assert [event.content for event in tail] == ["q"]
+        assert (
+            service.store.read_project_summary(
+                "user_42", run_context.space_id, run_context.project_id
+            )
+            == ""
+        )
+
+    def test_rules_are_not_written_when_disabled(self, service, run_context):
+        run_context = replace(run_context, memory_enabled=False)
+        lock = self._Lock(service, run_context)
+
+        assert (
+            record_turn_rules(
+                lock, "Always remember the previously given license rule."
+            )
+            == 0
+        )
+        assert not service.store.user_path("user_42").exists()

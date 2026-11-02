@@ -280,6 +280,8 @@ def record_turn_rules(task_lock: Any, user_prompt: str) -> int:
     store = getattr(service, "store", None)
     if run_context is None or store is None:
         return 0
+    if not getattr(run_context, "memory_enabled", True):
+        return 0
     try:
         user_key = canonical_user_id(
             run_context.user_id, email=run_context.email
@@ -565,6 +567,14 @@ def finalize_task_lock_run_memory(
         task_lock._memory_finalized_runs = finalized
     if run_context.run_id in finalized:
         return False
+    if not getattr(run_context, "memory_enabled", True):
+        #still mark the run so a duplicate end path cannot write after opt-out
+        finalized.add(run_context.run_id)
+        logger.debug(
+            "memory finalize skipped: memory disabled",
+            extra={"run_id": run_context.run_id},
+        )
+        return False
 
     try:
         service.register_runtime_log_artifact(
@@ -718,6 +728,8 @@ class MemoryService:
         None if memory write was skipped (no identity / disk error).
         """
 
+        if not getattr(run_context, "memory_enabled", True):
+            return None
         user_key = _resolve_user_key(run_context)
         if user_key is None:
             return None
@@ -786,6 +798,8 @@ class MemoryService:
         # narration are persisted incrementally instead of only at on_run_end.
         if not content.strip():
             return None
+        if not getattr(run_context, "memory_enabled", True):
+            return None
         user_key = _resolve_user_key(run_context)
         if user_key is None:
             return None
@@ -817,6 +831,8 @@ class MemoryService:
     ) -> str | None:
         """Persist a mid-run Human Toolkit reply as a user conversation turn."""
         if not content.strip():
+            return None
+        if not getattr(run_context, "memory_enabled", True):
             return None
         user_key = _resolve_user_key(run_context)
         if user_key is None:
@@ -854,6 +870,8 @@ class MemoryService:
         user_prompt: str | None = None,
         files: list[str] | None = None,
     ) -> None:
+        if not getattr(run_context, "memory_enabled", True):
+            return
         user_key = _resolve_user_key(run_context)
         if user_key is None:
             return

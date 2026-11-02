@@ -53,12 +53,22 @@ def memory_status(
 def memory_clear(
     email: str | None = Query(None),
     user_id: str | None = Query(None),
+    include_transcript: bool = Query(False),
 ) -> dict:
-    """Delete this user's stored facts (or all when unscoped)."""
+    """Delete this user's stored facts.
+
+    ``include_transcript=true`` also removes the on-disk memory tree for the
+    user (conversation.jsonl, summaries, memories.json, episodes).
+    """
     key = _user_key(email, user_id)
     removed = semantic_store.clear(key)
-    memory_logger.info("Cleared %d semantic memory facts", removed)
-    return {"removed": removed}
+    files_removed = 0
+    if include_transcript:
+        files_removed = LocalMemoryStore().clear_user(key)
+    memory_logger.info(
+        "Cleared %d semantic facts and %d memory files", removed, files_removed
+    )
+    return {"removed": removed, "files_removed": files_removed}
 
 
 @router.get("/memory/handoff")

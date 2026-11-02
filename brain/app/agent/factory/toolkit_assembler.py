@@ -802,6 +802,7 @@ async def assemble_single_agent_toolkits(
             user_key=memory_user_key,
             #same resolution as RunContext: a request may omit space_id
             space_id=options.space_id or options.project_id,
+            write_enabled=_enabled(config, "memory"),
         )
         assembly.add_tools(
             memory_toolkit.get_tools(), MemoryToolkit.toolkit_name()

@@ -228,6 +228,14 @@ async def _resolve_browser_for_turn(
     return await _reuse_browser_for_request(request, port)
 
 
+def _memory_enabled_from(data: Chat) -> bool:
+    """The user's memory switch as sent in toolkit_config (default on)."""
+    cfg = (data.toolkit_config or {}).get("memory")
+    if isinstance(cfg, dict) and "enabled" in cfg:
+        return bool(cfg["enabled"])
+    return True
+
+
 def _build_run_context(
     data: Chat,
     frozen_dirs,
@@ -254,6 +262,7 @@ def _build_run_context(
         workdir_mode=frozen_dirs.workdir_mode or data.workdir_mode,
         browser_port=browser_port,
         channel=data.channel or "desktop",
+        memory_enabled=_memory_enabled_from(data),
         cdp_url=cdp_url,
         api_key=data.api_key,
         api_base_url=api_base_url,

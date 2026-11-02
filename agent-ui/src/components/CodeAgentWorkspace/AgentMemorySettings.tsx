@@ -33,6 +33,7 @@ export default function AgentMemorySettings() {
   const [count, setCount] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [clearing, setClearing] = useState(false);
+  const [clearingAll, setClearingAll] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -67,6 +68,35 @@ export default function AgentMemorySettings() {
     }
   }, [email, userId, load]);
 
+  const clearAll = useCallback(async () => {
+    const ok = window.confirm(
+      'Delete all local memory for this account? This removes stored facts, transcripts and summaries from ~/.undisclosed/memory and cannot be undone.'
+    );
+    if (!ok) return;
+    setClearingAll(true);
+    try {
+      const { removed, filesRemoved } = await memoryClear(email, userId, {
+        includeTranscript: true,
+      });
+      const parts = [
+        removed > 0 ? `${removed} ${removed === 1 ? 'fact' : 'facts'}` : '',
+        filesRemoved > 0
+          ? `${filesRemoved} ${filesRemoved === 1 ? 'file' : 'files'}`
+          : '',
+      ].filter(Boolean);
+      toast.success(
+        parts.length
+          ? `Deleted ${parts.join(' and ')}.`
+          : 'Memory was already empty.'
+      );
+      await load();
+    } catch (e) {
+      toast.error((e as Error)?.message || 'Failed to clear memory.');
+    } finally {
+      setClearingAll(false);
+    }
+  }, [email, userId, load]);
+
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto px-3 py-3">
       <div className="mb-2 flex items-center gap-2">
@@ -87,8 +117,9 @@ export default function AgentMemorySettings() {
             Remember across conversations
           </div>
           <div className="mt-0.5 text-label-xs leading-relaxed text-ds-text-neutral-subtle-default">
-            Lets the agent recall facts you've shared (your name, preferences,
-            decisions) in future chats. Applies to new tasks.
+            When on, the agent saves facts you share (your name, preferences,
+            decisions) and recalls them in future chats. When off, it does
+            neither. Applies to new tasks.
           </div>
         </div>
         <button
@@ -146,8 +177,24 @@ export default function AgentMemorySettings() {
         </button>
       </div>
 
+      <button
+        type="button"
+        onClick={clearAll}
+        disabled={clearingAll}
+        className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl border border-solid border-ds-border-neutral-default-default px-3 py-2 text-label-xs text-ds-text-neutral-default-default outline-none transition-colors hover:bg-ds-bg-neutral-muted-default disabled:opacity-50"
+      >
+        {clearingAll ? (
+          <Loader2 size={12} className="animate-spin" aria-hidden />
+        ) : (
+          <Trash2 size={12} aria-hidden />
+        )}
+        Clear transcripts and everything else
+      </button>
+
       <div className="mt-3 text-label-xs leading-relaxed text-ds-text-neutral-subtle-default">
-        Memory is stored locally on your machine and never leaves it.
+        Memory is plain files under ~/.undisclosed/memory on this machine and
+        never leaves it. Clear removes stored facts. Clear transcripts removes
+        the rest, including conversation.jsonl.
       </div>
     </div>
   );

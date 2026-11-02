@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 import tempfile
 import threading
 import weakref
@@ -246,6 +247,20 @@ class LocalMemoryStore:
         run_id: str,
     ) -> Path:
         return run_dir(user_key, space_id, project_id, run_id, self._root)
+
+    def clear_user(self, user_key: str) -> int:
+        """Delete this user's whole memory tree (transcripts included).
+
+        Returns the number of files removed. Refuses any path outside the
+        memory root, so a malformed key can never widen the delete.
+        """
+        root = self._root.resolve()
+        target = self.user_path(user_key).resolve()
+        if target == root or root not in target.parents or not target.is_dir():
+            return 0
+        removed = sum(1 for path in target.rglob("*") if path.is_file())
+        shutil.rmtree(target, ignore_errors=True)
+        return removed
 
     # ----- Space-level -----
 

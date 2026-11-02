@@ -16,6 +16,7 @@
 import asyncio
 import logging
 import os
+from dataclasses import replace
 from typing import Any
 
 from camel.agents import ChatAgent
@@ -1241,13 +1242,23 @@ async def single_agent_solve(
         vision_capable = model_supports_vision(
             options.model_platform, options.model_type
         )
+        #the switch can flip between turns; writes read it off the run context
+        memory_enabled = _memory_enabled(options)
+        turn_run_context = getattr(task_lock, "run_context", None)
+        if (
+            turn_run_context is not None
+            and turn_run_context.memory_enabled != memory_enabled
+        ):
+            task_lock.run_context = replace(
+                turn_run_context, memory_enabled=memory_enabled
+            )
         prompt, bg_context = _build_single_agent_prompt(
             task_lock,
             question,
             attaches,
             project_context,
             vision_capable=vision_capable,
-            memory_enabled=_memory_enabled(options),
+            memory_enabled=memory_enabled,
             is_fresh_agent=is_fresh_agent,
             active_editor=options.active_editor,
         )

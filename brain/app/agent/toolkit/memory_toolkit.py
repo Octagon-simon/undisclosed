@@ -105,10 +105,12 @@ class MemoryToolkit(AbstractToolkit):
         space_id: str | None = None,
         agent_name: str | None = None,
         store: LocalMemoryStore | None = None,
+        write_enabled: bool = True,
     ) -> None:
         # api_task_id == project_id (matches the other Undisclosed toolkits).
         self.api_task_id = api_task_id
         self.user_key = user_key
+        self.write_enabled = write_enabled
         #a chat request may omit space_id; the run context resolves it as
         #``space_id or project_id`` (chat_controller). Mirror that here so the
         #tool writes where the rest of the run's memory already writes.
@@ -191,6 +193,8 @@ class MemoryToolkit(AbstractToolkit):
         fact = (fact or "").strip()
         if not fact:
             return "Nothing to remember (empty fact)."
+        if not self.write_enabled:
+            return "Long-term memory is turned off, so nothing was saved."
         kind = (kind or "fact").strip().lower()
         scope = (scope or "auto").strip().lower()
         category = (category or "").strip().lower()

@@ -42,6 +42,8 @@ class RunContext:
     # Channel this run was started from (X-Channel). Local-only tools read it
     # at call time so a resumed agent cannot outlive the rule it was built under.
     channel: str = "desktop"
+    #user's "remember across conversations" switch; gates every durable write
+    memory_enabled: bool = True
     cdp_url: str | None = None
     api_key: str | None = None
     api_base_url: str | None = None
