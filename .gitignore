@@ -130,3 +130,5 @@ dist/*.skill
 # editor auto-backups. Keep those out of the deployable tree.
 site/**/*.bak
 apps/desktop/dist-signed/
+.scratch-theia-submission/
+.agent-tmp/
