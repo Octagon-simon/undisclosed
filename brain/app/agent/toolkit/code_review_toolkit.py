@@ -793,7 +793,13 @@ class CodeReviewToolkit(BaseToolkit, AbstractToolkit):
         return "\n".join(lines)
 
     def get_tools(self) -> list[FunctionTool]:
+        #kwargs_tolerant: these are not @auto_listen_toolkit members, so a
+        #model-emitted `intent` reached the method and failed the whole call.
+        #Imported here because toolkit_listen -> abstract_toolkit -> app.agent
+        #is a cycle at module load.
+        from app.utils.listen.toolkit_listen import kwargs_tolerant
+
         return [
-            FunctionTool(self.run_checks),
-            FunctionTool(self.review_diff),
+            FunctionTool(kwargs_tolerant(self.run_checks)),
+            FunctionTool(kwargs_tolerant(self.review_diff)),
         ]

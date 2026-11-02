@@ -1,4 +1,5 @@
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+# Portions Copyright 2026 Simon Ugorji. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -19,9 +20,13 @@ from collections.abc import Callable
 from datetime import datetime
 from functools import wraps
 from inspect import Parameter, iscoroutinefunction, signature
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
-from app.agent.toolkit.abstract_toolkit import AbstractToolkit
+#type-only: importing it eagerly made toolkit_listen unimportable first
+#(abstract_toolkit -> app.agent -> factory -> github_toolkit -> back here)
+if TYPE_CHECKING:
+    from app.agent.toolkit.abstract_toolkit import AbstractToolkit
+
 from app.service.task import (
     ActionActivateToolkitData,
     ActionDeactivateToolkitData,
@@ -52,7 +57,13 @@ def _format_args(
 ) -> str:
     """Format function arguments as a string."""
     if inputs_formatter is not None:
-        return _truncate(inputs_formatter(*args, **kwargs))
+        #filter for the formatter too: it is a narrow lambda, so a stray kwarg
+        #the wrapped method tolerates killed the call before it ran.
+        try:
+            safe_kwargs = _filter_kwargs_for_callable(inputs_formatter, kwargs)
+            return _truncate(inputs_formatter(*args, **safe_kwargs))
+        except Exception as e:  # noqa: BLE001 - display only, never fail a tool
+            logger.warning("[toolkit_listen] input formatter failed: %s", e)
 
     # Remove first param (self)
     filtered_args = args[1:] if len(args) > 0 else []
@@ -251,6 +262,23 @@ def kwargs_tolerant(func: Callable[..., Any]) -> Callable[..., Any]:
 
     sync_wrapper.__kwargs_tolerant__ = True  # type: ignore[attr-defined]
     return sync_wrapper
+
+
+def tolerate_tool_kwargs(tool: Any) -> Any:
+    """Make an assembled tool drop kwargs its callable doesn't accept.
+
+    Applied once where tools are handed to the agent, so a model that adds a
+    stray kwarg (``message_title``, ``intent``) can't turn a valid call into a
+    ``TypeError``. ``FunctionTool`` dispatches through ``self.func``, so the
+    wrapper preserves name, docstring and signature via ``@wraps``.
+    """
+    func = getattr(tool, "func", None)
+    if callable(func):
+        tool.func = kwargs_tolerant(func)
+        return tool
+    if callable(tool):
+        return kwargs_tolerant(tool)
+    return tool
 
 
 def _safe_put_queue(task_lock, data):

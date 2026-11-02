@@ -451,7 +451,9 @@ def _apply_desired(
         if selector.get(name) is not None
     ]
     if to_add:
-        agent.add_tools(to_add)
+        from app.utils.listen.toolkit_listen import tolerate_tool_kwargs
+
+        agent.add_tools([tolerate_tool_kwargs(tool) for tool in to_add])
 
 
 def reconcile_agent_tools(agent: Any, selector: ToolRAGSelector, query: str) -> None:
@@ -590,6 +592,8 @@ def attach_load_capability(
             Returns:
                 A short status describing what was loaded.
             """
+            from app.utils.listen.toolkit_listen import tolerate_tool_kwargs
+
             try:
                 tools = _selector.tools_for_capabilities(capabilities, question)
                 if not tools:
@@ -598,7 +602,9 @@ def attach_load_capability(
                         f"No capability matched {capabilities}. "
                         f"Available: {available}"
                     )
-                _agent_ref.add_tools(tools)
+                _agent_ref.add_tools(
+                    [tolerate_tool_kwargs(tool) for tool in tools]
+                )
                 return (
                     f"Loaded {capabilities}. Their tools are now available — "
                     "call them on your next step."
@@ -606,6 +612,10 @@ def attach_load_capability(
             except Exception as exc:  # noqa: BLE001
                 return f"Failed to load {capabilities}: {exc}"
 
-        agent.add_tools([FunctionTool(load_capability)])
+        from app.utils.listen.toolkit_listen import tolerate_tool_kwargs
+
+        agent.add_tools(
+            [tolerate_tool_kwargs(FunctionTool(load_capability))]
+        )
     except Exception:
         logger.warning("load_capability meta-tool wiring failed", exc_info=True)

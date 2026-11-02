@@ -177,8 +177,13 @@ class ToolkitAssembly:
     ) -> None:
         if not tools:
             return
-        _tag_tools(tools, toolkit_name)
-        self.tools.extend(tools)
+        #every tool the agent can call goes through here, so this is where
+        #stray model kwargs (message_title / intent) stop being fatal
+        from app.utils.listen.toolkit_listen import tolerate_tool_kwargs
+
+        wrapped = [tolerate_tool_kwargs(tool) for tool in tools]
+        _tag_tools(wrapped, toolkit_name)
+        self.tools.extend(wrapped)
         if toolkit_name not in self.tool_names:
             self.tool_names.append(toolkit_name)
 

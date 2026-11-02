@@ -1,4 +1,5 @@
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+# Portions Copyright 2026 Simon Ugorji. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -15,6 +16,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from camel.toolkits.function_tool import FunctionTool
 
 from app.utils.listen.toolkit_listen import (
     MAX_LENGTH,
@@ -22,6 +24,7 @@ from app.utils.listen.toolkit_listen import (
     _format_result,
     _truncate,
     listen_toolkit,
+    tolerate_tool_kwargs,
 )
 
 
@@ -379,3 +382,65 @@ def test_listen_toolkit_with_custom_return_msg_formatter():
         mock_format.assert_called_once()
         call_args = mock_format.call_args
         assert call_args[0][2] == custom_return_msg
+
+
+@pytest.mark.unit
+def test_format_args_formatter_ignores_unknown_kwargs():
+    """A stray message_* kwarg must not abort the formatter.
+
+    Regression: the model sent ``message_title`` to ``ask_human_via_gui``; the
+    narrow lambda raised and the TypeError escaped before the method ran, so
+    the whole tool call failed.
+    """
+    kwargs = {
+        "question": "pick one",
+        "message_title": "",
+        "message_description": "",
+        "message_attachment": None,
+    }
+    result = _format_args(("self",), kwargs, lambda _self, question: question)
+    assert result == "pick one"
+
+
+@pytest.mark.unit
+def test_format_args_falls_back_when_formatter_raises():
+    """A broken formatter must degrade to default formatting, not fail."""
+
+    def formatter(_self, question):
+        raise RuntimeError("boom")
+
+    result = _format_args(("self",), {"question": "hi"}, formatter)
+    assert "question" in result
+
+
+@pytest.mark.unit
+def test_tolerate_tool_kwargs_drops_unknown_kwargs():
+    """review_diff received ``intent`` and failed; the wrapper must absorb it."""
+
+    def review_diff(base="HEAD"):
+        return f"base={base}"
+
+    tool = tolerate_tool_kwargs(FunctionTool(review_diff))
+    assert tool(base="HEAD", intent="review it") == "base=HEAD"
+    #schema stays the same, so the model still sees only the real parameter
+    params = tool.get_openai_tool_schema()["function"]["parameters"]
+    assert list(params["properties"]) == ["base"]
+
+
+@pytest.mark.unit
+def test_tolerate_tool_kwargs_wraps_bare_callables():
+    def shell_exec(command):
+        return command
+
+    wrapped = tolerate_tool_kwargs(shell_exec)
+    assert wrapped(command="ls", message_title="") == "ls"
+    assert wrapped.__name__ == "shell_exec"
+
+
+@pytest.mark.unit
+def test_tolerate_tool_kwargs_handles_async_tools():
+    async def ask_human_via_gui(question):
+        return question
+
+    tool = tolerate_tool_kwargs(FunctionTool(ask_human_via_gui))
+    assert tool(question="ok?", message_title="") == "ok?"
