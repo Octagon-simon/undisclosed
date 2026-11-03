@@ -90,6 +90,7 @@ durable bundle is unavailable.
 | `recall_history(query)` | Hybrid retrieval (see below) when you need to recall by meaning or an exact detail. |
 | `recall_facts(query)` | User/space-scoped semantic facts (see [memory-system.md](memory-system.md)). |
 | `remember_fact(fact)` | Save a durable fact, proactively. |
+| `forget_fact(fact, key, scope)` | Delete a remembered fact or rule; drops it from recall and the injected rules block. |
 
 `recall_conversation` distinguishes **broad** queries ("the plan", "what we
 decided", "continue", "where were we", "status") from narrow lookups. For a broad

@@ -129,6 +129,13 @@ def _turn_index(task_lock: Any) -> int:
     return user_turns + 1
 
 
+def _repo_root(run_context: Any) -> str | None:
+    """Working directory for repo-scoped rules; None when the run has none."""
+
+    working_directory = getattr(run_context, "working_directory", None)
+    return str(working_directory) if working_directory else None
+
+
 def build_durable_context_for_task_lock(
     task_lock: Any,
     *,
@@ -179,6 +186,7 @@ def build_durable_context_for_task_lock(
         space_id=run_context.space_id,
         project_id=run_context.project_id,
         conversation_id=conversation_id,
+        repo_root=_repo_root(run_context),
     )
     probe = rules_mod.should_probe(rules, _turn_index(task_lock))
     rules_block = rules_mod.render_rules_block(

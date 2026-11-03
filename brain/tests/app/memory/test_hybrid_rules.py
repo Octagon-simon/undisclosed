@@ -40,6 +40,7 @@ def _constraint(
     category: str = "licensing",
     scope_type: str = "project",
     scope_id: str = "project_test",
+    repo: str = "",
 ) -> MemoryOp:
     return MemoryOp(
         op="UPSERT",
@@ -51,6 +52,7 @@ def _constraint(
         source_message_ids=["m1"],
         scope_type=scope_type,
         scope_id=scope_id,
+        repo=repo,
     )
 
 
@@ -213,6 +215,67 @@ class TestReadActiveRules:
             conversation_id=ids["conversation_id"],
         )
         assert {r.key for r in loaded} == {"rule_tabs", "rule_license"}
+
+    def test_repo_rule_loads_inside_that_repo(self, hybrid, ids):
+        GlobalMemoryStore(hybrid.base).apply_ops(
+            ids["user_key"],
+            ids["space_id"],
+            ids["project_id"],
+            [
+                _constraint(
+                    "run the license header check before committing",
+                    "rule_licence",
+                    scope_type="global",
+                    scope_id=ids["user_key"],
+                    repo="/repos/eigent-theia",
+                )
+            ],
+            conversation_id=ids["conversation_id"],
+            now="2026-10-23T00:00:00+00:00",
+            scope_type="global",
+            scope_id=ids["user_key"],
+            user_id=ids["user_key"],
+        )
+        loaded = rules.read_active_rules(
+            hybrid.base,
+            user_key=ids["user_key"],
+            space_id=ids["space_id"],
+            project_id=ids["project_id"],
+            conversation_id=ids["conversation_id"],
+            repo_root="/repos/eigent-theia/brain",
+        )
+        assert [r.key for r in loaded] == ["rule_licence"]
+        assert loaded[0].repo == "/repos/eigent-theia"
+
+    def test_repo_rule_is_skipped_in_another_repo(self, hybrid, ids):
+        GlobalMemoryStore(hybrid.base).apply_ops(
+            ids["user_key"],
+            ids["space_id"],
+            ids["project_id"],
+            [
+                _constraint(
+                    "run the license header check before committing",
+                    "rule_licence",
+                    scope_type="global",
+                    scope_id=ids["user_key"],
+                    repo="/repos/eigent-theia",
+                )
+            ],
+            conversation_id=ids["conversation_id"],
+            now="2026-10-23T00:00:00+00:00",
+            scope_type="global",
+            scope_id=ids["user_key"],
+            user_id=ids["user_key"],
+        )
+        loaded = rules.read_active_rules(
+            hybrid.base,
+            user_key=ids["user_key"],
+            space_id=ids["space_id"],
+            project_id=ids["project_id"],
+            conversation_id=ids["conversation_id"],
+            repo_root="/repos/berry-merchant",
+        )
+        assert loaded == []
 
     def test_project_wins_same_key_over_global(self, hybrid, ids):
         GlobalMemoryStore(hybrid.base).apply_ops(

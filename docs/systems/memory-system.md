@@ -133,6 +133,16 @@ with `type="constraint"`, loaded unconditionally on every turn.
 - **Agent saves**: `remember_fact(..., kind="rule")` writes the same structured
   constraint (`severity="hard"`, `original_text`) and still indexes the text for
   discovery. Without `kind="rule"` a save stays a discovery fact.
+- **Repo scoping**: `remember_fact(..., repo="/abs/path/to/repo")` stamps the
+  rule with that root. `read_active_rules` then loads it only when the run's
+  working directory is the repo or inside it, so a repo-specific rule (a
+  commit gate, a build step) stops appearing in unrelated projects.
+- **Agent forgets**: `forget_fact(fact, key, scope)` marks matching active rows
+  `deleted` (history is kept) and prunes their semantic copies, so the fact
+  stops being recalled and a deleted rule drops out of the `<persistent_rules>`
+  block on the next turn. A fragment must be at least six characters unless it
+  matches the wording exactly; more than ten matches is refused with the list,
+  and `key` targets one record.
 - **Trace** (agent-ui): `Writing to memory` / `Written to memory` for
   `remember_fact`, `Recalling from memory` / `Recalled from memory` for
   `recall_*`.

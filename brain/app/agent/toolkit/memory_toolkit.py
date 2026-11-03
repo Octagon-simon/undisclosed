@@ -28,7 +28,12 @@ from camel.toolkits import FunctionTool
 
 from app.agent.toolkit.abstract_toolkit import AbstractToolkit
 from app.memory import LocalMemoryStore, hybrid, semantic_store
-from app.memory.hybrid.canonical import identity, normalize_wording, rule_key
+from app.memory.hybrid.canonical import (
+    identity,
+    normalize_key,
+    normalize_wording,
+    rule_key,
+)
 from app.memory.hybrid.schema import (
     MEMORY_SCOPES,
     MEMORY_TYPES,
@@ -72,6 +77,15 @@ def _is_broad_query(query: str) -> bool:
     return any(term in q for term in _BROAD_QUERY_TERMS)
 
 
+def _searchable(memory: Any) -> str:
+    """Value plus original wording, normalized for substring matching."""
+    parts = (
+        normalize_wording(memory.value),
+        normalize_wording(memory.original_text),
+    )
+    return " ".join(part for part in parts if part)
+
+
 def _kept(
     memories: list[Any], memory_type: str, key: str, fact: str
 ) -> bool:
@@ -94,7 +108,7 @@ def _kept(
 
 
 class MemoryToolkit(AbstractToolkit):
-    """`remember_fact` / `recall_facts` scoped to the current user+project."""
+    """`remember_fact` / `forget_fact` / `recall_facts` scoped to the run."""
 
     agent_name: str = Agents.single_agent
 
@@ -154,6 +168,7 @@ class MemoryToolkit(AbstractToolkit):
         scope: str = "auto",
         key: str = "",
         category: str = "",
+        repo: str = "",
     ) -> str:
         """Save something durable without waiting to be asked.
 
@@ -186,6 +201,9 @@ class MemoryToolkit(AbstractToolkit):
             key (str): Optional stable key. Rules derive one from the wording.
             category (str): Optional rule category (licensing, security, coding,
                 workflow, product, privacy, other).
+            repo (str): Optional absolute repo root. The rule then loads only
+                when the run's working directory is inside that repo, instead
+                of everywhere.
 
         Returns:
             str: Confirmation message.
@@ -198,6 +216,7 @@ class MemoryToolkit(AbstractToolkit):
         kind = (kind or "fact").strip().lower()
         scope = (scope or "auto").strip().lower()
         category = (category or "").strip().lower()
+        repo = (repo or "").strip()
 
         semantic_store.remember(
             self.user_key,
@@ -223,6 +242,7 @@ class MemoryToolkit(AbstractToolkit):
                 category=category,
                 severity="hard",
                 original_text=fact,
+                repo=repo,
             )
             if ok:
                 return "Saved to memory."
@@ -241,6 +261,7 @@ class MemoryToolkit(AbstractToolkit):
                 category=category,
                 severity="",
                 original_text=fact,
+                repo=repo,
             )
             if not ok:
                 return (
@@ -248,6 +269,200 @@ class MemoryToolkit(AbstractToolkit):
                     f"write failed ({reason})."
                 )
         return "Saved to memory."
+
+    def forget_fact(
+        self,
+        fact: str = "",
+        key: str = "",
+        scope: str = "auto",
+    ) -> str:
+        """Delete a saved fact or rule so it stops being recalled and injected.
+
+        Prefer the exact wording or the record's key. A fragment deletes every
+        active memory that contains it, so pass at least a few distinctive
+        words. Records are marked deleted, not erased, and indexed copies are
+        removed too.
+
+        Args:
+            fact (str): The fact or rule to forget, or a distinctive fragment.
+            key (str): Optional structured key (e.g. ``license_rule``). When
+                given, only records with that key are deleted.
+            scope (str): ``auto`` | ``global`` | ``project`` | ``conversation``.
+                ``auto`` searches every store this run can see.
+
+        Returns:
+            str: What was forgotten, or why nothing was.
+        """
+        if not self.write_enabled:
+            return "Long-term memory is turned off, so nothing was forgotten."
+        fact = (fact or "").strip()
+        key = (key or "").strip()
+        if not fact and not key:
+            return "Nothing to forget (give a fact or a key)."
+        if not self.user_key:
+            return "No user memory to forget from."
+        scope = (scope or "auto").strip().lower()
+        if scope not in MEMORY_SCOPES:
+            scope = "auto"
+
+        base = self._store_or_default()
+        targets: list[tuple[str, Any]] = []
+        if scope in {"auto", SCOPE_GLOBAL}:
+            targets.append((SCOPE_GLOBAL, GlobalMemoryStore(base)))
+        if scope in {"auto", SCOPE_PROJECT, SCOPE_CONVERSATION}:
+            targets.append((SCOPE_PROJECT, HybridStore(base)))
+
+        candidates: list[tuple[str, Any, Any]] = []
+        for label, target in targets:
+            try:
+                rows = target.read_active_memories(
+                    self.user_key, self.space_id, self.api_task_id
+                )
+            except Exception:  # noqa: BLE001 - forget must not raise
+                logger.warning("forget_fact: read failed", exc_info=True)
+                continue
+            for row in rows:
+                if scope != "auto" and row.scope_type != scope:
+                    continue
+                candidates.append((label, target, row))
+
+        wanted = normalize_wording(fact)
+        wanted_key = normalize_key(key) if key else ""
+        if wanted_key:
+            matched = [
+                item
+                for item in candidates
+                if normalize_key(item[2].key) == wanted_key
+            ]
+        elif wanted:
+            matched = [
+                item
+                for item in candidates
+                if wanted in _searchable(item[2])
+            ]
+            exact = [
+                item
+                for item in matched
+                if wanted
+                in (
+                    normalize_wording(item[2].value),
+                    normalize_wording(item[2].original_text),
+                )
+            ]
+            if exact:
+                matched = exact
+            elif len(wanted) < 6:
+                return (
+                    "That fragment is too short to forget safely; pass more "
+                    "words or the record key."
+                )
+        else:
+            matched = []
+
+        if not matched:
+            # Facts saved with the default scope live only in the semantic
+            # index, so there is no structured row to delete.
+            if wanted and not wanted_key:
+                pruned = self._prune_indexed([], wanted)
+                if pruned:
+                    return (
+                        f'Forgot {pruned} indexed memory item(s) matching '
+                        f'"{fact}".'
+                    )
+            return "Nothing matched that fact, so nothing was forgotten."
+        if len(matched) > 10:
+            listing = self._render_forgotten(matched[:10])
+            return (
+                f"{len(matched)} memories match that fragment. Nothing was "
+                f"forgotten; pass the record key instead.\n{listing}"
+            )
+
+        deleted: list[tuple[str, Any]] = []
+        failed: list[str] = []
+        now = datetime.now(UTC).isoformat()
+        for _label, target in targets:
+            ids = [
+                row.id
+                for _lbl, tgt, row in matched
+                if tgt is target
+            ]
+            if not ids:
+                continue
+            try:
+                updated = target.apply_ops(
+                    self.user_key,
+                    self.space_id,
+                    self.api_task_id,
+                    [MemoryOp(op="DELETE", memory_id=i) for i in ids],
+                    conversation_id=str(self.api_task_id),
+                    now=now,
+                )
+            except Exception:  # noqa: BLE001 - tool must not raise
+                logger.warning("forget_fact: delete failed", exc_info=True)
+                failed.extend(
+                    row.value
+                    for _lbl, tgt, row in matched
+                    if tgt is target
+                )
+                continue
+            gone = {m.id for m in updated if m.status == "deleted"}
+            for label, tgt, row in matched:
+                if tgt is not target:
+                    continue
+                if row.id in gone:
+                    deleted.append((label, row))
+                else:
+                    failed.append(row.value)
+
+        if not deleted:
+            return (
+                "Found the memory but the store did not delete it. Nothing "
+                "was forgotten."
+            )
+
+        pruned = self._prune_indexed(deleted, "" if wanted_key else wanted)
+        head = f"Forgot {len(deleted)} memory item(s):"
+        message = f"{head}\n{self._render_forgotten(deleted)}"
+        if pruned:
+            message += f"\nRemoved {pruned} indexed copy/copies."
+        if failed:
+            message += (
+                f"\n{len(failed)} matching record(s) could not be deleted: "
+                + "; ".join(failed[:3])
+            )
+        return message
+
+    def _prune_indexed(
+        self, deleted: list[tuple[str, Any]], wanted: str = ""
+    ) -> int:
+        """Drop the semantic copies of the rows just deleted, best-effort."""
+        wordings = {
+            normalize_wording(row.value) for _label, row in deleted if row.value
+        }
+        # A six-character floor keeps a vague query from clearing the index.
+        if len(wanted) >= 6:
+            wordings.add(wanted)
+        if not wordings:
+            return 0
+
+        def _matches(doc: str) -> bool:
+            text = normalize_wording(doc)
+            return any(
+                text == word or (len(word) >= 12 and word in text)
+                for word in wordings
+            )
+
+        return semantic_store.prune(_matches, self.user_key)
+
+    @staticmethod
+    def _render_forgotten(rows: list[tuple[str, Any]]) -> str:
+        lines: list[str] = []
+        for label, row in rows:
+            detail = f"{row.type}, {row.scope_type or label}"
+            if row.key:
+                detail += f", key={row.key}"
+            lines.append(f'- "{row.value}" ({detail})')
+        return "\n".join(lines)
 
     def _write_structured(
         self,
@@ -259,6 +474,7 @@ class MemoryToolkit(AbstractToolkit):
         category: str,
         severity: str,
         original_text: str,
+        repo: str = "",
     ) -> tuple[bool, str]:
         """Write one structured record; ``(False, reason)`` when it cannot land."""
 
@@ -289,6 +505,7 @@ class MemoryToolkit(AbstractToolkit):
             enforcement="prompt" if memory_type == "constraint" else "",
             category=category,
             original_text=original_text,
+            repo=repo,
         )
         try:
             updated = target.apply_ops(
@@ -525,6 +742,7 @@ class MemoryToolkit(AbstractToolkit):
 
         return [
             FunctionTool(kwargs_tolerant(self.remember_fact)),
+            FunctionTool(kwargs_tolerant(self.forget_fact)),
             FunctionTool(kwargs_tolerant(self.recall_facts)),
             FunctionTool(kwargs_tolerant(self.recall_conversation)),
             FunctionTool(kwargs_tolerant(self.recall_turns)),

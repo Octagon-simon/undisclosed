@@ -364,6 +364,7 @@ class HybridStore:
         enforcement = (op.enforcement or "").strip().lower()
         category = (op.category or "").strip().lower()
         original = (op.original_text or "").strip()
+        repo = (op.repo or "").strip()
         # A brand-new record inherits the scope of the write (§2, §6, §23): a
         # global write lands user-level, a project write lands project-level,
         # and a conversation write stays in its thread. ``origin_project_id`` is
@@ -393,6 +394,7 @@ class HybridStore:
                 category=category,
                 original_text=original or value,
                 last_confirmed_at=now,
+                repo=repo,
                 **stamp,
             )
             by_id[record.id] = record
@@ -421,6 +423,7 @@ class HybridStore:
                     "category": category or existing.category,
                     "original_text": existing.original_text or original,
                     "last_confirmed_at": now,
+                    "repo": repo or existing.repo,
                 }
             )
             return
@@ -449,6 +452,7 @@ class HybridStore:
             category=category,
             original_text=original or value,
             last_confirmed_at=now,
+            repo=repo or existing.repo,
             **stamp,
         )
         by_id[record.id] = record

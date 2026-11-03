@@ -168,6 +168,8 @@ class StructuredMemory:
     original_text: str = ""
     last_confirmed_at: str = ""
     guard: str = ""
+    #absolute repo root this rule is limited to; empty means every project
+    repo: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -348,6 +350,7 @@ class MemoryOp:
     enforcement: str = ""
     category: str = ""
     original_text: str = ""
+    repo: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

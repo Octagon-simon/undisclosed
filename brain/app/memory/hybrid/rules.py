@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import logging
 import re
+from pathlib import Path
 
 from app.memory.hybrid import canonical, text as T
 from app.memory.hybrid.schema import (
@@ -80,11 +81,13 @@ def read_active_rules(
     space_id: str,
     project_id: str,
     conversation_id: str,
+    repo_root: str | None = None,
 ) -> list[StructuredMemory]:
     """Every active constraint that applies to this thread, hard-first.
 
     Reads the same two records the injected memory already consults: the current
     project's ``memories.json`` and the user-level ``GlobalMemoryStore`` file.
+    A rule that names a ``repo`` only loads when ``repo_root`` is inside it.
     No Chroma, no query matching, no lane gating, no cache.
     """
 
@@ -123,6 +126,8 @@ def read_active_rules(
             continue
         if not _is_usable_rule(memory):
             continue
+        if not _repo_applies(memory.repo, repo_root):
+            continue
         identity = canonical.normalize_key(memory.key) or canonical.normalize_key(
             memory.value
         )
@@ -143,6 +148,22 @@ def read_active_rules(
         )
     )
     return rules
+
+
+def _repo_applies(repo: str, repo_root: str | None) -> bool:
+    """Whether a repo-limited rule belongs to the run's working directory."""
+
+    if not repo:
+        return True
+    #an unknown working dir must not silently drop a standing rule
+    if not repo_root:
+        return True
+    try:
+        target = Path(repo).expanduser().resolve()
+        current = Path(repo_root).expanduser().resolve()
+    except (OSError, RuntimeError):
+        return True
+    return current == target or target in current.parents
 
 
 def _is_usable_rule(memory: StructuredMemory) -> bool:

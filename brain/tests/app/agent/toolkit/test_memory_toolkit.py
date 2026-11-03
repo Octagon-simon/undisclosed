@@ -152,6 +152,47 @@ def test_rule_is_saved_when_the_request_omits_space_id(tmp_path, monkeypatch):
     assert rules[0].scope_type == "global"
 
 
+def test_repo_scoped_rule_loads_only_for_that_repo(tmp_path, monkeypatch):
+    """A rule limited to a repo must not leak into another repo's rule block."""
+    from app.agent.toolkit import memory_toolkit as mt_mod
+    from app.memory.hybrid.rules import read_active_rules
+
+    monkeypatch.setattr(mt_mod.semantic_store, "remember", lambda *a, **k: None)
+    store = LocalMemoryStore(root=tmp_path)
+    repo = tmp_path / "repo"
+    toolkit = MemoryToolkit(
+        api_task_id="project_x", user_key="user_42", space_id="space_x",
+        store=store,
+    )
+
+    result = toolkit.remember_fact(
+        fact="Before any commit run ./scripts/check-license-headers.sh",
+        kind="rule",
+        category="licensing",
+        repo=str(repo),
+    )
+
+    assert result == "Saved to memory."
+    inside = read_active_rules(
+        store,
+        user_key="user_42",
+        space_id="space_x",
+        project_id="project_x",
+        conversation_id="project_x",
+        repo_root=str(repo / "brain"),
+    )
+    assert [r.repo for r in inside] == [str(repo)]
+    outside = read_active_rules(
+        store,
+        user_key="user_42",
+        space_id="space_x",
+        project_id="project_x",
+        conversation_id="project_x",
+        repo_root=str(tmp_path / "other"),
+    )
+    assert outside == []
+
+
 def test_rule_write_failure_names_the_reason(tmp_path, monkeypatch):
     from app.agent.toolkit import memory_toolkit as mt_mod
 
@@ -248,3 +289,111 @@ def test_restated_legacy_rule_reports_saved_and_is_not_duplicated(
     assert len(active) == 1
     assert active[0].key == "license_rule_reminder"
     assert active[0].severity == "hard"
+
+
+def test_forget_fact_removes_a_global_rule(tmp_path, monkeypatch):
+    """The injected standing-rule block must be empty after a forget."""
+    from app.agent.toolkit import memory_toolkit as mt_mod
+    from app.memory.hybrid.rules import read_active_rules
+
+    monkeypatch.setattr(mt_mod.semantic_store, "remember", lambda *a, **k: None)
+    monkeypatch.setattr(mt_mod.semantic_store, "prune", lambda *a, **k: 0)
+    store = LocalMemoryStore(root=tmp_path)
+    toolkit = MemoryToolkit(
+        api_task_id="project_x", user_key="user_42", space_id="space_x",
+        store=store,
+    )
+    toolkit.remember_fact(
+        fact="Always run the license header check before committing",
+        kind="rule",
+        scope="global",
+        category="licensing",
+    )
+
+    result = toolkit.forget_fact(fact="license header check")
+
+    assert "Forgot 1 memory item(s)" in result
+    assert "license" in result
+    rules = read_active_rules(
+        store,
+        user_key="user_42",
+        space_id="space_x",
+        project_id="project_x",
+        conversation_id="project_x",
+    )
+    assert rules == []
+
+
+def test_forget_fact_accepts_an_exact_key(tmp_path, monkeypatch):
+    from app.agent.toolkit import memory_toolkit as mt_mod
+
+    monkeypatch.setattr(mt_mod.semantic_store, "remember", lambda *a, **k: None)
+    monkeypatch.setattr(mt_mod.semantic_store, "prune", lambda *a, **k: 0)
+    store = LocalMemoryStore(root=tmp_path)
+    toolkit = MemoryToolkit(
+        api_task_id="project_x", user_key="user_42", space_id="space_x",
+        store=store,
+    )
+    toolkit.remember_fact(
+        fact="Prefer pnpm over npm in this project",
+        kind="preference",
+        scope="global",
+        key="package_manager",
+    )
+
+    result = toolkit.forget_fact(key="package_manager")
+
+    assert "Forgot 1 memory item(s)" in result
+    assert "pnpm" in result
+
+
+def test_forget_fact_prunes_an_index_only_fact(tmp_path, monkeypatch):
+    """Default-scope facts never get a structured row; the index must still go."""
+    from app.agent.toolkit import memory_toolkit as mt_mod
+
+    seen: dict[str, bool] = {}
+
+    def _prune(predicate, user_key=None):
+        seen["hit"] = predicate("The staging port is 8123")
+        seen["miss"] = predicate("An unrelated fact about fonts")
+        return 1
+
+    monkeypatch.setattr(mt_mod.semantic_store, "prune", _prune)
+    store = LocalMemoryStore(root=tmp_path)
+    toolkit = MemoryToolkit(
+        api_task_id="project_x", user_key="user_42", space_id="space_x",
+        store=store,
+    )
+
+    result = toolkit.forget_fact(fact="The staging port is 8123")
+
+    assert "indexed memory item" in result
+    assert seen == {"hit": True, "miss": False}
+
+
+def test_forget_fact_rejects_a_short_fragment(tmp_path, monkeypatch):
+    from app.agent.toolkit import memory_toolkit as mt_mod
+
+    monkeypatch.setattr(mt_mod.semantic_store, "prune", lambda *a, **k: 0)
+    store = LocalMemoryStore(root=tmp_path)
+    toolkit = MemoryToolkit(
+        api_task_id="project_x", user_key="user_42", space_id="space_x",
+        store=store,
+    )
+
+    result = toolkit.forget_fact(fact="lic")
+
+    assert "too short" in result
+
+
+def test_forget_fact_respects_the_memory_switch(tmp_path):
+    store = LocalMemoryStore(root=tmp_path)
+    toolkit = MemoryToolkit(
+        api_task_id="project_x",
+        user_key="user_42",
+        space_id="space_x",
+        store=store,
+        write_enabled=False,
+    )
+
+    assert "turned off" in toolkit.forget_fact(fact="anything at all")
