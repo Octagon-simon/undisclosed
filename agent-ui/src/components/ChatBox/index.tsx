@@ -1713,6 +1713,7 @@ export default function ChatBox(): JSX.Element {
               scrollBottomInsetPx={scrollBottomInsetPx}
               onSkip={handleSkip}
               isPauseResumeLoading={isPauseResumeLoading}
+              onRetryTurn={handleSend}
             />
           ) : (
             <div className="mx-auto flex min-h-full w-full max-w-[600px] flex-col">

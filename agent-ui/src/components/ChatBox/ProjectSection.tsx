@@ -29,6 +29,8 @@ interface ProjectSectionProps {
   // onPauseResume: () => void;  // Commented out - temporary not needed
   onSkip: () => void;
   isPauseResumeLoading: boolean;
+  /** Resends a turn's prompt through the composer's send path. */
+  onRetryTurn?: (prompt: string, taskId: string) => void;
 }
 
 export const ProjectSection = React.forwardRef<
@@ -45,6 +47,7 @@ export const ProjectSection = React.forwardRef<
       // onPauseResume,  // Commented out - temporary not needed
       onSkip,
       isPauseResumeLoading,
+      onRetryTurn,
     },
     ref
   ) => {
@@ -295,6 +298,7 @@ export const ProjectSection = React.forwardRef<
               onQueryActive={onQueryActive}
               index={index}
               taskId={activeTaskId}
+              onRetryTurn={onRetryTurn}
             />
           ))}
         </div>

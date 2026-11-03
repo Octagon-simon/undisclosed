@@ -13,6 +13,7 @@
 // limitations under the License.
 // ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
 
+import { isErrorContent, isRetryableError } from '@/lib/errorPresentation';
 import { fileInfoFromPath } from '@/lib/fileInfo';
 import { usePageTabStore } from '@/store/pageTabStore';
 import { useFeedbackStore } from '@/store/feedbackStore';
@@ -22,6 +23,7 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { Button } from '../../ui/button';
+import { ErrorAlertCard } from './ErrorAlertCard';
 import { MarkDown } from './MarkDown';
 import { StatusDot } from './PanelSection';
 
@@ -42,6 +44,8 @@ interface AgentMessageCardProps {
    *  (reference design Section 3). Opt-in so only the actual agent reply is
    *  prefixed, not notices/approval cards. */
   indicator?: boolean;
+  /** Resends the turn's prompt. Only surfaced on errors a retry can fix. */
+  onRetry?: () => void;
 }
 
 // Tracks agent messages that have already played the typewriter (by stable message id).
@@ -58,6 +62,7 @@ export function AgentMessageCard({
   deferredFooter,
   hideFeedbackAndCopyBtn,
   indicator,
+  onRetry,
 }: AgentMessageCardProps) {
   const openFilePreview = usePageTabStore((s) => s.openFilePreview);
   const host = useHost();
@@ -127,12 +132,21 @@ export function AgentMessageCard({
     markdownAndTypingComplete &&
     ((attaches && attaches.length > 0) || deferredFooter != null);
 
+  const showAsError = isErrorContent(content);
+
   return (
     <div
       key={id}
       className={`rounded-xl py-3 flex w-full flex-col bg-transparent ${className || ''} overflow-hidden`}
     >
-      {indicator ? (
+      {showAsError ? (
+        <ErrorAlertCard
+          content={content}
+          onRetry={
+            onRetry && isRetryableError(content) ? onRetry : undefined
+          }
+        />
+      ) : indicator ? (
         <div className="flex w-full items-start gap-2">
           <StatusDot className="mt-[6px] bg-ds-bg-information-default-default" />
           <div className="min-w-0 flex-1">
@@ -192,7 +206,7 @@ export function AgentMessageCard({
       {showDeferredFileUi && deferredFooter != null && (
         <div className="mt-[10px] w-full">{deferredFooter}</div>
       )}
-      {markdownAndTypingComplete && !hideFeedbackAndCopyBtn && (
+      {markdownAndTypingComplete && !hideFeedbackAndCopyBtn && !showAsError && (
         <div className="mt-3 gap-1 flex shrink-0 justify-start">
           <Button
             onClick={handleCopy}

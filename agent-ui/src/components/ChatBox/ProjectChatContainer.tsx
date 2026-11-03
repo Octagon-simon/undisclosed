@@ -103,6 +103,8 @@ interface ProjectChatContainerProps {
   scrollBottomInsetPx: number;
   onSkip: () => void;
   isPauseResumeLoading: boolean;
+  /** Resends a turn's prompt through the composer's send path. */
+  onRetryTurn?: (prompt: string, taskId: string) => void;
 }
 
 export const ProjectChatContainer: React.FC<ProjectChatContainerProps> = ({
@@ -111,6 +113,7 @@ export const ProjectChatContainer: React.FC<ProjectChatContainerProps> = ({
   scrollBottomInsetPx,
   onSkip,
   isPauseResumeLoading,
+  onRetryTurn,
 }) => {
   const { projectStore, chatStore } = useChatStoreAdapter();
   const [activeQueryId, setActiveQueryId] = useState<string | null>(null);
@@ -542,6 +545,7 @@ export const ProjectChatContainer: React.FC<ProjectChatContainerProps> = ({
                 onQueryActive={setActiveQueryId}
                 onSkip={onSkip}
                 isPauseResumeLoading={isPauseResumeLoading}
+                onRetryTurn={onRetryTurn}
               />
             );
           })}

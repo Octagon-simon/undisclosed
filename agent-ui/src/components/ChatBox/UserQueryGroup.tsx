@@ -270,6 +270,8 @@ interface UserQueryGroupProps {
    * make every historic group repaint with the newest summary).
    */
   taskId?: string;
+  /** Resends a turn's prompt through the composer's send path. */
+  onRetryTurn?: (prompt: string, taskId: string) => void;
 }
 
 export const UserQueryGroup: React.FC<UserQueryGroupProps> = ({
@@ -280,11 +282,17 @@ export const UserQueryGroup: React.FC<UserQueryGroupProps> = ({
   onQueryActive,
   index,
   taskId: scopedTaskId,
+  onRetryTurn,
 }) => {
   const groupRef = useRef<HTMLDivElement>(null);
   const chatState = chatStore.getState();
 
   const activeTaskId = scopedTaskId ?? chatState.activeTaskId;
+  const retryPrompt = queryGroup.userMessage?.content as string | undefined;
+  const retryTurn = useCallback(() => {
+    if (!retryPrompt || !activeTaskId) return;
+    onRetryTurn?.(retryPrompt, activeTaskId);
+  }, [retryPrompt, activeTaskId, onRetryTurn]);
   const openFilePreviewInPanel = usePageTabStore(
     (state) => state.openFilePreview
   );
@@ -894,7 +902,7 @@ export const UserQueryGroup: React.FC<UserQueryGroupProps> = ({
           } else if (message.step === AgentStep.AGENT_END) {
             const { promptBlocks, cleanedContent } = extractPromptBlocks(message.content);
             return (
-              <div className="flex flex-col gap-4">
+              <div key={`agent-end-${message.id}`} className="flex flex-col gap-4">
                 {promptBlocks.map((block, idx) => (
                   <motion.div
                     key={`extracted-block-${message.id}-${idx}`}
@@ -934,7 +942,7 @@ export const UserQueryGroup: React.FC<UserQueryGroupProps> = ({
 
             if (promptBlocks.length > 0) {
               return (
-                <div className="flex flex-col gap-4">
+                <div key={`blocks-${message.id}`} className="flex flex-col gap-4">
                   {promptBlocks.map((block, idx) => (
                     <motion.div
                       key={`extracted-block-${message.id}-${idx}`}
@@ -965,6 +973,7 @@ export const UserQueryGroup: React.FC<UserQueryGroupProps> = ({
                         content={cleanedContent}
                         onTyping={() => {}}
                         attaches={message.attaches}
+                        onRetry={onRetryTurn ? retryTurn : undefined}
                       />
                     </motion.div>
                   )}
@@ -987,6 +996,7 @@ export const UserQueryGroup: React.FC<UserQueryGroupProps> = ({
                   content={cleanedContent}
                   onTyping={() => {}}
                   attaches={message.attaches}
+                  onRetry={onRetryTurn ? retryTurn : undefined}
                   // The legacy-replay failure notice is a system message, not an
                   // agent answer — no feedback/copy affordances.
                   hideFeedbackAndCopyBtn={cleanedContent.includes(
