@@ -298,3 +298,26 @@ def test_single_agent_prompt_covers_screenshot_to_code():
         "do not invent placeholder copy",
     ):
         assert phrase in prompt
+
+
+def test_frontend_ui_gate_covers_every_agent_prompt():
+    """UI work loads refactoring-ui on its own; the user never has to ask."""
+    from app.agent import prompt as prompts
+
+    for name in (
+        "SOCIAL_MEDIA_SYS_PROMPT",
+        "MULTI_MODAL_SYS_PROMPT",
+        "DOCUMENT_SYS_PROMPT",
+        "DEVELOPER_SYS_PROMPT",
+        "SINGLE_AGENT_SYS_PROMPT",
+        "BROWSER_SYS_PROMPT",
+    ):
+        text = getattr(prompts, name)
+        assert "Frontend/UI gate" in text, name
+        assert "`refactoring-ui`" in text, name
+        assert "UI polish chain" not in text, name
+
+    single = prompts.SINGLE_AGENT_SYS_PROMPT
+    assert "<frontend_ui_work>" in single
+    assert 'load_skill("refactoring-ui")' in single
+    assert "4. UI PASS" in single

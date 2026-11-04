@@ -86,17 +86,30 @@ enable toggle and delete, and adds a skill via zip upload. (A device symlink
 
 ## UI skill composition
 
-Applying a UI/design skill is not the last step. The brain prompt
-(`SINGLE_AGENT_SYS_PROMPT` and the other `Skills System` blocks in
-`brain/app/agent/prompt.py`) tells the agent that whenever it applies any UI or
-visual-design skill the user has enabled (`premium-frontend-ui`, `uipro`,
-`ui-styling`, `banner-design`, `design-system`, or a taste/design
-skill), it MUST also load `refactoring-ui` and run its
-diagnose/refactor pass over the UI it produced before declaring the task done.
-That pass is where concrete design errors (ad-hoc spacing/type/color, weak
-hierarchy, flat depth, contrast) get fixed. The rule lives in the prompt, not in
-each skill's `SKILL.md`, so it stays in one place and covers every UI skill the
-user enables.
+Applying a UI/design skill is not the last step, and the user never has to ask
+for a design pass. The brain prompt (`SINGLE_AGENT_SYS_PROMPT` and the other
+`Skills System` blocks in `brain/app/agent/prompt.py`) carries a frontend/UI
+gate: any task that touches frontend code or UI/UX at all - components, pages,
+styles, layout, design tokens, user-facing copy, or a flow the user will see -
+must load `refactoring-ui` before building, not after, and run its diagnose pass
+over the whole flow it touched before declaring the task done. Findings are
+fixed in the same task: ad-hoc spacing/type/color off the scale, weak hierarchy,
+flat depth, contrast, and user-facing strings left hardcoded where the project
+has copy or design tokens. The gate stacks with any other UI skill the user
+enabled (`premium-frontend-ui`, `uipro`, `ui-styling`, `banner-design`,
+`design-system`, a taste/design skill) and never replaces it.
+
+`refactoring-ui` ships in `resources/example-skills/`, is auto-synced into
+`~/.undisclosed/skills/`, and is enabled by default for every user
+(`DEFAULT_ENABLED_EXAMPLE_SKILLS` in `skill_config_service.py`). If a user
+disables it, `load_skill` fails and the prompt requires the agent to say which
+checks it could not run rather than claim a pass it did not do.
+
+`SINGLE_AGENT_SYS_PROMPT` also has a dedicated `<frontend_ui_work>` section
+(load, scope the flow, diagnose, fix, report if blocked) and the pass is step 4
+of its `<verification_workflow>`, so the typecheck, tests and review run on the
+corrected UI. The rule lives in the prompt, not in each skill's `SKILL.md`, so
+it stays in one place and covers every UI skill the user enables.
 
 ## See also
 
