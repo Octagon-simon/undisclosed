@@ -123,9 +123,14 @@ class WebSocketBrowserWrapper(BaseWebSocketBrowserWrapper):
         """Initialize wrapper."""
         super().__init__(config)
         logger.info(f"WebSocketBrowserWrapper using ts_dir: {self.ts_dir}")
+        # The pool creates wrappers, so the toolkit binds the chat identity
+        # after connecting; these defaults keep visit_page safe before that.
+        self.api_task_id: str | None = None
+        self._chat_task_id: str | None = None
         # Track tabs opened by this session for isolation
         self._session_tab_ids: set = set()
         self._wrapper_session_id: str = str(uuid.uuid4())
+        self._eigent_interim_shared_browser_primed = False
 
     def _fail_all_pending(self, exc: Exception) -> None:
         for future in self._pending_responses.values():
@@ -606,6 +611,9 @@ websocket_connection_pool = WebSocketConnectionPool()
 @auto_listen_toolkit(BaseHybridBrowserToolkit)
 class HybridBrowserToolkit(BaseHybridBrowserToolkit, AbstractToolkit):
     agent_name: str = Agents.browser_agent
+    # Narrow the inherited annotation so the subclass-specific attributes
+    # (chat identity, priming flag) type-check on the wrapper we actually pool.
+    _ws_wrapper: WebSocketBrowserWrapper | None
 
     def __init__(
         self,
@@ -859,6 +867,11 @@ class HybridBrowserToolkit(BaseHybridBrowserToolkit, AbstractToolkit):
                         session_id, self._ws_config
                     )
                 )
+
+            # A pooled wrapper can outlive the chat that created it, so rebind
+            # the live-view identity on every acquisition.
+            self._ws_wrapper.api_task_id = self.api_task_id
+            self._ws_wrapper._chat_task_id = self._chat_task_id
 
             if should_prime and not getattr(
                 self._ws_wrapper,
