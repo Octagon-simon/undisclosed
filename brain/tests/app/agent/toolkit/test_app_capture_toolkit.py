@@ -13,6 +13,7 @@
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
 
 import io
+from pathlib import Path
 
 import pytest
 from PIL import Image
@@ -320,4 +321,48 @@ def test_frontend_ui_gate_covers_every_agent_prompt():
     single = prompts.SINGLE_AGENT_SYS_PROMPT
     assert "<frontend_ui_work>" in single
     assert 'load_skill("refactoring-ui")' in single
+    assert "4. MOBILE PASS" in single
+    assert "320, 375 and 414" in single
+    assert "scrollWidth" in single
+    assert "44x44px tap targets" in single
     assert "4. UI PASS" in single
+
+
+def test_mobile_pass_is_not_optional_in_any_ui_gate():
+    """Every UI gate requires the mobile pass; desktop alone is half the job."""
+    from app.agent import prompt as prompts
+
+    for name in (
+        "SOCIAL_MEDIA_SYS_PROMPT",
+        "MULTI_MODAL_SYS_PROMPT",
+        "DOCUMENT_SYS_PROMPT",
+        "DEVELOPER_SYS_PROMPT",
+        "SINGLE_AGENT_SYS_PROMPT",
+        "BROWSER_SYS_PROMPT",
+    ):
+        text = getattr(prompts, name)
+        assert ("NOT desktop-only" in text) or ("4. MOBILE PASS" in text), name
+        assert "320" in text and "414" in text, name
+
+
+def test_refactoring_ui_skill_has_a_mobile_checklist():
+    """The skill itself must carry the small-screen pass, not just the prompt."""
+    skill_path = (
+        Path(__file__).resolve().parents[5]
+        / "resources"
+        / "example-skills"
+        / "refactoring-ui"
+        / "SKILL.md"
+    )
+    text = skill_path.read_text(encoding="utf-8")
+
+    assert "## Mobile and responsive" in text
+    for phrase in (
+        "320, 375 and 414",
+        "scrollWidth",
+        "44×44px",
+        "safe-area-inset",
+        "hover",
+        "capture_page",
+    ):
+        assert phrase in text, phrase

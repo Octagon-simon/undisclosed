@@ -159,6 +159,43 @@ cramped. You will change less than you expect.
 
 ---
 
+## Mobile and responsive — a pass of its own
+
+A desktop-only review is an incomplete review. The same screen at 375px is a different
+layout with different failure modes, so evaluate it as its own surface, not as a shrunken
+copy of the desktop one. Load the page at **320, 375 and 414 CSS px** (mobile emulation, not
+a narrow desktop window), in light and dark, and check:
+
+- **Overflow.** `document.documentElement.scrollWidth` equals `clientWidth`. Any horizontal
+  scroll is a bug: fixed widths, `min-width`, unbroken strings (URLs, IDs, emails), wide
+  tables, `translate`d popovers, and negative margins are the usual causes.
+- **One column.** Side-by-side regions collapse below ~640px. Anything that cannot stack
+  becomes a scrollable region with a visible hint, or a card list — never a clipped table.
+- **Touch targets.** 44×44px minimum with at least 8px between adjacent targets. Icon-only
+  buttons need padding to reach it, and the hit area can exceed the visual size.
+- **Type at small widths.** Body 14–16px, never below 12px. Inputs at least 16px or iOS
+  zooms the page on focus. Headlines shrink faster than body copy (hard rule 5).
+- **Text behavior.** Long labels truncate on one line or wrap on purpose; the primary label
+  never truncates. Numbers and prices stay intact.
+- **Fixed and sticky chrome.** Header and bottom bars get `env(safe-area-inset-*)`, and the
+  scroll content gets enough end padding that nothing hides behind them. The on-screen
+  keyboard must not cover the focused field.
+- **Overlays.** Modals go full-width or become bottom sheets; popovers, dropdowns and
+  tooltips flip or clamp instead of running off the edge. A menu that opens under the thumb
+  is unreachable.
+- **Hover is not an affordance.** Anything revealed on hover (row actions, tooltips,
+  previews) needs a tap-visible equivalent, because touch devices never hover.
+- **Density.** Cut horizontal page padding to 16px, keep the vertical rhythm on the spacing
+  scale, and drop decorative columns, background art and secondary stats before shrinking
+  the text.
+
+Verify at those widths with the page screenshot tool (`capture_page` with the mobile
+viewport), and measure computed styles or `scrollWidth` rather than judging the picture by
+eye. Report what you checked at which width. If a screen has no mobile layout yet, say so
+instead of skipping the pass silently.
+
+---
+
 ## Hierarchy — the technique that does the most work
 
 Everything on screen sits in a pyramid: primary, secondary, tertiary. When everything

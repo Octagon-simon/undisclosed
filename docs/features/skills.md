@@ -92,10 +92,14 @@ for a design pass. The brain prompt (`SINGLE_AGENT_SYS_PROMPT` and the other
 gate: any task that touches frontend code or UI/UX at all - components, pages,
 styles, layout, design tokens, user-facing copy, or a flow the user will see -
 must load `refactoring-ui` before building, not after, and run its diagnose pass
-over the whole flow it touched before declaring the task done. Findings are
-fixed in the same task: ad-hoc spacing/type/color off the scale, weak hierarchy,
-flat depth, contrast, and user-facing strings left hardcoded where the project
-has copy or design tokens. The gate stacks with any other UI skill the user
+over the whole flow it touched before declaring the task done. The pass is not
+desktop-only: the same flow is rendered at 320, 375 and 414 CSS px and diagnosed
+as its own layout (no horizontal scroll, one column below ~640px, 44px tap
+targets, 16px inputs, overlays clamped inside the viewport, safe-area padding,
+no hover-only actions), because a clean desktop review is half the job. Findings
+are fixed in the same task: ad-hoc spacing/type/color off the scale, weak
+hierarchy, flat depth, contrast, and user-facing strings left hardcoded where
+the project has copy or design tokens. The gate stacks with any other UI skill the user
 enabled (`premium-frontend-ui`, `uipro`, `ui-styling`, `banner-design`,
 `design-system`, a taste/design skill) and never replaces it.
 
@@ -106,10 +110,14 @@ disables it, `load_skill` fails and the prompt requires the agent to say which
 checks it could not run rather than claim a pass it did not do.
 
 `SINGLE_AGENT_SYS_PROMPT` also has a dedicated `<frontend_ui_work>` section
-(load, scope the flow, diagnose, fix, report if blocked) and the pass is step 4
-of its `<verification_workflow>`, so the typecheck, tests and review run on the
-corrected UI. The rule lives in the prompt, not in each skill's `SKILL.md`, so
-it stays in one place and covers every UI skill the user enables.
+(load, scope the flow, desktop diagnose, mobile pass, fix, report if blocked) and
+the pass is step 4 of its `<verification_workflow>`, so the typecheck, tests and
+review run on the corrected UI. The trigger lives in the prompt, not in each
+skill's `SKILL.md`, so it stays in one place and covers every UI skill the user
+enables. The concrete small-screen checklist (overflow, tap targets, input
+sizing, overlay clamping, safe areas, hover-only actions) lives in
+`resources/example-skills/refactoring-ui/SKILL.md` under
+"Mobile and responsive", so the agent reads it every time it loads the skill.
 
 ## See also
 
