@@ -14,7 +14,10 @@
 // ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
 
 import { useHost } from '@/host';
-import { resolveAttachmentImageUrl } from '@/lib/attachmentUrl';
+import {
+  resolveAttachmentImageUrl,
+  resolveUploadContentUrl,
+} from '@/lib/attachmentUrl';
 import { cn } from '@/lib/utils';
 import { Check, Copy, FileText, Image } from 'lucide-react';
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
@@ -220,7 +223,16 @@ export function UserMessageCard({
                           if (ipcRenderer?.invoke) {
                             ipcRenderer.invoke('reveal-in-folder', file.filePath);
                           } else {
-                            void host?.openFile?.(file.filePath);
+                            // Upload refs are not filesystem paths; the editor
+                            // would report "file not found".
+                            const uploadUrl = resolveUploadContentUrl(
+                              file.filePath
+                            );
+                            if (uploadUrl) {
+                              window.open(uploadUrl, '_blank', 'noopener');
+                            } else {
+                              void host?.openFile?.(file.filePath);
+                            }
                           }
                         }}
                       >
@@ -293,7 +305,18 @@ export function UserMessageCard({
                                       file.filePath
                                     );
                                   } else {
-                                    void host?.openFile?.(file.filePath);
+                                    const uploadUrl = resolveUploadContentUrl(
+                                      file.filePath
+                                    );
+                                    if (uploadUrl) {
+                                      window.open(
+                                        uploadUrl,
+                                        '_blank',
+                                        'noopener'
+                                      );
+                                    } else {
+                                      void host?.openFile?.(file.filePath);
+                                    }
                                   }
                                   setIsRemainingOpen(false);
                                 }}

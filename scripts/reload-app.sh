@@ -79,12 +79,37 @@ resolve_assets_dir() {
   return 1
 }
 
+running_app_bundle() {
+  local pid exe
+  pid="$(pgrep -f 'Undisclosed.app/Contents/MacOS/Undisclosed' | head -1)"
+  [ -n "$pid" ] || return 1
+  exe="$(ps -o command= -p "$pid" | awk '{print $1}')"
+  [ -n "$exe" ] || return 1
+  printf '%s\n' "${exe%/Contents/MacOS/Undisclosed}"
+}
+
+resign_app() {
+  local app="$1" identity
+  identity="$(codesign -dv --verbose=2 "$app" 2>&1 | sed -n 's/^Authority=//p' | head -1)"
+  [ -n "$identity" ] || return 0
+  codesign --force --deep --options runtime \
+    --preserve-metadata=entitlements,requirements,flags,runtime \
+    --sign "$identity" "$app" >/dev/null 2>&1 || return 1
+  codesign --verify --deep --strict "$app" >/dev/null 2>&1
+}
+
 installed=0
 if [ "$INSTALL" = 1 ]; then
   candidates=()
   [ -n "${UNDISCLOSED_APP_PATH:-}" ] && candidates+=("$UNDISCLOSED_APP_PATH")
+  # the running bundle wins: a dev build under apps/desktop/dist-signed can be
+  # live while /Applications holds an older install
+  if running="$(running_app_bundle)"; then
+    candidates+=("$running")
+  fi
   candidates+=("/Applications/Undisclosed.app" "$HOME/Applications/Undisclosed.app")
   candidates+=("$ROOT/apps/desktop/dist/mac-arm64/Undisclosed.app" "$ROOT/apps/desktop/dist/mac/Undisclosed.app")
+  candidates+=("$ROOT/apps/desktop/dist-signed/mac-arm64/Undisclosed.app" "$ROOT/apps/desktop/dist-signed/mac/Undisclosed.app")
 
   for candidate in "${candidates[@]}"; do
     [ -e "$candidate" ] || continue
@@ -92,6 +117,13 @@ if [ "$INSTALL" = 1 ]; then
     cp "$SRC/agent-embed.umd.js" "$SRC/style.css" "$dst/"
     say "installed into $dst"
     installed=$((installed + 1))
+    # copying into Resources breaks the bundle seal, so re-sign with the
+    # identity the app already carries (ad-hoc or Developer ID)
+    if resign_app "$candidate"; then
+      say "re-signed $candidate"
+    else
+      say "warning: $candidate is left with an invalid seal"
+    fi
     break
   done
 

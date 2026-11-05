@@ -294,28 +294,43 @@ def list_files(
 
 
 def resolve_upload_ref(ref: str) -> str:
-    """Resolve an ``upload://<stored_name>`` attach ref to an absolute file path
-    the agent can actually read.
+    """Resolve an ``upload://<session>/<stored_name>`` attach ref to an absolute
+    file path the agent can actually read.
 
     Uploaded files live under ``<UNDISCLOSED_WORKSPACE>/<session_id>/uploads/
-    <stored_name>`` (see file_controller.upload_file). The stored name is unique
-    (it carries a millisecond timestamp), so a glob across sessions resolves to
-    exactly one file without needing the session id plumbed through the run.
-    Non-upload refs (already real paths) are returned unchanged; if nothing
-    matches, the original ref is returned so callers degrade gracefully.
+    <stored_name>`` (see file_controller.upload_file). Refs written before the
+    session was embedded have no session segment; the stored name is unique (it
+    carries a millisecond timestamp), so a glob across sessions still resolves
+    those to exactly one file. Non-upload refs (already real paths) are
+    returned unchanged; if nothing matches, the original ref is returned so
+    callers degrade gracefully.
     """
     if not ref or not ref.startswith("upload://"):
         return ref
-    name = ref[len("upload://") :]
-    # Reject traversal / nested paths — stored names are flat.
+    payload = ref[len("upload://") :]
+    session_hint, sep, name = payload.partition("/")
+    if not sep:
+        name = session_hint
+        session_hint = ""
+    # Stored names are flat, and the session segment must stay a single
+    # directory name so a ref can never escape the uploads tree.
     if not name or "/" in name or "\\" in name or ".." in name:
         return ref
+    if session_hint in (".", "..") or "\\" in session_hint:
+        session_hint = ""
     try:
         workspace_root = Path(
             env("UNDISCLOSED_WORKSPACE", "~/.undisclosed/workspace")
         ).expanduser()
-        matches = sorted(workspace_root.glob(f"*/uploads/{name}"))
-        for candidate in matches:
+        candidates: list[Path] = []
+        if session_hint:
+            candidates.append(
+                workspace_root / session_hint / "uploads" / name
+            )
+        # Legacy refs (and wrongly-scoped ones) carry no session; the stored
+        # name is unique because it ends in a millisecond timestamp.
+        candidates.extend(sorted(workspace_root.glob(f"*/uploads/{name}")))
+        for candidate in candidates:
             if candidate.is_file():
                 return str(candidate)
     except OSError as e:

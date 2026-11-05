@@ -23,12 +23,24 @@ from pathlib import Path
 from typing import Annotated
 from urllib.parse import quote
 
-from fastapi import APIRouter, File, Header, HTTPException, Query, UploadFile
+from fastapi import (
+    APIRouter,
+    File,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
 from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 
 from app.component.environment import env
-from app.utils.file_utils import list_files, resolve_under_base
+from app.utils.file_utils import (
+    list_files,
+    resolve_under_base,
+    resolve_upload_ref,
+)
 from app.utils.workspace_paths import (
     get_storage_root,
     runtime_owner_key,
@@ -91,20 +103,23 @@ def _redacted_path_suffix(path: Path) -> str:
 
 @router.post("/files")
 async def upload_file(
+    request: Request,
     file: Annotated[UploadFile, File()],
     x_session_id: Annotated[str | None, Header(alias="X-Session-ID")] = None,
 ) -> dict:
     """
-    Upload file. Requires X-Session-ID header.
+    Upload file. Uses the X-Session-ID header, or the session the middleware
+    minted for this request when the client has none yet.
     Returns file_id for message attachments reference.
     """
-    if not x_session_id:
+    session_id = x_session_id or getattr(request.state, "session_id", None)
+    if not session_id:
         raise HTTPException(
             status_code=400,
             detail="X-Session-ID header is required for file upload",
         )
     try:
-        validated_session_id = _validate_session_id(x_session_id)
+        validated_session_id = _validate_session_id(session_id)
     except ValueError as exc:
         raise HTTPException(
             status_code=400, detail="Invalid X-Session-ID"
@@ -140,7 +155,9 @@ async def upload_file(
     target_path = uploads_dir / stored_name
     target_path.write_bytes(content)
 
-    file_id = f"upload://{stored_name}"
+    # The ref carries its upload session so bytes stay addressable after the
+    # client's connection session changes (reload, new chat, restart).
+    file_id = f"upload://{validated_session_id}/{stored_name}"
     file_logger.info(
         f"File uploaded: session={validated_session_id}, file_id={file_id}, size={len(content)}"
     )
@@ -149,6 +166,7 @@ async def upload_file(
         "file_id": file_id,
         "filename": file.filename or "file",
         "size": len(content),
+        "session_id": validated_session_id,
     }
 
 
@@ -348,37 +366,50 @@ async def stream_file(
 @router.get("/files/upload-content")
 async def upload_content(
     file_id: str = Query(
-        ..., description="Attach ref, e.g. upload://<name> or a bare stored name"
+        ...,
+        description=(
+            "Attach ref: upload://<session>/<name>, upload://<name>, "
+            "or a bare stored name"
+        ),
     ),
-    session_id: str = Query(
-        ..., description="Brain session id the file was uploaded under"
+    session_id: str | None = Query(
+        None, description="Brain session id the file was uploaded under"
     ),
 ):
     """
     Serve the bytes of an uploaded attachment so browser/web clients (the
     embedded agent panel) can render image attachments inline. `<img src>`
-    bypasses the proxy header wrapper, so session_id is taken as a query param
-    rather than the X-Session-ID header. Uploads live under
+    bypasses the proxy header wrapper, so the session comes from the ref itself
+    (or the session_id query param for older refs) rather than the
+    X-Session-ID header. Uploads live under
     WORKSPACE_ROOT/<session_id>/uploads/<name>.
     """
-    name = (file_id or "").removeprefix("upload://").strip()
-    if not name or not session_id:
-        raise HTTPException(
-            status_code=400, detail="file_id and session_id are required"
-        )
-    try:
-        uploads_dir = _get_session_uploads_dir(session_id)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=400, detail="Invalid session_id"
-        ) from exc
+    payload = (file_id or "").removeprefix("upload://").strip()
+    ref_session, sep, name = payload.partition("/")
+    if not sep:
+        name = ref_session
+        ref_session = ""
+    if not name:
+        raise HTTPException(status_code=400, detail="file_id is required")
+    session = ref_session or session_id
+    p: Path | None = None
     # Keep the resolved path under the session uploads dir (no traversal).
-    try:
-        resolved = resolve_under_base(name, str(uploads_dir.resolve()))
-    except Exception as e:
-        file_logger.warning("upload_content path validation failed: %s", e)
-        raise HTTPException(status_code=400, detail="Invalid file_id") from e
-    p = Path(resolved)
+    if session:
+        try:
+            uploads_dir = _get_session_uploads_dir(session)
+            if uploads_dir.is_dir():
+                p = Path(resolve_under_base(name, str(uploads_dir.resolve())))
+        except ValueError:
+            # A malformed session is a hint, not a reason to refuse: fall
+            # through to the store-wide lookup below.
+            p = None
+        except OSError as e:
+            file_logger.warning("upload_content path validation failed: %s", e)
+    if p is None or not p.is_file():
+        # Ref written before the session was embedded, or the client's current
+        # session drifted from the upload's. Stored names are unique, so the
+        # store-wide lookup still finds exactly one file.
+        p = Path(resolve_upload_ref(f"upload://{session}/{name}"))
     if not p.is_file():
         raise HTTPException(status_code=404, detail="File not found")
     media_type, _ = mimetypes.guess_type(str(p))

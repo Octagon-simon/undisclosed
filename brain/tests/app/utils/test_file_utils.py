@@ -28,6 +28,7 @@ from app.utils.file_utils import (
     list_files,
     normalize_working_path,
     resolve_under_base,
+    resolve_upload_ref,
 )
 
 
@@ -362,3 +363,51 @@ def test_list_files_custom_skip_prefix(temp_dir):
     names = [os.path.basename(p) for p in result]
     assert "keep.txt" in names
     assert "_private.txt" not in names
+
+
+def _store(root: Path, session: str, name: str) -> Path:
+    target = root / session / "uploads" / name
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("x")
+    return target
+
+
+def test_resolve_upload_ref_prefers_the_ref_session(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "app.utils.file_utils.env", lambda *a, **k: str(tmp_path)
+    )
+    stored = _store(tmp_path, "sess_b", "pic.png_1700000000000")
+    _store(tmp_path, "sess_a", "pic.png_1700000000000")
+
+    resolved = resolve_upload_ref("upload://sess_b/pic.png_1700000000000")
+
+    assert resolved == str(stored)
+
+
+def test_resolve_upload_ref_falls_back_to_a_store_wide_lookup(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(
+        "app.utils.file_utils.env", lambda *a, **k: str(tmp_path)
+    )
+    stored = _store(tmp_path, "sess_owner", "pic.png_1700000000000")
+
+    assert resolve_upload_ref("upload://pic.png_1700000000000") == str(stored)
+    assert (
+        resolve_upload_ref("upload://sess_gone/pic.png_1700000000000")
+        == str(stored)
+    )
+
+
+def test_resolve_upload_ref_rejects_nested_names(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "app.utils.file_utils.env", lambda *a, **k: str(tmp_path)
+    )
+    _store(tmp_path, "sess_owner", "pic.png_1700000000000")
+
+    ref = "upload://sess_owner/../pic.png_1700000000000"
+    assert resolve_upload_ref(ref) == ref
+
+
+def test_resolve_upload_ref_leaves_plain_paths_alone():
+    assert resolve_upload_ref("/tmp/report.csv") == "/tmp/report.csv"

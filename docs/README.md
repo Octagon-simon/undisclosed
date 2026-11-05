@@ -50,6 +50,7 @@ Grouped by what they deliver to a user.
 | [features/remote-sub-agent.md](features/remote-sub-agent.md) | Delegating a bounded task to a remote agent provider. |
 | [features/editor-extras.md](features/editor-extras.md) | Source control + git extras, welcome widget, Storybook, languages/import, packaging, dev scripts. |
 | [features/agent-runtime-hardening.md](features/agent-runtime-hardening.md) | The freezes, stalls, duplicate turns, and malformed-output bugs we fixed and why. |
+| [features/file-attachments.md](features/file-attachments.md) | The chat attachment upload path, session-scoped `upload://` refs, and the per-session limits (`MAX_FILES_PER_SESSION`, `MAX_FILE_SIZE_BYTES`). |
 
 ## Design notes and plans (pre-existing)
 

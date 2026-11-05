@@ -1,4 +1,5 @@
 // ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
+// Portions Copyright 2026 Simon Ugorji. All Rights Reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -46,10 +47,15 @@ function persistSessionIdFromResponse(response: Response): void {
   if (!sessionId) {
     return;
   }
-  const current = getConnectionConfig().sessionId;
-  if (current !== sessionId) {
-    setConnectionConfig({ sessionId });
+  // First write wins. The Brain mints a fresh session for any request that
+  // arrives without the header, and responses can land out of order, so
+  // adopting every echoed id made the session flap between several values.
+  // Uploads are stored per session, so a flapping id means the file lands in
+  // one session's directory and is then looked up under another.
+  if (getConnectionConfig().sessionId) {
+    return;
   }
+  setConnectionConfig({ sessionId });
 }
 
 function shouldAttachAuthHeader(url: string): boolean {

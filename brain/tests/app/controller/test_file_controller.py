@@ -13,7 +13,15 @@
 # limitations under the License.
 # ========= Copyright 2025-2026 @ Eigent.ai All Rights Reserved. =========
 
+import asyncio
+from io import BytesIO
+from pathlib import Path
+
+import pytest
+from fastapi import HTTPException, UploadFile
+
 from app.controller import file_controller
+from app.utils import file_utils
 
 
 def test_resolve_project_root_prefers_user_id_root(
@@ -88,3 +96,122 @@ def test_resolve_project_root_without_user_id_stays_email_scoped(
     )
 
     assert resolved == expected
+
+
+# --- upload / attach serving ------------------------------------------------
+
+
+class _FakeState:
+    def __init__(self, session_id: str | None):
+        if session_id is not None:
+            self.session_id = session_id
+
+
+class _FakeRequest:
+    def __init__(self, session_id: str | None):
+        self.state = _FakeState(session_id)
+
+
+def _upload_file(name: str = "notes.txt", data: bytes = b"hello"):
+    return UploadFile(file=BytesIO(data), filename=name)
+
+
+def test_upload_without_header_uses_middleware_session(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(file_controller, "_get_workspace_root", lambda: tmp_path)
+
+    result = asyncio.run(
+        file_controller.upload_file(
+            request=_FakeRequest("sess_minted"),
+            file=_upload_file(),
+            x_session_id=None,
+        )
+    )
+
+    assert result["session_id"] == "sess_minted"
+    assert result["file_id"].startswith("upload://sess_minted/")
+    stored = tmp_path / "sess_minted" / "uploads" / result["file_id"].split("/")[-1]
+    assert stored.is_file()
+
+
+def test_upload_without_any_session_is_rejected(monkeypatch, tmp_path):
+    monkeypatch.setattr(file_controller, "_get_workspace_root", lambda: tmp_path)
+
+    with pytest.raises(HTTPException) as excinfo:
+        asyncio.run(
+            file_controller.upload_file(
+                request=_FakeRequest(None),
+                file=_upload_file(),
+                x_session_id=None,
+            )
+        )
+
+    assert excinfo.value.status_code == 400
+
+
+def _pin_workspace(monkeypatch, root: Path) -> None:
+    monkeypatch.setattr(file_controller, "_get_workspace_root", lambda: root)
+    monkeypatch.setattr(file_utils, "env", lambda *a, **k: str(root))
+
+
+def _store_upload(root, session: str, name: str, data: bytes = b"img") -> Path:
+    target = root / session / "uploads" / name
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(data)
+    return target
+
+
+def test_upload_content_serves_a_legacy_ref_without_a_session(
+    monkeypatch, tmp_path
+):
+    _pin_workspace(monkeypatch, tmp_path)
+    stored = _store_upload(tmp_path, "sess_owner", "pic.png_1700000000000")
+
+    response = asyncio.run(
+        file_controller.upload_content(
+            file_id="upload://pic.png_1700000000000", session_id=None
+        )
+    )
+
+    assert response.path == str(stored)
+
+
+def test_upload_content_survives_a_drifted_session(monkeypatch, tmp_path):
+    _pin_workspace(monkeypatch, tmp_path)
+    stored = _store_upload(tmp_path, "sess_owner", "pic.png_1700000000000")
+
+    response = asyncio.run(
+        file_controller.upload_content(
+            file_id="upload://pic.png_1700000000000", session_id="sess_other"
+        )
+    )
+
+    assert response.path == str(stored)
+
+
+def test_upload_content_prefers_the_ref_session(monkeypatch, tmp_path):
+    _pin_workspace(monkeypatch, tmp_path)
+    stored = _store_upload(tmp_path, "sess_owner", "pic.png_1700000000000")
+
+    response = asyncio.run(
+        file_controller.upload_content(
+            file_id="upload://sess_owner/pic.png_1700000000000",
+            session_id="sess_other",
+        )
+    )
+
+    assert response.path == str(stored)
+
+
+def test_upload_content_missing_file_is_404(monkeypatch, tmp_path):
+    _pin_workspace(monkeypatch, tmp_path)
+
+    with pytest.raises(HTTPException) as excinfo:
+        asyncio.run(
+            file_controller.upload_content(
+                file_id="upload://nope.png_1700000000000", session_id=None
+            )
+        )
+
+    assert excinfo.value.status_code == 404
