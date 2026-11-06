@@ -11,6 +11,7 @@ import { cn } from '@/lib/utils';
 import {
   Check,
   ChevronDown,
+  ChevronRight,
   CircleAlert,
   Copy,
   Info,
@@ -154,7 +155,7 @@ export function ErrorAlertCard({
             )}
           </div>
 
-          <p className="mb-0 mt-1 whitespace-pre-wrap break-words text-base leading-relaxed text-ds-text-neutral-default-default">
+          <p className="mb-0 mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed text-ds-text-neutral-default-default">
             {messageProp ?? presented.message}
           </p>
 
@@ -180,14 +181,14 @@ export function ErrorAlertCard({
                   onClick={() => setDetailsOpen((open) => !open)}
                   className="flex items-center gap-1 rounded-sm p-0 text-sm font-medium leading-normal text-ds-text-neutral-muted-default transition-colors hover:text-ds-text-neutral-default-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-ring-brand-default-focus/50"
                 >
-                  <ChevronDown
+                  {detailsOpen ? 'Hide details' : 'Show details'}
+                  <ChevronRight
                     className={cn(
                       'size-3.5 transition-transform duration-150',
-                      detailsOpen && 'rotate-180',
+                      detailsOpen && 'rotate-90',
                     )}
                     aria-hidden
                   />
-                  {detailsOpen ? 'Hide details' : 'Show details'}
                 </button>
                 {detailsOpen && (
                   <button
